@@ -316,3 +316,38 @@ velocity in the control loop.
   throughput on long runs.
 - Cosmetic: the table renders light grey rather than the dark `(0.16, 0.18, 0.22)` set on
   the `FixedCuboid`; the colour is not reaching the material.
+
+
+---
+
+# Update — 2026-11-02: the asset's inertial parameters
+
+Everything above concerns gains, friction, limits and armature. A later audit found a
+larger problem underneath all of it: **the shipped `franka.usd` is not a dynamically
+credible Franka.**
+
+| quantity | asset | URDF |
+|---|---|---|
+| centre of mass, every body | exactly `[0,0,0]` | offsets up to 120 mm |
+| inertia diagonal, every body | ~1e-6 kg·m² | e.g. `ixx = 0.703` on link1 |
+| per-link mass | differs by up to 4.5× | — |
+| total mass | exactly 18.0000 kg | 17.6218 kg |
+
+Round-trip verified: writing `[0.1, 0.2, 0.3]` reads back exactly, so the API is in kg·m²
+and the asset really does have no rotational inertia. Dynamically it was a stick figure of
+point masses sitting on the joint axes — which is why its `g(q)` is exactly zero on joints
+3 and 5 at the home pose, a detail the analysis side spotted from their own Pinocchio
+output before we had looked.
+
+**The scene now authors mass, COM and inertia from `panda_arm_hand.urdf`**
+(`AUTHOR_INERTIAL_FROM_URDF` in `pal_config.py`). After that, Isaac Sim and an independent
+Pinocchio model agree to rounding on all seven joints. The accidental mismatch removed was
+13.65% of joint 6's torque limit, about 0.6 kg of phantom payload.
+
+Two further corrections to this document:
+
+- **The Jacobian row.** `get_jacobians()` excludes the fixed base, so its last row is
+  `panda_rightfinger`, 2.5 cm off the hand centreline. Use row 7 (`panda_hand`): max error
+  against a known payload drops from 1.177 to 0.016 N·m.
+- **`world.reset()` wipes tensor-API writes.** Masses, COMs, inertias, friction and
+  armature all revert. Apply after the final reset, and verify after it.

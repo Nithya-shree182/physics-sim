@@ -279,24 +279,65 @@ this. The tensor API (`get_gains`) reports per radian.
 
 ## 7. Reference values to build against
 
-Home pose `q = [0, −0.785, 0, −2.356, 0, 1.571, 0.785]`, `qd = qdd = 0`, no payload,
-unmodified asset:
+**Updated 2026-11-02 — the earlier reference vector in this document was wrong.** It gave
+the *unauthored asset's* `g(q)`, which came from a robot with all centres of mass at the
+link origins and no rotational inertia. Ignore it if you saw it.
+
+### The plant is now authored from the URDF
+
+Your cross-check was right, and it found something larger than the hand. A full per-body
+dump of the shipped `franka.usd`:
+
+| quantity | asset | URDF |
+|---|---|---|
+| centre of mass, **every** body | exactly `[0, 0, 0]` | offsets up to 120 mm |
+| inertia diagonal, **every** body | ~1e-6 kg·m² | e.g. `ixx = 0.703` on link1 |
+| per-link mass | differs by up to 4.5× | — |
+| total mass | exactly 18.0000 kg | 17.6218 kg |
+
+The inertia figure was verified by round trip — writing `[0.1, 0.2, 0.3]` reads back
+`[0.1, 0.2, 0.3]` exactly, so the API is in kg·m² and the asset genuinely ships with
+essentially no rotational inertia. Dynamically it was a stick figure of point masses on
+the joint axes, which is precisely why our `g(q)` was exactly zero on joints 3 and 5 while
+yours was not.
+
+**The scene now overwrites mass, COM and inertia from `panda_arm_hand.urdf` at build
+time.** With that in place:
 
 ```
-g(q)  =  [0.000, -1.655, 0.000, 20.077, 0.000, 0.856, 0.000]  N·m
+your Pinocchio (URDF)  : [0, −4.58,  −0.64,  22.88,  0.62,  2.50,  0]
+Isaac Sim (authored)   : [0, −4.663, −0.636, 22.954, 0.623, 2.441, 0.001]
 ```
 
-At rest the whole model reduces to `g(q)`, and the simulator's measured torque matched this
-to **1 part in 10⁶**. If your Pinocchio model reproduces this vector, your URDF parse,
-gravity direction and joint ordering are all correct.
+Agreement to rounding on all seven joints, from two independent engines. **Your model is
+correct and needs no change.** Use your own numbers as the reference.
 
-**Caveat, unresolved.** A second test that explicitly re-authored `panda_hand`'s mass to
-0.73 kg produced `g(q) = [0, −2.176, 0, 20.874, 0, 1.004, 0]` at the same pose — about
-0.8 N·m higher on joint 4. The cause has not been established; the asset's natural hand mass
-may differ from the URDF's 0.73, or re-authoring the attribute may change how the fingers
-are accounted. **Use the first vector** (unmodified asset) as your reference and treat the
-discrepancy as an open question — it is ~4% on joint 2 and worth resolving before
-calibration sign-off.
+The accidental mismatch we were carrying before this was **13.65% of joint 6's torque
+limit** — roughly 0.6 kg of phantom payload, which the estimator would have reported as
+load and the detector might have alarmed on.
+
+### A caveat neither of us can resolve
+
+Authoring from the URDF makes the twin and the plant agree; it does not make either one
+*correct*. Franka publishes no dynamic parameters — Gaz et al. opens by saying so.
+`franka_description`'s values are estimates and NVIDIA's are different estimates. We have
+picked one so that the mismatch is chosen rather than inherited, which is what section 9
+requires. No result should claim these are the real robot's parameters.
+
+### Residual floor at rest, with the authored plant
+
+```
+joint         g(q)    tau_measured   residual   % of limit
+panda_joint2  -4.663    -4.796        -0.133      0.15%
+panda_joint3  -0.636    -0.638        -0.002      0.00%
+panda_joint4  22.954    23.030         0.076      0.09%
+panda_joint5   0.623     0.627         0.004      0.03%
+panda_joint6   2.441     2.450         0.009      0.08%
+```
+
+The residual is no longer ~1e-6 as it was before, because joint friction is now actually
+reaching the plant. What you see here is the friction signature at rest, which is the
+baseline O5 must detect a *change* in.
 
 ### Payload response (measured, at home)
 
@@ -341,6 +382,17 @@ score is finalised.
 
 The 0.08 threshold currently in the config is a guess. Set it from a workspace sweep.
 
+## 8b. If you ever drive the simulator yourself
+
+`world.reset()` **silently discards everything written through the tensor API** — body
+masses, centres of mass, inertias, joint friction, armature. The writes succeed, the
+readbacks confirm them, and a later reset reverts all of it to the asset's values.
+
+This cost us real time: for a while the log reported URDF parameters applied while every
+downstream number was the stock asset. Apply tensor-API values **after** the final reset
+and verify **after** it; a readback taken immediately after the write proves nothing.
+`pal_scene.py` prints a `[survive]` line for this.
+
 ## 9. What is verified, and what is not
 
 | Claim | Status |
@@ -350,8 +402,9 @@ The 0.08 threshold currently in the config is a guess. Set it from a workspace s
 | `g(q)` and `J(q)` mutually consistent | **verified**, 0.016 N·m with row 7 |
 | Payload response linear, estimator chain correct | **verified**, 0.04% at rest |
 | Three-term identity closes on a slow trajectory | **verified**, 0.49% of limit — but that run was 98% gravity |
-| Three-term identity closes under fast motion | **FAILS at 5.98%** — see open problems |
-| Friction reaches the plant | **NO** — see open problems |
+| Three-term identity closes under fast motion | **FAILED at 5.98%** on the unauthored plant; needs re-measuring now that the plant has real inertia |
+| Friction reaches the plant | **YES**, fixed — `world.reset()` had been wiping it |
+| Plant and Pinocchio agree on g(q) | **YES** — agreement to rounding on all 7 joints |
 | Telemetry at 1 kHz without dropped frames | **NO** — 0.42× real time |
 | An independent model exists | **NO** — this is your job; every `tau_model` so far came out of Isaac Sim |
 

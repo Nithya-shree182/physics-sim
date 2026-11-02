@@ -38,7 +38,28 @@ articulation.
 **Blocks:** O2 calibration sign-off, and therefore everything downstream. The slow-run PASS
 at 0.49% is not sufficient evidence — that run was 98% gravity.
 
-### P2 — Joint friction never reaches the plant
+### P2 — ~~Joint friction never reaches the plant~~ **FIXED 2026-11-02**
+
+**Root cause was worse than friction.** `world.reset()` silently discards *everything*
+written through the tensor API — body masses, centres of mass, inertias, joint friction
+and armature all revert to the asset's values. The writes succeed and the readbacks
+confirm them; a later reset throws it all away. For part of the session the log claimed
+URDF inertial parameters were applied while every downstream number was the stock asset.
+
+**Fix:** removed the `world.reset()` that ran after the configuration block, and added a
+`[survive]` verification line that re-reads masses, friction and armature *after* the last
+reset. Verified:
+
+```
+[survive] body masses kept: True   friction nonzero: True   armature: [0.0061 x7]
+```
+
+**Rule going forward:** apply tensor-API values after the final reset, and verify after it.
+A readback taken immediately after the write proves nothing.
+
+Original report follows.
+
+
 
 The excitation test with Gaz friction applied returned **byte-identical** numbers to the
 frictionless run; residual growth was exactly `[0,0,0,0,0,0,0]`.
@@ -98,7 +119,50 @@ differ by the gear ratio.
 joints all gave ratio 1.000, but the unloaded ones give only noise. Needs a **loaded,
 moving** test.
 
-### P6 — Hand mass discrepancy, ~0.8 N·m
+### P6 — ~~Hand mass discrepancy~~ **RESOLVED — it was not just the hand**
+
+The 0.8 N·m discrepancy was the visible corner of a much larger problem, raised by the
+analysis side: their Pinocchio model gave `[0, −4.58, −0.64, 22.88, 0.62, 2.50, 0]` at
+home against our `[0, −1.655, 0, 20.077, 0, 0.856, 0]`, and they correctly inferred from
+our exact zeros on joints 3 and 5 that the centres of mass differed, not just the hand's
+mass.
+
+**A full per-body dump confirmed the asset is not a dynamically credible Franka:**
+
+| quantity | asset | URDF |
+|---|---|---|
+| centre of mass, every body | exactly `[0,0,0]` | offsets up to 120 mm |
+| inertia diagonal, every body | ~1e-6 kg·m² | e.g. `ixx = 0.703` on link1 |
+| per-link mass | differs by up to 4.5× | — |
+| total mass | exactly 18.0000 kg | 17.6218 kg |
+
+The inertia figure was verified by round trip — writing `[0.1, 0.2, 0.3]` reads back
+`[0.1, 0.2, 0.3]` exactly, so the API is in kg·m² and the asset really does ship with
+essentially no rotational inertia. Dynamically it is a stick figure of point masses
+sitting on the joint axes, which is exactly why gravity produces no moment about joints 3
+and 5 at the home pose.
+
+**Fix:** the scene now authors mass, COM and inertia from `panda_arm_hand.urdf` at build
+time (`AUTHOR_INERTIAL_FROM_URDF`). After authoring:
+
+```
+Pinocchio (URDF)    : [0, −4.58,  −0.64,  22.88,  0.62,  2.50,  0]
+Isaac Sim (authored): [0, −4.663, −0.636, 22.954, 0.623, 2.441, 0.001]
+```
+
+Agreement to rounding across two independent engines. The accidental mismatch being
+carried before this was **13.65% of joint 6's torque limit** — about 0.6 kg of phantom
+payload, which would have been attributed to a payload or a fault.
+
+### P6b — Which parameter set is physically right is still unknown
+
+Authoring from the URDF makes the twin and plant agree, but it does not make either
+*correct*. Franka publishes no dynamic parameters — Gaz et al. 2019 opens by saying so.
+`franka_description`'s URDF values are estimates; NVIDIA's are different estimates. We
+have chosen one so the mismatch is controlled, which is what section 9 requires, but no
+claim should be made that these are the real robot's parameters.
+
+### P6c (superseded) — original hand-mass report
 
 At the home pose with no payload, two measurements of `g(q)` disagree:
 
@@ -160,21 +224,89 @@ the mode per run and have the residual code refuse a mismatched log.
 
 ---
 
+## Additional findings from 2026-11-02
+
+### F1 — The Jacobian's last row is not the end effector (FIXED)
+`get_jacobians()` returns 10 rows while the articulation reports 11 bodies; the Jacobian
+excludes the fixed base, so row *i* maps to body *i+1*. A naive `[-1]` picks
+`panda_rightfinger`, which sits ~2.5 cm off the hand centreline and injects a spurious
+moment. Verified against a known 3 kg mass:
+
+| row | body | max error vs Δg(q) |
+|---|---|---|
+| **7** | **panda_hand** | **0.016 N·m** |
+| 9 | panda_rightfinger | 1.177 N·m |
+
+That 1.18 N·m error was worth ~215 g of phantom payload. Now `EE_JACOBIAN_ROW = 7`.
+
+Note `END_EFFECTOR_PRIM` is still `panda_rightfinger` — correct for the gripper wrapper
+used in IK targeting, wrong for the Jacobian. Different things.
+
+### F2 — `tau_applied` is identically zero in position mode
+`get_applied_joint_efforts()` returns whatever `set_joint_efforts()` last wrote, and in
+position mode nothing ever does. With 3 kg held, `tau_measured` tracked the payload
+exactly while `tau_applied` stayed at zero on every joint.
+
+Consequence: `WORK_SPLIT.md`'s residual `r = tau_applied − tau_model` reduces to
+`−tau_model` on a position-mode log. It would appear to detect the payload perfectly while
+containing no measurement. In effort mode the two agree to within 0.44 N·m.
+
+**The residual definition is therefore coupled to the control mode.** Record the mode per
+run and have the residual code refuse a mismatched log.
+
+### F3 — The 57× gain trap is in the shipped asset
+USD stores angular drive stiffness **per degree**; the tensor API reports **per radian**.
+Both conventions sit on the same joint prim:
+
+```
+USD  drive:angular:physics:stiffness =   400.0   per degree
+articulation.get_gains()             = 22918.3   per radian
+```
+
+So the asset simulates at 22918 N·m/rad — 57× Isaac Lab's intended 400. NVIDIA's own
+sysid tutorial warns about exactly this. The scene now verifies both conventions on every
+start, because a consistent 57× error satisfies either check alone.
+
+### F4 — The slow calibration PASS was misleading
+The first moving test passed at 0.49% of the torque limit, but the term breakdown shows
+why that proves little: gravity averaged 3.81 N·m, acceleration 0.069 N·m, Coriolis
+0.0105 N·m. The run was ~98% gravity, so it validated `g(q)` and essentially nothing about
+`M` or `C`. The excitation test that does exercise them fails (P1).
+
+### F5 — Filtering does not help the fast-motion residual
+Low-pass filtering the finite-difference `q̈` changed the RMS residual by −0%. The leading
+suspect for P1 was finite-difference noise; it is now ruled out.
+
+### F6 — A scalar confidence score may be the wrong gate for O4
+A 1 kg object held at the near-singular extended pose was estimated to 0.06% accuracy and
+still gated out. The singularity collapses some Jacobian direction but not the vertical
+one, and vertical is all the mass estimate uses. A direction-specific confidence would
+gate O4 far more precisely than `σ_min/σ_max`.
+
+### F7 — Isaac Sim boot hang, ~1 in 5
+Empty `docker logs`, container `unhealthy`, GPU idle. Not a slow run — the process never
+starts. `docker rm -f` and relaunch. A watchdog loop is in `CONTEXT.md`; cost about 20
+minutes across this session before being scripted around.
+
+---
+
 ## What we work on next
 
 In order. The first two are prerequisites for trusting any later number.
 
-**1. Fix P2 (friction not applying).** Smallest fix, largest consequence — it silently
-invalidates every O5 result. Move the application after the final `world.reset()` and
-verify by observed residual change, not by readback.
+**1. ~~Fix P2~~ — done.** Tensor-API writes now survive, verified by a `[survive]` line.
 
-**2. Diagnose P1 (identity fails under fast motion).** Test the half-step hypothesis by
+**2. Re-run the excitation test, then diagnose P1.** The 5.98% failure was measured on the
+*unauthored* plant — point masses, no rotational inertia, wrong COMs. The plant has since
+changed substantially, so the number may have moved on its own. Re-measure before
+investigating.
+
+If it persists: diagnose P1 (identity fails under fast motion). Test the half-step hypothesis by
 sampling state before and after the step and evaluating the model both ways. If that is not
 it, check the Coriolis sign convention and whether armature is actually present in the
 articulation. **Nothing downstream is trustworthy until this closes.**
 
-**3. Settle P6 (hand mass).** Read `panda_hand`'s mass straight off the prim and compare
-with the URDF. Cheap, and it decides whether the reference vector in the handoff is right.
+**3. ~~Settle P6~~ — done.** Resolved into the inertial authoring above.
 
 **4. Write `schema/telemetry_v0.yaml` and the Parquet writer.** This is the week-1 handoff
 artifact and the analysis side is blocked on it. Should carry `tau_measured`, `tau_applied`,

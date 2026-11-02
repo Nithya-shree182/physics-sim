@@ -530,6 +530,37 @@ TRAY_COLOR = (0.95, 0.72, 0.12)
 
 ROBOT_PRIM = "/World/Franka"
 ROBOT_USD_SUBPATH = "/Isaac/Robots/FrankaRobotics/FrankaPanda/franka.usd"
+
+# ══════════════════════════════════════════════════════════════════════════════════════
+# Inertial parameters: the shipped asset is NOT dynamically usable
+# ══════════════════════════════════════════════════════════════════════════════════════
+# MEASURED (pal_inertia_dump.py). The USD asset and the URDF describe different robots:
+#
+#   mass      differs per link by up to 4.5x (total forced to exactly 18.0000 kg)
+#   COM       EVERY body's centre of mass is exactly [0, 0, 0] in the asset, while the
+#             URDF has real offsets up to 120 mm (panda_link4)
+#   inertia   EVERY body is ~1e-6 kg*m^2. Confirmed by round trip: writing [0.1, 0.2, 0.3]
+#             reads back [0.1, 0.2, 0.3] exactly, so the API is in kg*m^2 and the asset
+#             really does ship with essentially no rotational inertia. The URDF has
+#             ixx = 0.703 on panda_link1; the asset has 0.000002.
+#
+# Dynamically the shipped asset is a stick figure of point masses sitting on the joint
+# axes. That is why g(q) from the asset is exactly zero on joints 3 and 5 at the home
+# pose — with every COM on a joint axis, gravity produces no moment about it.
+#
+# So the plant is AUTHORED from the URDF at scene build. Confirmed to work: after setting
+# masses, COMs and inertias from panda_arm_hand.urdf, Isaac Sim produced
+#     g(q) = [0, -4.5975, -0.6364, 22.8857, 0.6229, 2.4936, 0.0001]
+# against the analysis side's independent Pinocchio model from the same URDF
+#     g(q) = [0, -4.58,   -0.64,   22.88,   0.62,   2.50,   0]
+# — agreement to rounding on all seven joints, from two independent engines.
+#
+# This is not cosmetic. Without it the twin and the plant differ by up to 13.65% of a
+# joint's torque limit before anything is injected — about 0.6 kg of phantom payload —
+# which would be attributed to a payload or a fault. Section 9 calls for a mismatch that
+# is CHOSEN and quantified; inheriting this one by accident is the opposite.
+URDF_PATH = "/workspace/assets/panda_arm_hand.urdf"
+AUTHOR_INERTIAL_FROM_URDF = True
 END_EFFECTOR_PRIM = "/World/Franka/panda_rightfinger"
 # [ASSET] Fingertip TCP offset along the hand's Z axis. Physyk uses this same constant for
 # IK targeting, and it is the point the Jacobian of O2/O3 must be taken at — a wrench

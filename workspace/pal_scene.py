@@ -336,6 +336,80 @@ print(f"[arm] {robot.num_dof} DOFs: {robot.dof_names}", flush=True)
 # compliance by zeroing the position gains, which leaves the drive in position mode and
 # still fights an applied force. The "torque" entry in DRIVE_MODES is the fallback.
 
+# ── 11b. Author the inertial parameters from the URDF ─────────────────────────────────
+# The shipped asset has all centres of mass at the link origins and ~1e-6 kg*m^2 of
+# rotational inertia everywhere — dynamically a stick figure of point masses. See the
+# note on AUTHOR_INERTIAL_FROM_URDF in pal_config.py for the measurements. Overwriting
+# them from the URDF makes the plant and the analysis side's Pinocchio twin agree on
+# one parameter set, so the only mismatch left is the one we deliberately introduce.
+inertial_report = {"authored": False}
+if cfg.AUTHOR_INERTIAL_FROM_URDF:
+    banner("Authoring inertial parameters from the URDF")
+    try:
+        import xml.etree.ElementTree as ET
+        urdf_root = ET.parse(cfg.URDF_PATH).getroot()
+        U = {}
+        for link in urdf_root.findall("link"):
+            it = link.find("inertial")
+            if it is None:
+                continue
+            mnode, onode, inode = it.find("mass"), it.find("origin"), it.find("inertia")
+            U[link.get("name")] = {
+                "mass": float(mnode.get("value")),
+                "com": [float(x) for x in onode.get("xyz").split()]
+                       if onode is not None and onode.get("xyz") else [0.0, 0.0, 0.0],
+                "diag": [float(inode.get("ixx")), float(inode.get("iyy")), float(inode.get("izz"))],
+            }
+
+        body_names = list(articulation.body_names)
+        nb = len(body_names)
+        before_mass = np.asarray(articulation.get_body_masses()).reshape(nb).copy()
+        g_before = np.asarray(articulation.get_generalized_gravity_forces()).flatten()[:arm_dof].copy()
+
+        masses = np.array([U[b]["mass"] if b in U else float(before_mass[i])
+                           for i, b in enumerate(body_names)], dtype=np.float32)
+        coms = np.array([U[b]["com"] if b in U else [0.0, 0.0, 0.0]
+                         for b in body_names], dtype=np.float32)
+        diags = np.array([U[b]["diag"] if b in U else [1e-3] * 3
+                          for b in body_names], dtype=np.float32)
+        quats = np.tile(np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32), (nb, 1))
+
+        articulation.set_body_masses(masses.reshape(1, nb))
+        articulation.set_body_coms(coms.reshape(1, nb, 3), quats.reshape(1, nb, 4))
+        try:
+            articulation.set_body_inertias(diags.reshape(1, nb, 3))
+        except Exception:
+            full = np.zeros((nb, 9), dtype=np.float32)
+            full[:, 0], full[:, 4], full[:, 8] = diags[:, 0], diags[:, 1], diags[:, 2]
+            articulation.set_body_inertias(full.reshape(1, nb, 9))
+
+        robot.set_joint_positions(home_full)
+        for _ in range(200):
+            world.step(render=False)
+        g_after = np.asarray(articulation.get_generalized_gravity_forces()).flatten()[:arm_dof]
+        back = np.asarray(articulation.get_body_masses()).reshape(nb)
+
+        print(f"  bodies authored   {nb}", flush=True)
+        print(f"  total mass        {before_mass.sum():.4f} -> {back.sum():.4f} kg", flush=True)
+        print(f"  mass readback OK  {bool(np.allclose(back, masses, atol=1e-4))}", flush=True)
+        print(f"  g(q) before       {np.round(g_before, 4)}", flush=True)
+        print(f"  g(q) after        {np.round(g_after, 4)}", flush=True)
+        shift = np.abs(g_after - g_before) / cfg.TAU_MAX
+        print(f"  shift (% of limit){np.round(100 * shift, 2)}", flush=True)
+        print(f"  worst joint {int(np.argmax(shift)) + 1} moved by "
+              f"{100 * shift.max():.2f}% of its limit — that is the accidental", flush=True)
+        print(f"  twin/plant mismatch we were carrying before this step.", flush=True)
+
+        inertial_report = {
+            "authored": True, "source": cfg.URDF_PATH, "bodies": body_names,
+            "masses": masses.tolist(), "coms": coms.tolist(), "inertia_diag": diags.tolist(),
+            "g_before": g_before.tolist(), "g_after": g_after.tolist(),
+            "mass_readback_ok": bool(np.allclose(back, masses, atol=1e-4)),
+        }
+    except Exception as e:
+        print(f"[WARN] inertial authoring failed, asset values left in place: {e}", flush=True)
+        inertial_report = {"authored": False, "error": str(e)}
+
 # ── 12. Apply the realism configuration ────────────────────────────────────────────────
 banner("Arm configuration")
 
@@ -520,10 +594,40 @@ if cfg.APPLY_ARMATURE:
     except Exception as e:
         print(f"[WARN] armature not applied: {e}", flush=True)
 
-world.reset()
+# NO world.reset() HERE. Measured: world.reset() restores the articulation from USD and
+# silently discards everything written through the tensor API — body masses, centres of
+# mass, inertias, joint friction and armature all revert to the asset's values. The
+# authoring above reported success and the readbacks confirmed it, and a reset at this
+# point threw all of it away: the gravity check downstream was reading the stock asset
+# again while the log claimed the URDF parameters were in place.
+#
+# Anything set through the tensor API must be applied AFTER the final reset, and verified
+# after it too. A readback taken immediately after the write proves nothing.
 robot.set_joint_positions(home_full)
-for _ in range(60):
+# SingleManipulator has no set_joint_position_targets; the batched view does.
+try:
+    articulation.set_joint_position_targets(home_full.reshape(1, -1))
+except Exception as e:
+    print(f"[WARN] could not set position targets: {e}", flush=True)
+for _ in range(300):
     world.step(render=False)
+
+# Verify the authored parameters actually survived into the run.
+if inertial_report.get("authored"):
+    _m_live = np.asarray(articulation.get_body_masses()).flatten()
+    _f_live = np.asarray(articulation.get_friction_coefficients()).flatten()[:arm_dof]
+    _a_live = np.asarray(articulation.get_armatures()).flatten()[:arm_dof] \
+        if hasattr(articulation, "get_armatures") else None
+    _m_ok = bool(np.allclose(_m_live[:len(inertial_report["masses"])],
+                             inertial_report["masses"], atol=1e-4))
+    _f_ok = bool(np.any(_f_live > 1e-6))
+    print(f"\n[survive] body masses kept: {_m_ok}   friction nonzero: {_f_ok}"
+          + (f"   armature: {np.round(_a_live, 5)}" if _a_live is not None else ""), flush=True)
+    if not _m_ok:
+        print("[survive] WARNING: authored masses did not survive — a reset ran after "
+              "authoring. Every downstream number is the stock asset.", flush=True)
+    inertial_report["survived_reset"] = _m_ok
+    inertial_report["friction_live"] = _f_live.tolist()
 
 # ── 13. Dynamics API probe ─────────────────────────────────────────────────────────────
 # Objective O1 needs the mass matrix, the gravity term, the Coriolis term and the
@@ -715,6 +819,7 @@ report = {
         "armature_choice": "physical" if np.allclose(cfg.ARMATURE, cfg.ARMATURE_PHYSICAL) else "isaaclab",
     },
     "payload_kg": PAYLOAD_KG,
+    "inertial_authoring": inertial_report,
     "scene": {
         "backdrop": BACKGROUND, "ground_tint": list(cfg.GROUND_TINT),
         "camera": {"position": list(cfg.CAM_POSITION), "look_at": list(cfg.CAM_LOOK_AT),

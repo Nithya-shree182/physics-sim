@@ -41,6 +41,7 @@ docker run --name "$NAME" --init --rm --gpus all --network host \
   -v "$CACHE/glcache:/root/.cache/nvidia/GLCache:rw" \
   -v "$CACHE/computecache:/root/.nv/ComputeCache:rw" \
   -v "$ROOT/workspace:/workspace:rw" \
+  -v "$ROOT/assets/franka_panda:/workspace/assets:ro" \
   -v "$ROOT/out:/workspace/out:rw" \
   -v "$ROOT/../Physyk_AI-master/workspace:/physyk_workspace:ro" \
   -w /workspace --entrypoint /isaac-sim/python.sh \
