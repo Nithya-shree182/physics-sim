@@ -2,8 +2,10 @@
 
 This is the "model torque" side of the residual:
 
-    residual r = tau_model - tau_measured
-    tau_model  = M(q) qdd + C(q, qd) qd + g(q)
+    residual r = tau_measured - tau_model
+    tau_model  = M(q) qdd + C(q, qd) qd + g(q) + tau_f(qd)
+
+where tau_f is joint friction (see below), which Pinocchio's rnea does not include.
 
 It must stay independent of the simulator: nothing here reads Isaac Sim. The only inputs are
 the URDF and the handful of settings below, each with its source.
@@ -16,11 +18,16 @@ Settings that change M(q) or g(q), and where they come from:
     set on the model as model.armature, and Pinocchio adds it to the diagonal of M and as
     armature * qdd in rnea. gravity_check.py verifies that the installed Pinocchio does this.
   - Gravity is (0, 0, -9.81), set explicitly.
+  - Friction is the Gaz et al. 2019 sigmoid (supplementary material, Table I), the same model
+    and values as dev's pal_config.friction_sigmoid() and docs/SOURCES.md. It is smooth
+    through zero velocity and exactly zero at rest, so it does not affect the gravity check.
+    Each joint's friction can be scaled (friction_scale), which the synthetic plant uses for
+    the deliberate 1.15x mismatch and for friction faults.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -36,12 +43,26 @@ ARMATURE_DEFAULT = 0.0061      # kg*m^2 per arm joint, matches dev's pal_config.
 FINGER_OPEN = 0.04             # m per finger, fully open
 GRAVITY = (0.0, 0.0, -9.81)
 
+# Gaz et al. 2019, supplementary material Table I: tau_f(qd) = phi1/(1+exp(-phi2(qd+phi3)))
+# - phi1/(1+exp(-phi2 phi3)). Same values as dev's pal_config.FRICTION_SIGMOID_PHI1..3.
+FRICTION_PHI1 = np.array([0.54615, 0.87224, 0.64068, 1.27940, 0.83904, 0.30301, 0.56489])        # N*m
+FRICTION_PHI2 = np.array([5.1181, 9.0657, 10.136, 5.5903, 8.3469, 17.133, 10.336])               # s/rad
+FRICTION_PHI3 = np.array([0.039533, 0.025882, -0.046070, 0.036194, 0.026226, -0.021047, 0.0035526])  # rad/s
+
+
+def friction_sigmoid(qd) -> np.ndarray:
+    """Joint friction torque (N*m) for a 7-vector of joint velocities. Zero at rest."""
+    qd = np.asarray(qd, dtype=float)
+    a, b, c = FRICTION_PHI1, FRICTION_PHI2, FRICTION_PHI3
+    return a / (1.0 + np.exp(-b * (qd + c))) - a / (1.0 + np.exp(-b * c))
+
 
 @dataclass
 class PandaModel:
     model: pin.Model
     data: pin.Data
     ee_frame: str
+    friction_scale: np.ndarray = field(default_factory=lambda: np.ones(7))
 
     @property
     def armature(self) -> np.ndarray:
@@ -86,10 +107,20 @@ class PandaModel:
         full = pin.rnea(self.model, self.data, q, qd, np.zeros(self.nq))
         return full - self.g(q)
 
-    def tau_model(self, q, qd, qdd) -> np.ndarray:
-        """M(q) qdd + C(q, qd) qd + g(q), with armature."""
+    def friction(self, qd) -> np.ndarray:
+        """Joint friction torque tau_f(qd), scaled per joint by friction_scale."""
+        return self.friction_scale * friction_sigmoid(self._q(qd))
+
+    def tau_model(self, q, qd, qdd, include_friction: bool = True) -> np.ndarray:
+        """M(q) qdd + C(q, qd) qd + g(q) (+ tau_f(qd)), with armature."""
         q, qd, qdd = self._q(q), self._q(qd), self._q(qdd)
-        return pin.rnea(self.model, self.data, q, qd, qdd).copy()
+        tau = pin.rnea(self.model, self.data, q, qd, qdd).copy()
+        return tau + self.friction(qd) if include_friction else tau
+
+    def forward_dynamics(self, q, qd, tau) -> np.ndarray:
+        """Joint acceleration produced by joint torque tau, friction included."""
+        q, qd, tau = self._q(q), self._q(qd), self._q(tau)
+        return pin.aba(self.model, self.data, q, qd, tau - self.friction(qd)).copy()
 
     def jacobian(self, q, frame: str | None = None) -> np.ndarray:
         """6x7 geometric Jacobian in the world-aligned frame. Rows 0-2 linear (m/s per rad/s),
@@ -101,11 +132,17 @@ class PandaModel:
         )
         return np.array(J)
 
-    def ee_position(self, q, frame: str | None = None) -> np.ndarray:
+    def ee_pose(self, q, frame: str | None = None) -> tuple[np.ndarray, np.ndarray]:
+        """World position (m) and orientation as a unit quaternion (w, x, y, z)."""
         fid = self.model.getFrameId(frame or self.ee_frame)
         pin.forwardKinematics(self.model, self.data, self._q(q))
         pin.updateFramePlacements(self.model, self.data)
-        return self.data.oMf[fid].translation.copy()
+        oMf = self.data.oMf[fid]
+        quat = pin.Quaternion(oMf.rotation)
+        return oMf.translation.copy(), np.array([quat.w, quat.x, quat.y, quat.z])
+
+    def ee_position(self, q, frame: str | None = None) -> np.ndarray:
+        return self.ee_pose(q, frame)[0]
 
     def potential_energy(self, q) -> float:
         return float(pin.computePotentialEnergy(self.model, self.data, self._q(q)))
@@ -117,8 +154,10 @@ def load_panda(
     finger_open: float = FINGER_OPEN,
     gravity: tuple[float, float, float] = GRAVITY,
     ee_frame: str = "panda_hand",
+    friction: bool = True,
 ) -> PandaModel:
-    """Load the URDF as a 7-DOF arm with the fingers locked at `finger_open`."""
+    """Load the URDF as a 7-DOF arm with the fingers locked at `finger_open`.
+    friction=False gives a rigid-body-only model (friction_scale all zero)."""
     urdf = Path(urdf)
     if not urdf.is_file():
         raise FileNotFoundError(f"URDF not found: {urdf}")
@@ -146,4 +185,9 @@ def load_panda(
     if not model.existFrame(ee_frame):
         raise RuntimeError(f"end-effector frame '{ee_frame}' not in the model")
 
-    return PandaModel(model=model, data=model.createData(), ee_frame=ee_frame)
+    return PandaModel(
+        model=model,
+        data=model.createData(),
+        ee_frame=ee_frame,
+        friction_scale=np.ones(model.nv) if friction else np.zeros(model.nv),
+    )

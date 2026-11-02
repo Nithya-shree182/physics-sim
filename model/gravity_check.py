@@ -10,6 +10,7 @@ Two parts.
      - M(q) is symmetric and positive definite
      - rnea(q, 0, 0) equals g(q)
      - model.armature reaches both M(q) and rnea
+     - friction is zero at rest, and forward dynamics exactly inverts tau_model
      - torque limits from the URDF are [87 x4, 12 x3] N*m
 
 2. Comparison with the simulator's g(q), optional. At rest (qd = qdd = 0) the torque a joint
@@ -104,6 +105,17 @@ def run_self_tests(p: PandaModel, urdf: Path) -> bool:
     report("armature in rnea", np.allclose(dtau, p.armature * qdd, atol=1e-12),
            "torque increase equals armature * qdd" if np.allclose(dtau, p.armature * qdd, atol=1e-12)
            else f"torque increase {dtau.round(6).tolist()}, expected {(p.armature * qdd).round(6).tolist()}")
+
+    report("friction zero at rest", np.allclose(p.friction(np.zeros(7)), 0.0, atol=1e-12),
+           f"tau_f(0) = {p.friction(np.zeros(7)).round(12).tolist()}")
+
+    # The synthetic generator integrates forward dynamics and the residual uses inverse
+    # dynamics; they must be exact inverses, armature and friction included.
+    worst_inv = 0.0
+    for _ in range(20):
+        q, qd, tau = rng.uniform(-1.5, 1.5, 7), rng.uniform(-2.0, 2.0, 7), rng.uniform(-10, 10, 7)
+        worst_inv = max(worst_inv, np.max(np.abs(p.tau_model(q, qd, p.forward_dynamics(q, qd, tau)) - tau)))
+    report("forward dynamics inverts tau_model", worst_inv < 1e-9, f"worst difference {worst_inv:.2e} N*m")
 
     report("g(q) = dU/dq", worst_grad < 1e-4, f"worst difference {worst_grad:.2e} N*m over {len(qs)} poses")
     report("rnea(q,0,0) = g(q)", worst_rnea < 1e-9, f"worst difference {worst_rnea:.2e} N*m")

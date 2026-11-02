@@ -33,7 +33,17 @@ Model per joint (a = amplitude, b = steepness, c = velocity offset): `f(qd) = a 
 | Steepness | 5.118 | 9.066 | 10.136 | 5.590 | 8.347 | 17.133 | 10.336 | s/rad |
 | Velocity offset | 0.0395 | 0.0259 | -0.0461 | 0.0362 | 0.0262 | -0.0210 | 0.0036 | rad/s |
 
-The viscous + Coulomb + offset version is in Table III of the same PDF.
+The form and all 21 values above were cross-checked by dev against the PDF and are correct.
+
+The viscous + Coulomb + offset version, `tau_f = fv*qd + fc*sign(qd) + fo`, is in Table III of the same PDF (classical-identification column):
+
+| Joint | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
+|---|---|---|---|---|---|---|---|
+| fv (N·m·s/rad) | 0.0665 | 0.1987 | 0.0399 | 0.2257 | 0.1023 | −0.0132 | 0.0638 |
+| fc (N·m) | 0.2450 | 0.1523 | 0.1827 | 0.3591 | 0.2669 | 0.1658 | 0.2109 |
+| fo (N·m) | −0.1073 | −0.1566 | −0.0686 | −0.2522 | 0.0045 | 0.0910 | −0.0127 |
+
+Extraction pitfall: `pdftotext -layout` misaligns this table's row labels by one row. `pdftotext -raw` and `-table` keep each label with its own numbers, and give the values above, which match dev's `pal_config.py`. `fv,6` (std 12.26), `fo,5` (std 19.46) and `fo,7` (std 6.26) are not meaningful; dev clamps `fv,6` to zero.
 
 ## Caveats
 - The manufacturer publishes no dynamic parameters for the Panda. Gaz et al. is one robot's identification from 2019, so treat it as a realistic starting point, not ground truth.

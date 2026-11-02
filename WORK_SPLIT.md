@@ -45,13 +45,13 @@ Isaac Sim is only needed where data is produced. The dynamics model, residual ma
 ## 3. Shared contract (agree on day 1)
 
 ### 3.1 Residual definition
-`residual torque = model torque - measured torque`, that is
-`r = tau_model - tau_measured`, with `tau_model = M(q) * qdd + C(q, qd) * qd + g(q)`.
+`residual torque = measured torque - model torque`, that is
+`r = tau_measured - tau_model`, with `tau_model = M(q) * qdd + C(q, qd) * qd + g(q)`.
 
-- This is the agreed project definition. Every doc, script and plot uses this sign.
+- This is the definition in the project proposal (section 6), and it matches dev's `ARM_CONFIG.md` and `pal_config.py`. Every doc, script and plot uses this sign.
 - `tau_measured` is the effort the arm actually produced, as reported by the simulator (`tau_measured_*` in the telemetry frame).
 - `qdd` comes from filtered velocity differences.
-- Sign consequence: an unmodelled payload makes the arm need more torque than the model predicts, so `r` comes out negative. A model that overestimates the load gives a positive `r`.
+- Sign consequence: `r` is whatever torque the model did not account for. With an unmodelled payload, `r` equals the payload's own joint torque (for example its gravity torque `J^T * m * g` at the hand), with the same sign.
 - Attack detection also uses `commanded - measured` tracking error. A tampered waypoint that is faithfully executed gives a near-zero residual, so the residual alone does not cover it. State this in results.
 
 ### 3.2 Telemetry frame (v0, per physics step, one row)

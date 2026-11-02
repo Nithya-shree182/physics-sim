@@ -16,9 +16,8 @@ conventions:
     force in N. Gains and friction per RADIAN as returned by the articulation tensor API,
     never the per-degree values authored in USD (ARM_CONFIG.md section 1, the 57x trap).
   residual: >
-    r = tau_model - tau_measured (agreed project definition, WORK_SPLIT.md 3.1).
-    ARM_CONFIG.md and pal_config.py comments currently write tau_measured - tau_model and
-    need aligning. The residual is NOT stored in the frame; the analysis side computes it.
+    r = tau_measured - tau_model (project proposal section 6, WORK_SPLIT.md 3.1, same as
+    ARM_CONFIG.md). The residual is NOT stored in the frame; the analysis side computes it.
   dof_order: >
     Arm joints only, panda_joint1..panda_joint7, as columns _0.._6. The simulator returns
     9-DOF arrays (arm 0-6, fingers 7-8) for every per-DOF quantity. Slice [:7] for the arm
@@ -30,9 +29,12 @@ conventions:
   jacobian: >
     6x7, rows [vx, vy, vz, wx, wy, wz] (linear first, then angular), world frame, arm DOF
     columns only. Taken from get_jacobians()[0, ee_body_index, :, :7]. get_jacobians has
-    shape (1, 10, 6, 9): 10 bodies because the fixed base has no row. ee_body_index and
-    the body it refers to are recorded in the run manifest.
-  rate: One row per PHYSICS step (400 Hz default, PAL_PHYSICS_HZ override), not per render.
+    shape (1, 10, 6, 9): 10 bodies because the fixed base has no row, so row i is body i+1.
+    Use ee_body_index = 7, which is panda_hand (verified by dev, docs/PINOCCHIO_HANDOFF.md
+    section 6). Do NOT use the last row (9, panda_rightfinger): it sits ~2.5 cm off the hand
+    centreline and adds a spurious moment. The Pinocchio model uses the panda_hand frame
+    to match. ee_body_index is still recorded in the run manifest.
+  rate: One row per PHYSICS step (1000 Hz default, PAL_PHYSICS_HZ override), not per render.
 
 file:
   format: parquet
@@ -115,12 +117,12 @@ manifest:
     - git_commit              # of the code that produced the run
     - machine                 # e.g. omen-5090
     - isaac_sim_version       # 6.0.1
-    - physics_hz              # 400 unless overridden
+    - physics_hz              # 1000 unless overridden
     - solver                  # {type: TGS, position_iterations: 32, velocity_iterations: 4}
     - drive_mode
     - asset                   # USD path, and which URDF the link masses were read from
     - ee_frame                # prim/body the Jacobian and ee_pos refer to
-    - ee_body_index           # index into get_jacobians() axis 1
+    - ee_body_index           # index into get_jacobians() axis 1; 7 = panda_hand
     - armature                # per joint, kg*m^2 (0.0061 x 7 by default)
     - friction_source         # nvidia | gaz
     - plant_friction_scale    # 1.15 by default
