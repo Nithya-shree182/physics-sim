@@ -1,0 +1,132 @@
+# Physics Attestation Layer — telemetry frame, version 0 (DRAFT, needs dev's sign-off)
+#
+# The contract between the simulator side (dev, Person A) and the analysis side (Nithya,
+# Person B). Dev writes one row per physics step; the analysis side reads it. Any change
+# needs both people to agree and a version bump.
+#
+# Source of the API names, array shapes and units: ARM_CONFIG.md, "Measured results — first
+# audit run" (Isaac Sim 6.0.1, RTX 5090), and workspace/pal_config.py.
+
+schema: pal_telemetry
+version: 0
+
+conventions:
+  units: >
+    SI throughout. Angles in rad, angular velocity in rad/s, torque in N*m, length in m,
+    force in N. Gains and friction per RADIAN as returned by the articulation tensor API,
+    never the per-degree values authored in USD (ARM_CONFIG.md section 1, the 57x trap).
+  residual: >
+    r = tau_model - tau_measured (agreed project definition, WORK_SPLIT.md 3.1).
+    ARM_CONFIG.md and pal_config.py comments currently write tau_measured - tau_model and
+    need aligning. The residual is NOT stored in the frame; the analysis side computes it.
+  dof_order: >
+    Arm joints only, panda_joint1..panda_joint7, as columns _0.._6. The simulator returns
+    9-DOF arrays (arm 0-6, fingers 7-8) for every per-DOF quantity. Slice [:7] for the arm
+    columns; the two finger DOFs go in the gripper columns only.
+  gravity_sign: >
+    g_i is get_generalized_gravity_forces() as returned. The first audit showed it equal to
+    tau_measured at rest, i.e. it is the torque the joint must supply to hold the arm.
+  mass_matrix: 7x7 arm block of get_mass_matrices()[0, :7, :7], columns M_<row>_<col>.
+  jacobian: >
+    6x7, rows [vx, vy, vz, wx, wy, wz] (linear first, then angular), world frame, arm DOF
+    columns only. Taken from get_jacobians()[0, ee_body_index, :, :7]. get_jacobians has
+    shape (1, 10, 6, 9): 10 bodies because the fixed base has no row. ee_body_index and
+    the body it refers to are recorded in the run manifest.
+  rate: One row per PHYSICS step (400 Hz default, PAL_PHYSICS_HZ override), not per render.
+
+file:
+  format: parquet
+  one_file_per_run: "<run_id>.parquet"
+  manifest: "<run_id>.json, same folder, fields listed under manifest below"
+  location: data/ (not in git)
+
+# Column groups. "{i}" expands over the given range. dtype is the parquet type.
+# nullable: true means NaN/null is allowed (for example no commanded trajectory).
+columns:
+  - group: time
+    fields:
+      - {name: t, dtype: float64, unit: s, source: "simulation time since run start"}
+      - {name: step, dtype: int64, unit: "-", source: "physics step counter, starts at 0"}
+      - {name: dt, dtype: float64, unit: s, source: "physics step size of this step"}
+
+  - group: state
+    fields:
+      - {name: "q_{i}", range: [0, 6], dtype: float64, unit: rad, source: "get_joint_positions()[0, :7]"}
+      - {name: "qd_{i}", range: [0, 6], dtype: float64, unit: rad/s, source: "get_joint_velocities()[0, :7]"}
+
+  - group: efforts
+    fields:
+      - {name: "tau_applied_{i}", range: [0, 6], dtype: float64, unit: N*m, source: "get_applied_joint_efforts()[0, :7]"}
+      - {name: "tau_measured_{i}", range: [0, 6], dtype: float64, unit: N*m, source: "get_measured_joint_efforts()[0, :7]"}
+
+  - group: dynamics_terms
+    note: "Simulator's own decomposition. Used to cross-check the independent Pinocchio model, never as tau_model."
+    fields:
+      - {name: "g_{i}", range: [0, 6], dtype: float64, unit: N*m, source: "get_generalized_gravity_forces()[0, :7]"}
+      - {name: "coriolis_{i}", range: [0, 6], dtype: float64, unit: N*m, source: "get_coriolis_and_centrifugal_forces()[0, :7]"}
+      - {name: "M_{r}_{c}", rows: [0, 6], cols: [0, 6], dtype: float64, unit: kg*m^2, source: "get_mass_matrices()[0, :7, :7]"}
+
+  - group: kinematics
+    fields:
+      - {name: "J_{r}_{c}", rows: [0, 5], cols: [0, 6], dtype: float64, unit: "m/rad (rows 0-2), rad/rad (rows 3-5)", source: "get_jacobians()[0, ee_body_index, :, :7]"}
+      - {name: "ee_pos_{a}", axes: [x, y, z], dtype: float64, unit: m, source: "world position of the manifest's ee_frame"}
+      - {name: "ee_quat_{a}", axes: [w, x, y, z], dtype: float64, unit: "-", source: "world orientation of ee_frame, unit quaternion"}
+
+  - group: commands
+    note: "What the controller was asked to do this step. Needed for the tracking-error signal."
+    fields:
+      - {name: "q_cmd_{i}", range: [0, 6], dtype: float64, unit: rad, nullable: true, source: "trajectory setpoint"}
+      - {name: "qd_cmd_{i}", range: [0, 6], dtype: float64, unit: rad/s, nullable: true, source: "trajectory setpoint"}
+      - {name: "qdd_cmd_{i}", range: [0, 6], dtype: float64, unit: rad/s^2, nullable: true, source: "trajectory setpoint"}
+
+  - group: gripper
+    fields:
+      - {name: "finger_pos_{i}", range: [0, 1], dtype: float64, unit: m, source: "get_joint_positions()[0, 7:9]"}
+      - {name: "finger_force_{i}", range: [0, 1], dtype: float64, unit: N, source: "get_measured_joint_efforts()[0, 7:9]"}
+
+  - group: labels
+    note: "Ground truth for evaluation. Constant per run except the *_active flags."
+    fields:
+      - {name: run_id, dtype: string, unit: "-"}
+      - {name: traj_type, dtype: string, unit: "-", allowed: [hold, slow_reference, trapezoidal, s_curve, torque_aware, pick, excitation, push]}
+      - {name: drive_mode, dtype: string, unit: "-", allowed: [position_stiff, position_soft, impedance, torque, asset_stock]}
+      - {name: payload_kg, dtype: float64, unit: kg}
+      - {name: payload_attached, dtype: bool, unit: "-"}
+      - {name: fault_type, dtype: string, unit: "-", allowed: [none, friction, backlash, stuck_joint, delay]}
+      - {name: fault_joint, dtype: int8, unit: "-", note: "0-6, or -1 when fault_type is none"}
+      - {name: fault_param, dtype: float64, unit: "depends on fault_type", nullable: true}
+      - {name: fault_active, dtype: bool, unit: "-"}
+      - {name: attack_type, dtype: string, unit: "-", allowed: [none, altered_waypoint, spoofed_setpoint]}
+      - {name: attack_active, dtype: bool, unit: "-"}
+      - {name: "push_force_{a}", axes: [x, y, z], dtype: float64, unit: N, nullable: true, source: "known applied force for the validation push, world frame"}
+
+# Optional, not required by the validator. Large (66 columns); log only when needed.
+optional_columns:
+  - group: joint_reaction_wrenches
+    fields:
+      - {name: "wrench_{b}_{k}", bodies: [0, 10], components: [0, 5], dtype: float64, unit: "N (0-2), N*m (3-5)", source: "get_measured_joint_forces()[0, :, :]"}
+
+# One JSON per run, next to the parquet file.
+manifest:
+  required:
+    - schema_version          # 0
+    - run_id
+    - created_utc
+    - git_commit              # of the code that produced the run
+    - machine                 # e.g. omen-5090
+    - isaac_sim_version       # 6.0.1
+    - physics_hz              # 400 unless overridden
+    - solver                  # {type: TGS, position_iterations: 32, velocity_iterations: 4}
+    - drive_mode
+    - asset                   # USD path, and which URDF the link masses were read from
+    - ee_frame                # prim/body the Jacobian and ee_pos refer to
+    - ee_body_index           # index into get_jacobians() axis 1
+    - armature                # per joint, kg*m^2 (0.0061 x 7 by default)
+    - friction_source         # nvidia | gaz
+    - plant_friction_scale    # 1.15 by default
+    - friction_values         # what actually reached the plant, per joint
+    - torque_convention       # unverified | link_side | motor_side
+    - gravity                 # [0, 0, -9.81]
+    - seed
+    - payload_kg
+    - finger_q_ref            # finger position held during the run, m
