@@ -1,0 +1,360 @@
+# Building the independent model — a handoff to the analysis side
+
+You are building the twin's dynamics model in Pinocchio. This document is everything the
+simulator side has established about the arm, written so you can build against it without
+waiting for log files, plus the traps we have already fallen into so you don't repeat them.
+
+Everything here was measured on Isaac Sim 6.0.1 with
+`Isaac/Robots/FrankaRobotics/FrankaPanda/franka.usd`, unless marked otherwise.
+
+---
+
+## 1. The one thing that must not be got wrong
+
+**Your model must not know about the payload.** That is the entire reason your side exists.
+
+We tested the alternative. Reading `g(q)` back from the simulator while it carries a 3 kg
+object gives:
+
+```
+tau_measured - g(q)_from_simulator  =  [0, -0.0006, 0, 0.0001, 0, 0, 0]
+```
+
+Zero, because the simulator's gravity term already contains the payload. Comparing against
+it cancels exactly the signal we are trying to measure. Your Pinocchio model, built from a
+URDF that describes an empty arm, is the only thing in the system that provides an
+independent prediction. Keep it that way: do not "improve" it by feeding it the payload.
+
+The same applies to the gripper. `panda_hand` (0.73 kg) and two fingers (0.1 kg each) are
+**part of the robot**, not part of the payload. They are in the URDF and your model must
+include them, or every empty gripper will report 0.93 kg of phantom load.
+
+## 2. Minimal working setup
+
+```python
+import numpy as np, pinocchio as pin
+
+model = pin.buildModelFromUrdf("panda_arm_hand.urdf")
+data  = model.createData()
+
+model.gravity.linear = np.array([0.0, 0.0, -9.81])
+model.armature       = np.full(model.nv, 0.0061)     # CONTRACT — see section 3
+
+tau_model = pin.rnea(model, data, q, qd, qdd)        # M(q)qdd + C(q,qd)qd + g(q)
+```
+
+Split terms, if you need them for the torque-breakdown chart (proposal section 8):
+
+```python
+g   = pin.computeGeneralizedGravity(model, data, q)   # gravity alone
+M   = pin.crba(model, data, q)                        # mass matrix alone
+nle = pin.nonLinearEffects(model, data, q, qd)        # C·qd + g
+```
+
+`pin.crba` fills only the upper triangle. Symmetrise before using it:
+`M = np.triu(M) + np.triu(M, 1).T`.
+
+**URDF location.** `panda_arm_hand.urdf` (307 lines, 9 joints, arm + hand) currently lives
+in a sibling project at `Physyk_AI-master/assets/franka_panda/`. It should be copied into
+this repo — depending on a path outside it is fragile. `panda.urdf` (216 lines) is the arm
+without the hand; do not use it, the 0.93 kg of gripper matters.
+
+## 3. Contracts — values that must match on both sides
+
+Changing either of these on one side alone silently corrupts the residual.
+
+### 3.1 Armature = 0.0061 kg·m² on all seven joints
+
+**DECIDED 2026-11-02.** The plant keeps the physical reflected rotor inertia; you add the
+matching term in Pinocchio.
+
+A Panda joint drives through a gearbox of ratio `N`. When the joint accelerates at `q̈` the
+motor rotor accelerates at `N·q̈`, and the torque to spin it up is `N²·I_rotor·q̈`. That
+`N²·I_rotor` is the armature, and it adds to the **diagonal of the mass matrix**:
+
+```
+tau = [ M(q) + diag(a) ] qdd  +  C qd  +  g
+```
+
+**URDF has no field for rotor inertia** — it describes links and joints, not motors. So
+`pin.crba` from a bare URDF returns `M_rigid` only, and you must set `model.armature`
+explicitly.
+
+Size of the error if you don't: `0.0061 · q̈`, up to **0.12 N·m** at joint 6/7's 20 rad/s²
+acceleration limit. Small against the 5% calibration tolerance — but it is proportional to
+`q̈`, which makes it **indistinguishable from payload**, because a payload also appears as
+extra inertia proportional to `q̈`. Using the lever arm we measured (0.472 m at home) it is
+worth about **27 g of phantom payload**: negligible against a 3 kg load, **27% against the
+0.1 kg bottom of the test ladder**, and systematic, so averaging will not remove it.
+
+For reference, Isaac Lab's own Franka config uses `1e-3`. That is a numerical stabiliser,
+not a physical claim. Do not mix it into a physical model.
+
+### 3.2 Gravity = −9.81 m/s² in +Z
+
+Set explicitly on both sides. Note that Isaac Lab's `FRANKA_PANDA_HIGH_PD_CFG` **disables
+gravity** — it is built for task-space control where gravity compensation happens
+elsewhere. We do not do that; `g(q)` is a measured physical quantity here.
+
+## 4. Friction — Pinocchio does not model it
+
+`rnea` is rigid-body dynamics only. Friction is yours to add:
+
+```python
+tau_model = pin.rnea(model, data, q, qd, qdd) + friction(qd)
+```
+
+### What the asset ships
+
+**Nothing.** Four independent confirmations: the URDF declares `friction="0.0"` on every
+revolute joint; NVIDIA's sysid tutorial states the packaged `franka.usda` "authors no
+Newton joint friction at all"; Isaac Lab's `FRANKA_PANDA_CFG` sets viscous friction to 0.0;
+and we read `jointFriction = 0.0` directly off the joint prim.
+
+This matters for honesty of results: a frictionless plant compared against a frictionless
+model gives a residual bounded only by solver noise, and any detection rate measured that
+way is meaningless. The simulator side therefore injects friction deliberately.
+
+### Which values
+
+From Gaz et al. 2019, read directly from the supplementary PDF in `docs/references/`
+(not from memory, not from a text extraction). **The paper gives two models and they are
+not interchangeable.**
+
+**Model A — Table I, the one the paper actually fits.** A sigmoid in joint velocity:
+
+```
+tau_f,j(qd) = phi1 / (1 + exp(-phi2*(qd + phi3)))  -  phi1 / (1 + exp(-phi2*phi3))
+```
+
+| | j1 | j2 | j3 | j4 | j5 | j6 | j7 | units |
+|---|---|---|---|---|---|---|---|---|
+| phi1 | 0.54615 | 0.87224 | 0.64068 | 1.27940 | 0.83904 | 0.30301 | 0.56489 | N·m |
+| phi2 | 5.1181 | 9.0657 | 10.136 | 5.5903 | 8.3469 | 17.133 | 10.336 | s/rad |
+| phi3 | 0.039533 | 0.025882 | −0.046070 | 0.036194 | 0.026226 | −0.021047 | 0.0035526 | rad/s |
+
+The second term makes `tau_f(0) = 0` exactly. **Use this one.** A `sign()` term chatters
+around zero velocity, and the arm sits near zero velocity at every waypoint of a
+pick-and-place — precisely where chatter would look like a residual spike and be
+classified as a fault. Implemented as `friction_sigmoid()` in `workspace/pal_config.py`.
+
+**Model B — Table III, linear.** `tau_f = fv·qd + fc·sign(qd) + fo`
+
+| | j1 | j2 | j3 | j4 | j5 | j6 | j7 |
+|---|---|---|---|---|---|---|---|
+| fv | 0.0665 | 0.1987 | 0.0399 | 0.2257 | 0.1023 | **−0.0132** | 0.0638 |
+| fc | 0.2450 | 0.1523 | 0.1827 | 0.3591 | 0.2669 | 0.1658 | 0.2109 |
+| fo | −0.1073 | −0.1566 | −0.0686 | −0.2522 | 0.0045 | 0.0910 | −0.0127 |
+
+The paper adopts this form only "because of their linearity in the defining parameters" and
+warns it "may suffer from sudden discontinuities in the neighbourhood of qd = 0".
+
+**Do not omit `fo`.** It is a real identified parameter — a constant per-joint torque that
+does not vanish at zero velocity — and it is easy to miss. Dropping it biases the residual
+by up to 0.25 N·m on joint 4, which a payload estimator absorbs as ~25 g of phantom mass.
+
+**Read the error bars before leaning on any of these.** `fv,6 = −0.0132` has a standard
+deviation of **12.26** — the estimate is noise, and negative viscous friction is physically
+impossible. We clamp it to zero. `fo,5` (std 19.46) and `fo,7` (std 6.26) are likewise not
+meaningful.
+
+### A caveat on all of it
+
+The manufacturer publishes no dynamic parameters for the Panda. Gaz et al. is one robot's
+identification from 2019. NVIDIA's sysid tutorial produces different numbers again, and
+says of its own result that it is "a predictive fit, not a certificate of true joint
+friction". Treat friction as the least-known thing in the model, and expect the residual to
+carry the difference.
+
+### What this means for the fault list
+
+**DECIDED: stiction and bearing wear are kept indistinguishable.** PhysX on this build
+exposes one friction scalar per joint (no `PhysxJointAxisAPI`), so a Coulomb-type fault
+and a viscous-type fault arrive as the same change.
+
+**Reporting rule, not optional:** wherever this fault class appears — fault list, O5
+confusion matrix, dashboard alert panel, results tables — label it with **both** names,
+`friction (stiction / bearing wear)`. Never one alone. A single label would assert a
+distinction the plant cannot make.
+
+## 5. Arm parameters
+
+### Link masses (from the URDF; cross-check your parse against these)
+
+| link | kg |
+|---|---|
+| panda_link0 (base, fixed) | 0.6297 |
+| panda_link1 | 4.970684 |
+| panda_link2 | 0.646926 |
+| panda_link3 | 3.228604 |
+| panda_link4 | 3.587895 |
+| panda_link5 | 1.225946 |
+| panda_link6 | 1.666555 |
+| panda_link7 | 0.735522 |
+| panda_hand | 0.73 |
+| each finger | 0.1 |
+
+Total ≈ 18.0 kg, matching the datasheet. Full 3×3 inertia tensors are present for all 11
+links, so this is a real dynamic model and not a point-mass approximation.
+
+### Limits (datasheet; the URDF agrees exactly)
+
+| | j1 | j2 | j3 | j4 | j5 | j6 | j7 |
+|---|---|---|---|---|---|---|---|
+| q min (rad) | −2.8973 | −1.7628 | −2.8973 | −3.0718 | −2.8973 | −0.0175 | −2.8973 |
+| q max (rad) | 2.8973 | 1.7628 | 2.8973 | **−0.0698** | 2.8973 | 3.7525 | 2.8973 |
+| qd max (rad/s) | 2.175 | 2.175 | 2.175 | 2.175 | 2.61 | 2.61 | 2.61 |
+| qdd max (rad/s²) | 15 | 7.5 | 10 | 12.5 | 15 | 20 | 20 |
+| tau max (N·m) | 87 | 87 | 87 | 87 | 12 | 12 | 12 |
+
+**Joint 4 lives entirely at negative angles** and joint 6 cannot go below −0.0175. The
+reachable set is not a box centred on zero, which matters when you sample poses for the
+confidence sweep.
+
+Isaac Lab's flat asset sets velocity limits of 20/25 rad/s — roughly 10× the datasheet.
+That is RL headroom, not physics. We use the datasheet values.
+
+### Rated payload: 3 kg
+
+The test ladder is 0.1–3.0 kg. An earlier scene used 0.05 kg cubes — that is 0.49 N, about
+1.6% of rated payload, and under the residual noise floor. No estimator can converge on it.
+
+## 6. Reading the telemetry correctly
+
+### `tau_applied` is identically zero in position mode
+
+Measured. `get_applied_joint_efforts()` returns whatever was last written by
+`set_joint_efforts()`, and in position mode nothing ever is — the PD loop is internal to
+PhysX and never routes through that call.
+
+With a 3 kg payload at a fixed pose:
+
+```
+g(q) change      : [0, -9.573, 0, 14.688, 0, 2.730, 0]
+tau_measured     : [0, -9.574, 0, 14.688, 0, 2.730, 0]   <- tracks it exactly
+tau_applied      : [0,  0,     0,  0,     0, 0,     0]   <- does not move
+```
+
+**Consequence:** `r = tau_applied − tau_model` on a position-mode log reduces to
+`−tau_model`. It will appear to detect the payload perfectly while containing no
+measurement at all. In effort mode the two agree to within 0.44 N·m and either is fine.
+
+**Guard for your code:** read the control mode from the run manifest and refuse a
+position-mode log if the residual definition is `tau_applied`.
+
+### The Jacobian's last row is not the end effector
+
+`get_jacobians()` returns `(1, 10, 6, 9)` while the articulation reports **eleven** bodies.
+The Jacobian excludes the fixed base, so **row i ↔ body i+1**:
+
+```
+row 6 -> panda_link7      row 7 -> panda_hand
+row 8 -> panda_leftfinger row 9 -> panda_rightfinger
+```
+
+Verified by adding a known 3 kg mass to `panda_hand` and checking which row reproduces the
+measured change in `g(q)` via `tau = -J_v^T W`:
+
+| row | body | max error |
+|---|---|---|
+| **7** | **panda_hand** | **0.016 N·m** |
+| 9 | panda_rightfinger | 1.177 N·m |
+
+**Use row 7.** Row 9 is what a naive `[-1]` picks, and it is wrong because
+`panda_rightfinger` sits ~2.5 cm off the hand centreline — resolving a centreline load at
+an off-axis frame adds a spurious moment, which showed up as ~1 N·m of phantom torque on
+joints 3 and 5. That is worth ~215 g of phantom payload.
+
+Note `END_EFFECTOR_PRIM` in the scene config is `panda_rightfinger`. That is correct for the
+**gripper wrapper** (used for IK targeting) and wrong for the **Jacobian**. Different
+things; do not conflate them.
+
+### Angular quantities in USD are per DEGREE
+
+If you ever read drive gains or friction coefficients off the stage rather than through the
+tensor API, remember USD expresses angular drive stiffness and viscous friction **per
+degree**. The shipped asset authors `400.0` into a per-degree field, which simulates as
+22918 N·m/rad — 57× what was presumably intended. NVIDIA's own tutorial warns about exactly
+this. The tensor API (`get_gains`) reports per radian.
+
+## 7. Reference values to build against
+
+Home pose `q = [0, −0.785, 0, −2.356, 0, 1.571, 0.785]`, `qd = qdd = 0`, no payload,
+unmodified asset:
+
+```
+g(q)  =  [0.000, -1.655, 0.000, 20.077, 0.000, 0.856, 0.000]  N·m
+```
+
+At rest the whole model reduces to `g(q)`, and the simulator's measured torque matched this
+to **1 part in 10⁶**. If your Pinocchio model reproduces this vector, your URDF parse,
+gravity direction and joint ordering are all correct.
+
+**Caveat, unresolved.** A second test that explicitly re-authored `panda_hand`'s mass to
+0.73 kg produced `g(q) = [0, −2.176, 0, 20.874, 0, 1.004, 0]` at the same pose — about
+0.8 N·m higher on joint 4. The cause has not been established; the asset's natural hand mass
+may differ from the URDF's 0.73, or re-authoring the attribute may change how the fingers
+are accounted. **Use the first vector** (unmodified asset) as your reference and treat the
+discrepancy as an open question — it is ~4% on joint 2 and worth resolving before
+calibration sign-off.
+
+### Payload response (measured, at home)
+
+Gravity torque is exactly linear in payload mass: **4.6306 N·m per kg** on joint 4,
+maximum departure from a straight line **0.00038 N·m** across 0–5 kg. Effective lever arm
+at the tool centre: **0.472 m**.
+
+The full estimation chain — residual → `(J_vᵀ)⁺` → vertical force → mass — recovers known
+masses to **0.04%** across 0.1–3.0 kg when the arm is at rest. That is the ceiling, not the
+operating point: during motion you additionally face finite-difference `q̈` noise, friction,
+and the armature term.
+
+## 8. The confidence score needs rescaling before you use it
+
+Measured across five named poses with the corrected Jacobian row:
+
+| pose | σ_min | σ_max | c(q) | manipulability |
+|---|---|---|---|---|
+| home | 0.22485 | 1.80571 | 0.1245 | 7.962e-02 |
+| near_singular_extended | 0.03817 | 1.90949 | **0.0200** | 1.202e-02 |
+| near_singular_wrist | 0.17780 | 1.74304 | 0.1020 | 4.115e-02 |
+| folded | 0.18970 | 1.77999 | 0.1066 | 4.094e-02 |
+| horizontal_reach | 0.14971 | 1.85476 | 0.0807 | 9.016e-02 |
+
+Two problems.
+
+**`c(q)` never exceeds 0.13 anywhere, including the home pose.** The proposal says "a score
+near 1 means the pose is healthy"; on a 7-DOF arm that never happens, because σ_max/σ_min
+on a mixed Jacobian is dominated by the unit mismatch between its linear (m/s) and angular
+(rad/s) rows. Your plan already says "scaled so position and orientation rows are
+unit-consistent" — that is exactly right and it is necessary, not cosmetic. Scale the
+rotational rows by a characteristic length (the 0.472 m lever arm is a reasonable choice)
+before taking the SVD.
+
+**A scalar may be the wrong gate for O4.** We held a 1 kg object at the near-singular
+extended pose and the estimate was still accurate to 0.06% — because that singularity
+collapses some direction of the Jacobian but **not the vertical one**, and vertical is all
+the mass estimate uses. The gate was conservative, not protective. A direction-specific
+confidence — how much of the vertical axis lies in the Jacobian's well-conditioned subspace
+— would gate O4 far more precisely than a single `σ_min/σ_max`. Worth raising before the
+score is finalised.
+
+The 0.08 threshold currently in the config is a guess. Set it from a workspace sweep.
+
+## 9. What is verified, and what is not
+
+| Claim | Status |
+|---|---|
+| All 7 dynamics quantities available from the sim | **verified** (note: `get_mass_matrices()`, not `get_generalized_mass_matrices()`) |
+| `tau_measured = g(q)` at rest | **verified**, 1 part in 10⁶ |
+| `g(q)` and `J(q)` mutually consistent | **verified**, 0.016 N·m with row 7 |
+| Payload response linear, estimator chain correct | **verified**, 0.04% at rest |
+| Three-term identity closes on a slow trajectory | **verified**, 0.49% of limit — but that run was 98% gravity |
+| Three-term identity closes under fast motion | **FAILS at 5.98%** — see open problems |
+| Friction reaches the plant | **NO** — see open problems |
+| Telemetry at 1 kHz without dropped frames | **NO** — 0.42× real time |
+| An independent model exists | **NO** — this is your job; every `tau_model` so far came out of Isaac Sim |
+
+That last row is the important one. Until your Pinocchio model lands, this system can
+verify its own arithmetic but cannot attest to anything, because the thing being measured
+and the thing measuring it are the same simulator.

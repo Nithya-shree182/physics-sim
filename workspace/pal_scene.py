@@ -296,9 +296,15 @@ wrist_light.CreateRadiusAttr(L["wrist"]["radius"])
 wrist_light.CreateColorAttr(Gf.Vec3f(*L["wrist"]["color"]))
 UsdGeom.Xformable(wrist_light).AddTranslateOp().Set(Gf.Vec3d(*L["wrist"]["translate"]))
 
-# ── 10. Cameras ────────────────────────────────────────────────────────────────────────
+# ── 10. Camera ────────────────────────────────────────────────────────────────────────
 # The isometric three-quarter overview, reproduced exactly from Physyk: this framing was
 # settled after several correction passes, and the dark-blue grid behind it is the backdrop.
+#
+# This is the only camera in the scene. Physyk also carried a wrist camera, but it is
+# deliberately not reproduced: it frames the gripper's immediate surroundings and shows
+# nothing about whole-arm loading, which is what every view in section 8 is about (torque
+# share per link, the gripper ellipsoid, force arrows). A second render product would cost
+# GPU time per step for no attestation value.
 scene_cam = rep.create.camera(
     position=cfg.CAM_POSITION, look_at=cfg.CAM_LOOK_AT, focal_length=cfg.CAM_FOCAL_LENGTH,
 )
@@ -306,16 +312,9 @@ render_product = rep.create.render_product(scene_cam, cfg.CAM_RESOLUTION)
 rgb_annotator = rep.AnnotatorRegistry.get_annotator("rgb")
 rgb_annotator.attach([render_product])
 
-wrist_cam = stage.DefinePrim("/World/Franka/panda_hand/WristCamera", "Camera")
-wrist_cam.GetAttribute("focalLength").Set(cfg.WRIST_CAM_FOCAL_LENGTH)
-wrist_cam.GetAttribute("horizontalAperture").Set(cfg.CAM_HORIZONTAL_APERTURE)
-wrist_cam.GetAttribute("clippingRange").Set(Gf.Vec2f(*cfg.WRIST_CAM_CLIPPING))
-wrist_xf = UsdGeom.Xformable(wrist_cam)
-wrist_xf.AddTranslateOp().Set(Gf.Vec3d(*cfg.WRIST_CAM_TRANSLATE))
-wrist_xf.AddRotateXYZOp().Set(Gf.Vec3f(*cfg.WRIST_CAM_ROTATE))
-
 print(f"[camera] isometric overview at {cfg.CAM_POSITION} → {cfg.CAM_LOOK_AT}, "
-      f"{cfg.CAM_FOCAL_LENGTH}mm, {cfg.CAM_RESOLUTION[0]}x{cfg.CAM_RESOLUTION[1]}", flush=True)
+      f"{cfg.CAM_FOCAL_LENGTH}mm, {cfg.CAM_RESOLUTION[0]}x{cfg.CAM_RESOLUTION[1]} "
+      f"(sole camera; no wrist view)", flush=True)
 
 # ── 11. Initialise physics ─────────────────────────────────────────────────────────────
 world.reset()
@@ -488,6 +487,9 @@ if cfg.APPLY_PLANT_FRICTION:
         back = np.array(articulation.get_friction_coefficients()).flatten()[:arm_dof]
         friction_report = {
             "api": "articulation.set_friction_coefficients (tensor)",
+            "fault_classes_covered": ["stiction", "bearing_wear"],
+            "reporting_label": "friction (stiction / bearing wear)",
+            "separable": False,
             "values_nm": np.round(friction_values, 5).tolist(),
             "readback": np.round(back, 5).tolist(),
             "viscous_term": "NOT APPLIED — no PhysxJointAxisAPI on this build; "
@@ -500,6 +502,9 @@ if cfg.APPLY_PLANT_FRICTION:
         print(f"    Coulomb N*m     {np.round(friction_values, 4)}", flush=True)
         print(f"    readback        {np.round(back, 4)}", flush=True)
         print(f"    viscous term    NOT APPLIED (no PhysxJointAxisAPI on this build)", flush=True)
+        print(f"    fault coverage  one scalar covers BOTH stiction and bearing wear —", flush=True)
+        print(f"                    always report this class as 'friction (stiction /", flush=True)
+        print(f"                    bearing wear)', never as one alone", flush=True)
         print(f"                    stock asset ships 0.0 — observed directly on the prim", flush=True)
     except Exception as e:
         print(f"[WARN] joint friction not applied: {e}", flush=True)
@@ -628,6 +633,8 @@ banner("Pose conditioning survey  (objective O3 seed)")
 
 pose_survey = {}
 if probe_results.get("jacobian", {}).get("available"):
+    print(f"  Jacobian row {cfg.EE_JACOBIAN_ROW} ({cfg.EE_JACOBIAN_BODY}), verified against "
+          f"a known payload", flush=True)
     print(f"  {'pose':<26}{'sigma_min':>11}{'sigma_max':>11}{'c(q)':>9}"
           f"{'manipulability':>16}", flush=True)
     for pose_name, q in cfg.PROBE_POSES.items():
@@ -636,9 +643,11 @@ if probe_results.get("jacobian", {}).get("available"):
             world.step(render=False)
         try:
             jac = np.asarray(articulation.get_jacobians())
-            # The view returns a batch of per-link Jacobians; the end-effector Jacobian is
-            # the last one, and only the 7 arm columns matter for conditioning.
-            j_ee = jac.reshape(jac.shape[0], -1, jac.shape[-2], jac.shape[-1])[0, -1]
+            # Row EE_JACOBIAN_ROW, not [-1]. The Jacobian excludes the fixed base, so its
+            # last row is panda_rightfinger — which sits ~2.5 cm off the hand centreline
+            # and carries a spurious moment. Verified against a known payload; see the
+            # note on EE_JACOBIAN_ROW in pal_config.py.
+            j_ee = jac.reshape(jac.shape[0], -1, jac.shape[-2], jac.shape[-1])[0, cfg.EE_JACOBIAN_ROW]
             j_arm = j_ee[:, :arm_dof]
             sv = np.linalg.svd(j_arm, compute_uv=False)
             sigma_min, sigma_max = float(sv.min()), float(sv.max())

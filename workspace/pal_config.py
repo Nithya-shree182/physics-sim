@@ -31,12 +31,11 @@ import numpy as np
 # fixed velocity quantisation, so the physics rate is the cheapest lever on residual
 # quality that exists.
 #
-# The real Franka control loop is 1 kHz. 400 Hz is a deliberate midpoint: ~6.7x finer
-# than Physyk's 60 Hz, while still leaving GPU headroom for the render products the
-# dashboard needs. Raise to 1000 Hz for a calibration run where the residual floor
-# matters more than frame rate (PHYSICS_HZ is read from the environment for exactly
-# that reason).
-PHYSICS_HZ = 400.0
+# 1000 Hz matches both the real Franka control loop and the "target 1/1000 s" fixed
+# physics step agreed in WORK_SPLIT.md on the nithya branch. An earlier draft here used
+# 400 Hz as a GPU-headroom compromise; the work split settles it, and the dashboard
+# decimates for display anyway, so there is nothing to trade away.
+PHYSICS_HZ = 1000.0
 RENDER_HZ = 30.0                      # [CHOICE] rendering is for the human, not the math
 
 PHYSICS_DT = 1.0 / PHYSICS_HZ
@@ -207,36 +206,93 @@ RAD_PER_DEG = np.pi / 180.0          # 0.0174533 — multiply per-degree to get 
 # recovered number "is a predictive fit, not a certificate of true joint friction".
 FRICTION_VISCOUS_NVIDIA = np.array([0.214, 0.105, 0.848, 0.184, 0.172, 0.147, 0.156])
 
-# ── 6b. Alternative friction values  [LITERATURE] ─────────────────────────────────────
-# Gaz et al. 2019, "Dynamic Identification of the Franka Emika Panda Robot with Retrieval
-# of Feasible Parameters Using Penalty-Based Optimization". Kept because it is the only
-# source that supplies Coulomb AND viscous terms for the same robot, which the split above
-# requires. UNVERIFIED against this asset. Note joint 6's viscous coefficient is identified
-# as slightly negative, which is physically impossible and an artefact of their fit; it is
-# clamped to zero.
+# ── 6b. Gaz et al. 2019  [LITERATURE, VERIFIED against the source PDF] ───────────────
+# Gaz, Cognetti, Oliva, Giordano, De Luca (2019), "Dynamic Identification of the Franka
+# Emika Panda Robot with Retrieval of Feasible Parameters Using Penalty-Based
+# Optimization", IEEE RA-L. Values below read directly from the supplementary material
+# held at docs/references/gaz2019_panda_dynamic_identification_supplementary.pdf on the
+# nithya branch — NOT from memory, and NOT from a text extraction of a table.
 #
-# These disagree substantially with 6a — joint 3 is 0.04 here against NVIDIA's 0.85. Do not
-# average them. They are two different fits to two different robots by two different
-# methods, and the disagreement is itself the honest statement of how well joint friction
-# on a Panda is actually known. Pick one, record which, and re-identify against this
-# simulator before any reported result depends on the choice.
-FRICTION_VISCOUS_GAZ = np.array([0.0665, 0.1987, 0.0399, 0.2257, 0.1023, 0.0000, 0.0638])
+# The paper gives TWO friction models. They are not interchangeable.
+
+# ── Model A (Table I): the one the paper actually fits ────────────────────────────────
+# A smooth sigmoid in joint velocity, with no discontinuity at zero:
+#
+#     tau_f,j(qd) = phi1 / (1 + exp(-phi2 * (qd + phi3)))  -  phi1 / (1 + exp(-phi2 * phi3))
+#
+# The second term makes tau_f(0) = 0 exactly, so there is no spurious torque at rest.
+# This is the better model for this project: a Coulomb sign() term chatters around qd = 0,
+# and the arm spends much of a pick-and-place near zero velocity at the waypoints — which
+# is precisely where a chattering friction term would masquerade as a residual spike and
+# be classified as a fault.
+FRICTION_SIGMOID_PHI1 = np.array([0.54615, 0.87224, 0.64068, 1.27940, 0.83904, 0.30301, 0.56489])   # N*m
+FRICTION_SIGMOID_PHI2 = np.array([5.1181, 9.0657, 10.136, 5.5903, 8.3469, 17.133, 10.336])          # s/rad
+FRICTION_SIGMOID_PHI3 = np.array([0.039533, 0.025882, -0.046070, 0.036194, 0.026226, -0.021047, 0.0035526])  # rad/s
+
+
+def friction_sigmoid(qd):
+    """Gaz et al. Table I friction torque, N*m, for a 7-vector of joint velocities.
+
+    Smooth through zero by construction, so it can be applied every step without the
+    chatter a sign() term produces at the waypoints of a pick-and-place.
+    """
+    qd = np.asarray(qd, dtype=float)
+    a, b, c = FRICTION_SIGMOID_PHI1, FRICTION_SIGMOID_PHI2, FRICTION_SIGMOID_PHI3
+    return a / (1.0 + np.exp(-b * (qd + c))) - a / (1.0 + np.exp(-b * c))
+
+
+# ── Model B (Table III): linear viscous + Coulomb + offset ───────────────────────────
+#     tau_f,j(qd) = fv,j * qd  +  fc,j * sign(qd)  +  fo,j
+#
+# The paper adopts this form only "because of their linearity in the defining parameters",
+# and says plainly that it "may suffer from sudden discontinuities in the neighbourhood of
+# qd = 0". Kept because PhysX's own friction is of this family, so it is what the plant can
+# actually be configured with.
+#
+# NOTE the constant offset fo. It is a real identified term and it is easy to miss: a
+# constant per-joint torque that does not vanish at zero velocity. Omitting it biases the
+# residual by up to 0.25 N*m on joint 4 — a standing error that a payload estimator would
+# quietly absorb as about 25 g of phantom mass.
+FRICTION_VISCOUS_GAZ = np.array([0.0665, 0.1987, 0.0399, 0.2257, 0.1023, -0.0132, 0.0638])
 FRICTION_COULOMB_GAZ = np.array([0.2450, 0.1523, 0.1827, 0.3591, 0.2669, 0.1658, 0.2109])
+FRICTION_OFFSET_GAZ  = np.array([-0.1073, -0.1566, -0.0686, -0.2522, 0.0045, 0.0910, -0.0127])
+
+# Relative standard deviations reported alongside each estimate in the same table. These
+# decide which numbers may be leaned on and which may not:
+#   fv,6 = -0.0132 with a standard deviation of 12.26 — the estimate is noise, and it is
+#   also negative, which is physically impossible. Clamped to zero below, now on the
+#   evidence of its own error bar rather than on taste.
+#   fo,5 (std 19.46) and fo,7 (std 6.26) are likewise not meaningful.
+FRICTION_VISCOUS_STD_GAZ = np.array([1.9658, 0.9615, 3.4971, 0.9124, 1.5868, 12.2607, 2.1388])
+FRICTION_OFFSET_STD_GAZ  = np.array([0.6932, 2.9549, 1.1566, 0.9563, 19.4633, 0.8390, 6.2628])
+
+FRICTION_VISCOUS_GAZ_CLAMPED = np.maximum(FRICTION_VISCOUS_GAZ, 0.0)
 
 # ── 6c. What the plant actually gets  [CHOICE] ────────────────────────────────────────
-FRICTION_SOURCE = "nvidia"            # "nvidia" | "gaz" — recorded in the audit report
-FRICTION_VISCOUS = FRICTION_VISCOUS_NVIDIA if FRICTION_SOURCE == "nvidia" else FRICTION_VISCOUS_GAZ
-# Coulomb only exists in the Gaz set; used for both sources, since a plant with zero
-# breakaway friction cannot exhibit the stiction fault O5 needs to detect.
+# "gaz" is now the default, not "nvidia". The Gaz values are a published identification of
+# a real Panda with per-parameter error bars; NVIDIA's are a fit to one recording that
+# their own tutorial says is "a predictive fit, not a certificate of true joint friction".
+# Both stay available and the choice is recorded in every audit report.
+FRICTION_SOURCE = "gaz"               # "gaz" | "nvidia"
+FRICTION_VISCOUS = FRICTION_VISCOUS_GAZ_CLAMPED if FRICTION_SOURCE == "gaz" else FRICTION_VISCOUS_NVIDIA
 FRICTION_COULOMB_STATIC = FRICTION_COULOMB_GAZ
+FRICTION_OFFSET = FRICTION_OFFSET_GAZ
 FRICTION_COULOMB_DYNAMIC = 0.85 * FRICTION_COULOMB_GAZ   # [CHOICE] dynamic below static
 # MEASURED: this build has no PhysxJointAxisAPI, so PhysX's three-part friction model is
 # not reachable. The articulation tensor API takes ONE scalar per joint
 # (set_friction_coefficients), so FRICTION_COULOMB_STATIC is what actually reaches the
-# plant and the viscous term is lost. Consequence for O5: a Coulomb-type fault and a
-# viscous-type fault both arrive as a change in the same scalar and cannot be separated
-# from the plant model alone. To recover the distinction, inject the viscous term as an
-# applied torque proportional to joint velocity in the control loop.
+# plant and the viscous term is lost.
+#
+# ── DECIDED (2026-11-02) ─────────────────────────────────────────────────────────────
+# STICTION and BEARING WEAR are deliberately kept INDISTINGUISHABLE. One scalar carries
+# both, and no velocity-proportional torque injector will be built to separate them.
+#
+# Reporting rule that follows from that decision, and it is not optional: wherever this
+# friction value or a fault derived from it is named — in the fault list, in the O5
+# confusion matrix, in the dashboard alert panel, in the results tables — it must be
+# labelled with BOTH classes, e.g. "friction (stiction / bearing wear)". Never with one
+# alone. A single label would assert a distinction the plant cannot make, and would make
+# the detector look more specific than it is.
 
 # The twin's model uses the values above; the plant gets them scaled. 1.0 makes a matched
 # pair, which is useful only while debugging the residual itself. 1.15 is the honest
@@ -266,8 +322,19 @@ APPLY_PLANT_FRICTION = True
 # MEASURED: the stock asset ships physxJoint:armature = 0.0, observed directly on the prim.
 ARMATURE_PHYSICAL = np.array([0.0061] * 7)    # [LITERATURE] Panda reflected rotor inertia
 ARMATURE_ISAACLAB = np.array([1e-3] * 7)      # [NVIDIA] Isaac Lab's numerical value
+# ── DECIDED (2026-11-02) ──────────────────────────────────────────────────────────────
+# Armature STAYS in the plant at the physical 0.0061 kg*m^2, and the analysis side adds the
+# matching term to its Pinocchio model (model.armature = 0.0061 on all 7 joints). This is
+# option 1 of the three in INTEGRATION.md: the plant stays physically honest and the two
+# mass matrices agree by agreement rather than by removal.
+#
+# This value is now a CONTRACT between two codebases. Changing it here without changing
+# Pinocchio reintroduces an acceleration-proportional residual worth about 27 g of phantom
+# payload — small against a 3 kg load, 27 percent against a 0.1 kg one, and systematic, so
+# averaging will not remove it. Do not change one side alone.
 ARMATURE = ARMATURE_PHYSICAL
 APPLY_ARMATURE = True
+ARMATURE_CONTRACT = "Pinocchio side sets model.armature = 0.0061 on all 7 joints"
 
 # ══════════════════════════════════════════════════════════════════════════════════════
 # 6e. Torque convention  —  which side of the gearbox
@@ -469,6 +536,29 @@ END_EFFECTOR_PRIM = "/World/Franka/panda_rightfinger"
 # resolved at the wrong point carries a spurious moment.
 TCP_OFFSET = 0.0584
 
+# ── MEASURED: which Jacobian row is the end effector ─────────────────────────────────
+# get_jacobians() returns (1, 10, 6, 9) while the articulation reports ELEVEN bodies
+# (panda_link0..7, panda_hand, panda_leftfinger, panda_rightfinger). The Jacobian excludes
+# the fixed base, so row i corresponds to body i+1:
+#     row 6 -> panda_link7     row 7 -> panda_hand
+#     row 8 -> panda_leftfinger  row 9 -> panda_rightfinger
+#
+# Verified by adding a known 3 kg point mass to panda_hand and checking which row
+# reproduces the measured change in g(q) through tau = -J_v^T W:
+#     row 7 (panda_hand)        max error 0.016 N*m   <- correct
+#     row 9 (panda_rightfinger) max error 1.177 N*m   <- wrong by 7%
+#
+# Row 9 is what a naive [-1] index picks, and it is wrong because panda_rightfinger sits
+# about 2.5 cm OFF the hand centreline. Resolving a centreline load at an off-axis frame
+# adds a spurious moment, which showed up as ~1 N*m of phantom torque on joints 3 and 5 —
+# a standing error that O4 would have absorbed as payload and O5 could have alarmed on.
+#
+# Note END_EFFECTOR_PRIM is panda_rightfinger: that is correct for the gripper WRAPPER
+# (Physyk uses it for IK targeting) but wrong for the Jacobian. They are different things
+# and must not be conflated.
+EE_JACOBIAN_ROW = 7          # panda_hand
+EE_JACOBIAN_BODY = "panda_hand"
+
 # ══════════════════════════════════════════════════════════════════════════════════════
 # 10. Camera and lighting  —  carried over from Physyk AI exactly
 # ══════════════════════════════════════════════════════════════════════════════════════
@@ -482,12 +572,10 @@ CAM_FOCAL_LENGTH = 22.0
 CAM_HORIZONTAL_APERTURE = 20.955      # USD Camera schema default
 CAM_RESOLUTION = (1280, 720)          # [CHOICE] 720p; Physyk streams 960x540
 
-# [ASSET] Wrist camera, as tuned in Physyk: mounted off-axis so a grasped object sits
-# beside the frame instead of against the lens.
-WRIST_CAM_TRANSLATE = (0.05, 0.0, 0.02)
-WRIST_CAM_ROTATE = (180.0, 0.0, 0.0)
-WRIST_CAM_FOCAL_LENGTH = 7.0
-WRIST_CAM_CLIPPING = (0.005, 10.0)
+# No wrist camera. Physyk mounts one on panda_hand, but this project's views (section 8)
+# are all whole-arm — torque share per link, the gripper ellipsoid, estimated force arrows —
+# and a wrist view shows none of that. Its config is deliberately absent rather than left
+# unused, so nobody re-enables it by accident and pays for a second render product.
 
 # [ASSET] The blue backdrop. Isaac's default ground plane asset ships a light-blue grid
 # whose colour is not a parameter on add_default_ground_plane(); it has to be retinted on
