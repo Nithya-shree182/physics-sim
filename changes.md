@@ -2,6 +2,19 @@
 
 Newest first. Current status and next steps are in [context.md](context.md).
 
+## 2026-11-03 (23:43 IST) — dashboard fix and run instructions
+
+- **Fixed:** after a replay session the server kept its engine in replay and paused, so a freshly loaded
+  page showed "Stand-in plant" while the controls were greyed out ("+" and "More controls" did nothing).
+  The layout is now built per page load (`serve_layout` in `dashboard/app.py`), which resets the engine to
+  the stand-in plant, running, no fault. Checked in the browser: put the server in replay, reload, header
+  reads stand-in, Pause shows, "+" and "More controls" respond. Consequence: reloading the page resets
+  the session, and the server still has one engine, so use one browser tab.
+- Run (inside `conda activate pal`): `python dashboard/app.py`, then http://127.0.0.1:8050. Without
+  activating: `& "$env:USERPROFILE\miniconda3\Scripts\conda.exe" run -n pal --no-capture-output python dashboard/app.py`.
+  The replay buttons need dev's two real logs in `data/real/` (not in git; `setup.md` section 4).
+- Pushed: `nithya` at `0088d5e`.
+
 ## 2026-11-03 (23:30 IST) — dashboard, first version
 
 - New `dashboard/` (Plotly Dash, `python dashboard/app.py`, see `dashboard/README.md`), built from the
