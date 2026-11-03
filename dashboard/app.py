@@ -52,95 +52,103 @@ layout_joint_speeds = [html.Div(style=dict(display="flex", flexDirection="column
         html.Label(f"Joint {i + 1}", htmlFor=f"spd-{i}"), html.Span(id=f"spd-txt-{i}", className="num")]),
     slider(f"spd-{i}", 5, 100, 5, 30)]) for i in range(7)]
 
-app.layout = html.Div(className="page", children=[
-    dcc.Store(id="ui", data=DEF_UI), dcc.Store(id="demo-ctl", data={}), dcc.Store(id="dummy"), dcc.Store(id="ctl-sync"),
-    dcc.Interval(id="tick", interval=500),
-    html.Header(className="hdr", children=[
-        html.Div(className="brand", children=[html.B("PAL"), html.Span("Franka Panda #1", className="muted", style=dict(fontSize=13))]),
-        html.Div(id="pill", className="pill"),
-        dcc.RadioItems(id="source", className="radio", value="live", inline=True,
-                       options=[dict(label="Stand-in plant", value="live"), dict(label="Replay real 0 kg", value="0kg"), dict(label="Replay real 1 kg", value="1p0kg")]),
-        html.Span(id="hdr-t", className="num", style=dict(fontSize=13, minWidth=96)),
-        html.Button("Pause", id="play", n_clicks=0, className="btn", style=dict(minWidth=88)),
-        html.Button("Demo", id="demo-btn", n_clicks=0, className="btn", style=dict(minWidth=88)),
-        html.Button(id="bell", n_clicks=0, className="btn", style=dict(minWidth=76), **{"aria-label": "Alerts"}),
-    ]),
-    html.Section(id="demo-banner", className="demo", style=dict(display="none"), children=[
-        html.Div(style=dict(flex="1 1 420px", minWidth=0, display="flex", flexDirection="column", gap=4), children=[
-            html.Div(className="row", children=[html.Span("GUIDED DEMO", className="lbl", style=dict(color="#93c5fd")), html.Span(id="demo-title", style=dict(fontSize=14, fontWeight=700)),
-                                                html.Span(id="demo-remain", className="num", style=dict(fontSize=12, color="#9ca3af"))]),
-            html.Div(id="demo-text", className="muted", style=dict(color="#c7cbd1"))]),
-        html.Div(id="demo-dots", style=dict(display="flex", gap=6)),
-        html.Div(style=dict(display="flex", gap=8), children=[html.Button("Back", id="demo-back", n_clicks=0, className="btn btn-s"),
-                                                              html.Button("Next", id="demo-next", n_clicks=0, className="btn btn-s"),
-                                                              html.Button("Stop", id="demo-stop", n_clicks=0, className="btn btn-s")])]),
-    html.Div(className="nav", children=[
-        html.Nav(style=dict(display="flex", gap=4, flex="1 1 360px"), children=[
-            html.Button("O2 Arm & residual", id="tab-arm", n_clicks=0, className="tab"), html.Button("O6 Benchmark", id="tab-bench", n_clicks=0, className="tab")]),
-        html.Div(className="row", style=dict(gap="6px"), children=[html.Span("PANELS", className="lbl")] +
-                 [html.Button(lbl, id=f"p-{k}", n_clicks=0, className="btn btn-s") for k, lbl in PANELS])]),
-    html.Div(className="body", children=[
-        html.Main(className="main", children=[
-            html.Div(id="main-arm", style=dict(display="flex", flexDirection="column", gap=20), children=[
-                html.Section(className="card", children=[
-                    html.Div(className="spread", children=[html.H2("Arm twin", className="h2"),
-                        html.Div(style=dict(display="flex", gap=4), children=[html.Button("Twin", id="v-twin", n_clicks=0, className="btn btn-s"),
-                                                                              html.Button("Isaac Sim stream", id="v-stream", n_clicks=0, className="btn btn-s")])]),
-                    html.Div(style=dict(display="flex", flexWrap="wrap", gap=16, alignItems="stretch"), children=[
-                        html.Div(style=dict(flex="3 1 420px", minWidth=0), children=[
-                            dcc.Graph(id="twin-graph", config=dict(displayModeBar=False, staticPlot=True), style=dict(height=380)),
-                            html.Div(id="stream", style=dict(display="none", aspectRatio="640 / 420", background="#05070a", border="1px dashed rgba(255,255,255,0.18)", borderRadius=6,
-                                                             alignItems="center", justifyContent="center", flexDirection="column", gap=8, textAlign="center"),
-                                     children=[html.Div("Headless Isaac Sim, streamed over HTTP"), html.Div("[stream URL from dev]", className="muted", style=dict(fontSize=12))]),
-                            html.Div(className="row", style=dict(marginTop=8, fontSize=11, color="#9ca3af", gap="6px 18px"), children=[
-                                html.Span("Link tint: share of torque limit"),
-                                html.Span(style=dict(display="flex", alignItems="center", gap=6), children=[
-                                    html.Span(style=dict(width=60, height=8, borderRadius=4, background="linear-gradient(90deg,#4b5563,#fab219,#f87171)")), "0 – 100%"]),
-                                html.Span("Dashed ellipse: how freely the hand can move (flat = near singular)")])]),
-                        html.Div(id="stats", style=dict(flex="1 1 200px", minWidth=0, display="flex", flexDirection="column", gap=10))])]),
-                html.Section(className="card", style=dict(padding="14px 18px"), children=[
-                    html.Div(id="ctl-note"),
-                    html.Div(id="ctl-wrap", children=[
-                        html.Div(className="row", style=dict(gap="12px 24px"), children=[
-                            html.Div(style=dict(flex="1 1 280px", minWidth=0, display="flex", flexDirection="column", gap=2), children=[
-                                html.Div(className="spread", children=[html.Label("MOCK LOAD ON THE GRIPPER", htmlFor="load", className="lbl"), html.Span(id="load-txt", className="num", style=dict(fontSize=16))]),
-                                html.Div(style=dict(display="flex", alignItems="center", gap=8), children=[
-                                    html.Button("−", id="load-dn", n_clicks=0, className="btn", style=dict(width=44, padding=0, fontSize=18), **{"aria-label": "Decrease load by 0.1 kilogram"}),
-                                    slider("load", 0, 3, 0.05, 0),
-                                    html.Button("+", id="load-up", n_clicks=0, className="btn", style=dict(width=44, padding=0, fontSize=18), **{"aria-label": "Increase load by 0.1 kilogram"})])]),
-                            html.Div(style=dict(flex="1 1 280px", minWidth=0, display="flex", flexDirection="column", gap=2), children=[
-                                html.Div(className="spread", children=[html.Label("JOINT SPEED, ALL JOINTS", htmlFor="spd-all", className="lbl"), html.Span(id="spd-txt", className="num", style=dict(fontSize=16))]),
-                                slider("spd-all", 5, 100, 5, 30)]),
-                            html.Button("More controls", id="more-btn", n_clicks=0, className="btn")]),
-                        html.Div(id="more", style=dict(display="none", flexDirection="column", gap=14, paddingTop=12, borderTop="1px solid rgba(255,255,255,0.12)", marginTop=12), children=[
-                            html.Div(style=dict(display="grid", gridTemplateColumns="repeat(auto-fit,minmax(140px,1fr))", gap="8px 16px"), children=layout_joint_speeds),
-                            html.Div(className="row", style=dict(alignItems="flex-end", gap="12px 20px"), children=[
-                                html.Div(children=[html.Div("TEST-ONLY FAULT", className="lbl"),
-                                                   dcc.RadioItems(id="fault", className="radio", value="none", options=[
-                                                       dict(label="None", value="none"), dict(label="Friction ×3 (stiction / bearing wear)", value="friction"),
-                                                       dict(label="Stuck joint", value="stuck_joint"), dict(label="Command delay 50 ms", value="delay")])]),
-                                html.Div(children=[html.Div("ON JOINT", className="lbl"),
-                                                   dcc.RadioItems(id="fault-joint", className="radio", value=2, inline=True, options=[dict(label=str(i + 1), value=i) for i in range(7)])]),
-                                html.Button("Reset speeds to 30%", id="reset-speeds", n_clicks=0, className="btn")]),
-                            html.P("In the live product these are commands sent to Isaac Sim. Above 50% of a joint's velocity limit the reported torque is mostly drive artifact, "
-                                   "so residual alarms and the load estimate are held.", className="muted", style=dict(margin=0, fontSize=12))])])]),
-                html.Section(className="card", children=[
-                    html.Div(className="spread", children=[html.H2(id="chart-title", className="h2"),
-                        html.Div(className="row", style=dict(gap=4), children=[html.Button(l, id=f"ch-{k}", n_clicks=0, className="btn btn-s") for k, l in CHANS])]),
-                    html.Span(id="chart-sub", className="muted", style=dict(fontSize=12)),
-                    dcc.Graph(id="main-chart", config=dict(displayModeBar=False), style=dict(height=240)),
-                    html.Div(style=dict(display="flex", flexDirection="column", gap=6), children=[
-                        html.Span("RESIDUAL PER JOINT, % OF TORQUE LIMIT · CLICK A JOINT TO SELECT IT", className="lbl"), html.Div(children=[
-                            html.Button(id={"type": "jbar", "i": i}, n_clicks=0, className="jbar", title=f"Select joint {i + 1}",
-                                        children=html.Div(id={"type": "jb", "i": i}, style=dict(display="contents"))) for i in range(7)])]),
-                    html.Div(children=html.Button(id="brk-btn", n_clicks=0, className="btn btn-s")), html.Div(id="brk")])]),
-            html.Div(id="main-bench", style=dict(display="none", flexDirection="column", gap=20))]),
-        html.Aside(id="drawer", className="drawer", style=dict(display="none"), children=[
-            html.Div(className="drawer-head", children=[html.H2(id="drawer-title", className="h2"),
-                                                        html.Button("×", id="drawer-close", n_clicks=0, className="btn", style=dict(width=44, padding=0, fontSize=18), **{"aria-label": "Close panel"})]),
-            html.Div(id="drawer-body", className="drawer-body")])]),
-    html.Div(id="toasts", className="toasts", **{"aria-live": "polite"}),
-])
+def serve_layout():
+    """Runs on every page load: the server has one engine, so a fresh page starts it afresh (stand-in plant,
+    running, no fault) and the controls on screen always match what the engine is doing."""
+    E.use("live")
+    E.playing = True
+    return html.Div(className="page", children=[
+        dcc.Store(id="ui", data=DEF_UI), dcc.Store(id="demo-ctl", data={}), dcc.Store(id="dummy"), dcc.Store(id="ctl-sync"),
+        dcc.Interval(id="tick", interval=500),
+        html.Header(className="hdr", children=[
+            html.Div(className="brand", children=[html.B("PAL"), html.Span("Franka Panda #1", className="muted", style=dict(fontSize=13))]),
+            html.Div(id="pill", className="pill"),
+            dcc.RadioItems(id="source", className="radio", value="live", inline=True,
+                           options=[dict(label="Stand-in plant", value="live"), dict(label="Replay real 0 kg", value="0kg"), dict(label="Replay real 1 kg", value="1p0kg")]),
+            html.Span(id="hdr-t", className="num", style=dict(fontSize=13, minWidth=96)),
+            html.Button("Pause", id="play", n_clicks=0, className="btn", style=dict(minWidth=88)),
+            html.Button("Demo", id="demo-btn", n_clicks=0, className="btn", style=dict(minWidth=88)),
+            html.Button(id="bell", n_clicks=0, className="btn", style=dict(minWidth=76), **{"aria-label": "Alerts"}),
+        ]),
+        html.Section(id="demo-banner", className="demo", style=dict(display="none"), children=[
+            html.Div(style=dict(flex="1 1 420px", minWidth=0, display="flex", flexDirection="column", gap=4), children=[
+                html.Div(className="row", children=[html.Span("GUIDED DEMO", className="lbl", style=dict(color="#93c5fd")), html.Span(id="demo-title", style=dict(fontSize=14, fontWeight=700)),
+                                                    html.Span(id="demo-remain", className="num", style=dict(fontSize=12, color="#9ca3af"))]),
+                html.Div(id="demo-text", className="muted", style=dict(color="#c7cbd1"))]),
+            html.Div(id="demo-dots", style=dict(display="flex", gap=6)),
+            html.Div(style=dict(display="flex", gap=8), children=[html.Button("Back", id="demo-back", n_clicks=0, className="btn btn-s"),
+                                                                  html.Button("Next", id="demo-next", n_clicks=0, className="btn btn-s"),
+                                                                  html.Button("Stop", id="demo-stop", n_clicks=0, className="btn btn-s")])]),
+        html.Div(className="nav", children=[
+            html.Nav(style=dict(display="flex", gap=4, flex="1 1 360px"), children=[
+                html.Button("O2 Arm & residual", id="tab-arm", n_clicks=0, className="tab"), html.Button("O6 Benchmark", id="tab-bench", n_clicks=0, className="tab")]),
+            html.Div(className="row", style=dict(gap="6px"), children=[html.Span("PANELS", className="lbl")] +
+                     [html.Button(lbl, id=f"p-{k}", n_clicks=0, className="btn btn-s") for k, lbl in PANELS])]),
+        html.Div(className="body", children=[
+            html.Main(className="main", children=[
+                html.Div(id="main-arm", style=dict(display="flex", flexDirection="column", gap=20), children=[
+                    html.Section(className="card", children=[
+                        html.Div(className="spread", children=[html.H2("Arm twin", className="h2"),
+                            html.Div(style=dict(display="flex", gap=4), children=[html.Button("Twin", id="v-twin", n_clicks=0, className="btn btn-s"),
+                                                                                  html.Button("Isaac Sim stream", id="v-stream", n_clicks=0, className="btn btn-s")])]),
+                        html.Div(style=dict(display="flex", flexWrap="wrap", gap=16, alignItems="stretch"), children=[
+                            html.Div(style=dict(flex="3 1 420px", minWidth=0), children=[
+                                dcc.Graph(id="twin-graph", config=dict(displayModeBar=False, staticPlot=True), style=dict(height=380)),
+                                html.Div(id="stream", style=dict(display="none", aspectRatio="640 / 420", background="#05070a", border="1px dashed rgba(255,255,255,0.18)", borderRadius=6,
+                                                                 alignItems="center", justifyContent="center", flexDirection="column", gap=8, textAlign="center"),
+                                         children=[html.Div("Headless Isaac Sim, streamed over HTTP"), html.Div("[stream URL from dev]", className="muted", style=dict(fontSize=12))]),
+                                html.Div(className="row", style=dict(marginTop=8, fontSize=11, color="#9ca3af", gap="6px 18px"), children=[
+                                    html.Span("Link tint: share of torque limit"),
+                                    html.Span(style=dict(display="flex", alignItems="center", gap=6), children=[
+                                        html.Span(style=dict(width=60, height=8, borderRadius=4, background="linear-gradient(90deg,#4b5563,#fab219,#f87171)")), "0 – 100%"]),
+                                    html.Span("Dashed ellipse: how freely the hand can move (flat = near singular)")])]),
+                            html.Div(id="stats", style=dict(flex="1 1 200px", minWidth=0, display="flex", flexDirection="column", gap=10))])]),
+                    html.Section(className="card", style=dict(padding="14px 18px"), children=[
+                        html.Div(id="ctl-note"),
+                        html.Div(id="ctl-wrap", children=[
+                            html.Div(className="row", style=dict(gap="12px 24px"), children=[
+                                html.Div(style=dict(flex="1 1 280px", minWidth=0, display="flex", flexDirection="column", gap=2), children=[
+                                    html.Div(className="spread", children=[html.Label("MOCK LOAD ON THE GRIPPER", htmlFor="load", className="lbl"), html.Span(id="load-txt", className="num", style=dict(fontSize=16))]),
+                                    html.Div(style=dict(display="flex", alignItems="center", gap=8), children=[
+                                        html.Button("−", id="load-dn", n_clicks=0, className="btn", style=dict(width=44, padding=0, fontSize=18), **{"aria-label": "Decrease load by 0.1 kilogram"}),
+                                        slider("load", 0, 3, 0.05, 0),
+                                        html.Button("+", id="load-up", n_clicks=0, className="btn", style=dict(width=44, padding=0, fontSize=18), **{"aria-label": "Increase load by 0.1 kilogram"})])]),
+                                html.Div(style=dict(flex="1 1 280px", minWidth=0, display="flex", flexDirection="column", gap=2), children=[
+                                    html.Div(className="spread", children=[html.Label("JOINT SPEED, ALL JOINTS", htmlFor="spd-all", className="lbl"), html.Span(id="spd-txt", className="num", style=dict(fontSize=16))]),
+                                    slider("spd-all", 5, 100, 5, 30)]),
+                                html.Button("More controls", id="more-btn", n_clicks=0, className="btn")]),
+                            html.Div(id="more", style=dict(display="none", flexDirection="column", gap=14, paddingTop=12, borderTop="1px solid rgba(255,255,255,0.12)", marginTop=12), children=[
+                                html.Div(style=dict(display="grid", gridTemplateColumns="repeat(auto-fit,minmax(140px,1fr))", gap="8px 16px"), children=layout_joint_speeds),
+                                html.Div(className="row", style=dict(alignItems="flex-end", gap="12px 20px"), children=[
+                                    html.Div(children=[html.Div("TEST-ONLY FAULT", className="lbl"),
+                                                       dcc.RadioItems(id="fault", className="radio", value="none", options=[
+                                                           dict(label="None", value="none"), dict(label="Friction ×3 (stiction / bearing wear)", value="friction"),
+                                                           dict(label="Stuck joint", value="stuck_joint"), dict(label="Command delay 50 ms", value="delay")])]),
+                                    html.Div(children=[html.Div("ON JOINT", className="lbl"),
+                                                       dcc.RadioItems(id="fault-joint", className="radio", value=2, inline=True, options=[dict(label=str(i + 1), value=i) for i in range(7)])]),
+                                    html.Button("Reset speeds to 30%", id="reset-speeds", n_clicks=0, className="btn")]),
+                                html.P("In the live product these are commands sent to Isaac Sim. Above 50% of a joint's velocity limit the reported torque is mostly drive artifact, "
+                                       "so residual alarms and the load estimate are held.", className="muted", style=dict(margin=0, fontSize=12))])])]),
+                    html.Section(className="card", children=[
+                        html.Div(className="spread", children=[html.H2(id="chart-title", className="h2"),
+                            html.Div(className="row", style=dict(gap=4), children=[html.Button(l, id=f"ch-{k}", n_clicks=0, className="btn btn-s") for k, l in CHANS])]),
+                        html.Span(id="chart-sub", className="muted", style=dict(fontSize=12)),
+                        dcc.Graph(id="main-chart", config=dict(displayModeBar=False), style=dict(height=240)),
+                        html.Div(style=dict(display="flex", flexDirection="column", gap=6), children=[
+                            html.Span("RESIDUAL PER JOINT, % OF TORQUE LIMIT · CLICK A JOINT TO SELECT IT", className="lbl"), html.Div(children=[
+                                html.Button(id={"type": "jbar", "i": i}, n_clicks=0, className="jbar", title=f"Select joint {i + 1}",
+                                            children=html.Div(id={"type": "jb", "i": i}, style=dict(display="contents"))) for i in range(7)])]),
+                        html.Div(children=html.Button(id="brk-btn", n_clicks=0, className="btn btn-s")), html.Div(id="brk")])]),
+                html.Div(id="main-bench", style=dict(display="none", flexDirection="column", gap=20))]),
+            html.Aside(id="drawer", className="drawer", style=dict(display="none"), children=[
+                html.Div(className="drawer-head", children=[html.H2(id="drawer-title", className="h2"),
+                                                            html.Button("×", id="drawer-close", n_clicks=0, className="btn", style=dict(width=44, padding=0, fontSize=18), **{"aria-label": "Close panel"})]),
+                html.Div(id="drawer-body", className="drawer-body")])]),
+        html.Div(id="toasts", className="toasts", **{"aria-live": "polite"}),
+    ])
+
+
+app.layout = serve_layout
 
 
 # ── controls → engine ───────────────────────────────────────────────────────────────────
