@@ -29,16 +29,19 @@ websocket stream and in-simulator panel.
 | F8 | Reproducibility depends on files outside the repo | **Open** |
 | F9 | The validation push first failed its pre-set tolerance | **Diagnosed; two verdicts reported** (`docs/VALIDATION.md`) |
 | F10 | Mild backlash and delay leave no measurable signature | **Open, a limit of the fault set** |
+| F11 | Only the inertia diagonal was authored (found by the analysis side); the simulator's `M` was off by up to 0.015 kg*m^2 | **Fixed and verified** against an independent mass matrix (`pal_selftest.py` T5, 0.00004 kg*m^2) |
 
 ## What each check shows
 
 | check | result | repeat with |
 |---|---|---|
-| Unit tests: injectors, noise, trajectories, URDF kinematics | 26 pass | `python3 -m unittest discover tests` |
-| Plant self-test (in the sim) | 7 of 7 | `tools/run_sim.sh pal_selftest.py` |
+| Unit tests: injectors, noise, trajectories, URDF kinematics, mass matrix | 30 pass | `python3 -m unittest discover tests` |
+| Plant self-test (in the sim) | 8 of 8 | `tools/run_sim.sh pal_selftest.py` |
 | Friction is in N*m | 1.0 N*m injected reads 1.008 / 1.001 / 1.001 on joints 2, 4, 6 | self-test T2 |
 | Zero-friction identity closes | 0.004-0.008 N*m | self-test T1 |
-| Payload and mass mismatch change mid-run | gravity matches the independent URDF calculation to 0.0000 N*m at 0 kg and 3 kg | self-test T3 |
+| Payload and mass mismatch change mid-run | gravity matches the independent URDF calculation to 0.0002 N*m at 0 kg and 3 kg | self-test T3 |
+| The simulator's mass matrix (not just gravity) | simulator `M` + 0.0061 armature equals an independent numpy composite-rigid-body `M` to 0.00004 kg*m^2 at three poses, 0 and 2 kg; the old diagonal-only plant was off by 0.015 | self-test T5 |
+| An independent model reproduces the plant's torques | numpy model (M, Coriolis, g) vs `tau_applied` on a clean run: residual equals the configured friction | `docs/PREVIEW_DETECTION.md` |
 | Every captured run | schema, URDF-numpy gravity (0.000-0.002 N*m), identity on healthy rows, friction-scale guard | `tools/check_run.py` |
 | The checker can fail | a copy of the URDF with one link 15% heavier gives a 0.56 N*m error and FAIL | `check_run.py --urdf` |
 | Refactor safety | bit-identical to the pre-refactor runs | recorded 2026-11-03 |
@@ -63,19 +66,19 @@ applied torque, friction x8 on joint 4 reads 0.39 -> 2.85 N*m and a locked joint
 
 ## What the O5 fault set can and cannot show (F10)
 
-23 runs, effort mode, 20% of velocity limit, fault at 3 s of 6 s, noise on every run.
+26 runs, effort mode, 20% of velocity limit, fault at 3 s of 6 s, noise on every run (20 faulty, 6 healthy).
 
 | fault | visible in the applied-torque residual? | visible in tracking? |
 |---|---|---|
-| friction x2 / x4 / x8, joints 2, 4, 6 | yes, grows with severity (joint 4: 0.39 -> 0.78 / 1.50 / 2.85 N*m) | mostly at x4 and above |
-| locked joint 4 | yes, 9.4 N*m | yes, 0.059 rad RMS |
+| friction x2 / x4 / x8, joints 2, 3, 4, 6 | yes, grows with severity (joint 4: 0.39 -> 0.78 / 1.50 / 2.85 N*m) | mostly at x4 and above |
+| locked joint 4 | yes, 9.3 N*m | yes, 0.059 rad RMS |
 | backlash 0.02 / 0.06 / 0.12 rad, joints 1, 7 | **no** | **no** (changes under 0.001 rad) |
 | command delay 10 and 30 ms | **no** | **no** |
 | command delay 50 ms | yes, 2.6 N*m: the loop oscillates | yes, 0.13 rad |
 
 Backlash is expected to be a tracking-channel fault, not a residual one (the applied torque stays
 consistent with the dynamics), and at slow, smooth motion it withholds under 2% of the torque; my
-backlash model has no impact dynamics. So six of the 17 faulty runs (four backlash, two short delays) are indistinguishable from
+backlash model has no impact dynamics. So six of the 20 faulty runs (four backlash, two short delays) are indistinguishable from
 healthy in this simulation. They stay in the set because a defined fault set should include the cases
 a detector will miss, and the detection rate must be reported with them in. Faster motion or a model
 with impacts would be needed to expose them.
@@ -103,7 +106,7 @@ under any realistic sensor noise; the criterion should be stated against the tor
 | O2 residual | model within 5% on a slow unloaded run | simulator terms: 0.01% of limit, 0.58% of own torque (clean); URDF gravity matches independently | needs the analysis side's Pinocchio model run on `data/ref_matched_*`; fails above ~50% speed (artifact) |
 | O3 confidence | 0-1 score gating O4 and O5 | analysis side's | their rescaled score differs from the proposal's raw ratio, deliberately |
 | O4 payload | estimate converges, within a stated tolerance | known-mass data, 0.5-3 kg: 12 held runs at three poses verified to 0.02%; 4 moving runs recorded but not scored here | payload is a rigid point mass at the TCP, not a grasped object; the estimator itself is theirs |
-| O5 detection | detection and false-positive rate over a defined fault set, with and without the gate | injectors, 23 labelled runs, 6 seeded healthy runs | rates need their detector run on these files (F10 limits what is findable) |
+| O5 detection | detection and false-positive rate over a defined fault set, with and without the gate | injectors, 26 labelled runs (20 faulty, 6 healthy seeds), matched baselines, the analysis side's C-list in `out/extra` | rates need their detector run on these files (F10 limits what is findable); our stand-in preview (`PREVIEW_DETECTION.md`) catches 6 of 20 faulty runs, 0 false alarms |
 | O6 benchmark | cycle time, peak torque, energy for three styles | built and run: 26 runs, table below | single waypoint pair, two payloads; no pick-and-place with a gripper |
 | O7 presentation | streamed dashboard and in-sim panel | not built here | dashboard is theirs; stream and in-sim panel are ours and not done |
 | Validation | known force against estimate | built and run: 24 runs | strict pre-set criterion failed by 0.7 points on one run (`VALIDATION.md`) |
@@ -127,9 +130,25 @@ the S-curve uses a 100 rad/s^3 smoothness limit (a choice; at Franka's 7500 rad/
 indistinguishable from the trapezoid, which is how the first run of this benchmark came out degenerate),
 and at 0 kg the limit is the kinematic acceleration bound (10 rad/s^2, a choice), not torque.
 
+## The analysis side's progress (read 2026-11-04, `origin/nithya` at `0088d5e`)
+
+They have built: the independent Pinocchio model and schema validator; four observers (residual, confidence,
+payload, detector); a synthetic-log generator; **70 tests passing**, including physics properties of the model
+(skew-symmetry of `Mdot - 2C`, energy conservation, a push recovered through `J^T`) and one test per row of the
+proposal's evaluation table; and a **first dashboard** (Plotly Dash: arm twin, residual/torque/confidence/payload views,
+guided demo, alerts) running on a stand-in plant and on a replay of our logs. They are waiting on us for real fault runs,
+sensor noise, a longer run list, the `speed_fraction` field, and answers about the armature.
+
+Two things in their branch need to change because of what we found, both written up for them in
+`docs/NOTES_FOR_NITHYA.md`: (1) their round 4 said no effort-mode datasets and asked for position-mode faults, but
+`tau_measured` cannot see friction; their `residual.py` already supports `torque="applied"` for torque-mode logs, but the
+detector's command-line entry calls it without that argument; (2) the dashboard replays our **old** logs (wrong friction and
+diagonal-only inertia). Their synthetic "8 of 8 faults detected" should not be read as a statement about this plant.
+They also found F11 (the armature lead, and the off-diagonal inertia).
+
 ## Remaining work
 
-1. **Analysis side** (needs Pinocchio): run `observers/` on `data/ref_matched_*`, `out/o5`, `out/o4`; report
+1. **Analysis side** (needs Pinocchio): switch the detector to `torque="applied"` and run `observers/` on `data/ref_matched_*`, `out/o5`, `out/extra`, `out/o4`; report
    detection and false-positive rates with and without the gate; run the payload estimator on `out/o4`.
 2. **Ours, not done:** websocket stream of telemetry and the in-simulator panel (O7); a grasped payload
    with gripper actuation; backlash with impact dynamics; faster-motion fault sets.

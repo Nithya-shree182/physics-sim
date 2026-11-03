@@ -36,7 +36,7 @@ separate intent or geometry check. `attack_type` stays `none` in all data.
 
 ## 3. The O5 fault set (what "defined fault set" means)
 
-Friction x2, x4, x8 of the Gaz et al. values on joints 2, 4 and 6; a locked joint 4; backlash of
+Friction x2, x4, x8 of the Gaz et al. values on joints 2, 3, 4 and 6; a locked joint 4; backlash of
 0.02, 0.06 and 0.12 rad on joint 1 and 0.12 rad on joint 7 (backlash only acts where torque reverses); command delay of 10, 30 and 50 ms; plus six
 healthy runs with different sensor-noise seeds, from which the false-positive rate is measured.
 Faults start at 3 s into each 6 s run. Speed is 20% of the velocity limit.

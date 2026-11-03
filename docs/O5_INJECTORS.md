@@ -15,7 +15,8 @@ prediction it is compared with.)
 | `workspace/pal_runner.py` | effort-mode controller and scenario runner; logs `tau_applied` |
 | `workspace/pal_faults.py` | `FaultSpec` and `FaultInjector` (friction, stuck joint, delay, backlash) |
 | `workspace/pal_sensors.py` | seeded sensor noise on the logged values |
-| `workspace/pal_o5_sweep.py` | the 23-run sweep |
+| `workspace/pal_o5_sweep.py` | the 26-run sweep |
+| `workspace/pal_extra_runs.py` | the analysis side's requested set: excitation, matched C4 faults at 0 and 1 kg over three seeds, a 60 s healthy run, a payload pickup |
 
 | `fault_type` | `fault_param` | how it acts |
 |---|---|---|
@@ -43,8 +44,9 @@ tools/pal_pipeline.sh pal_o5_sweep.py out/o5     # ~12 min: sim, Parquet, then c
 
 ## The set (what "defined fault set" means)
 
-Six healthy runs (different sensor-noise seeds); friction x2 / x4 / x8 on joints 2, 4, 6; a locked joint 4;
-backlash 0.02 / 0.06 / 0.12 rad on joint 1 and 0.12 rad on joint 7; delay 10 / 30 / 50 ms. Runs are named
+Six healthy runs (seeds 1000-1005; `healthy_s0` shares seed 1000 with every faulty run, so it is the exact fault-free twin of each);
+friction x2 / x4 / x8 on joints 2, 3, 4, 6; a locked joint 4; backlash 0.02 / 0.06 / 0.12 rad on joint 1 and 0.12 rad on joint 7;
+delay 10 / 30 / 50 ms. 26 runs. Runs are named
 `o5_<fault tag>_1000hz`, healthy ones `o5_healthy_s0..s5`.
 
 ## What the plant did
@@ -53,18 +55,24 @@ Mean `|tau_applied - net|` and RMS tracking error on the faulted joint, before a
 
 | scenario | applied-torque residual, N*m | tracking RMS, rad |
 |---|---|---|
-| healthy | 0.39 -> 0.40 (joint 4) | 0.0037 -> 0.0016 |
-| friction x2 / x4 / x8, joint 4 | 0.39 -> 0.78 / 1.50 / 2.85 | 0.0037 -> 0.0032 / 0.0069 / 0.0142 |
-| friction x8, joint 2 / joint 6 | 0.19 -> 1.47 / 0.15 -> 0.91 | 0.0013 -> 0.0032 / 0.0119 -> 0.0565 |
-| locked joint 4 | 0.39 -> 9.38 | 0.0037 -> 0.0588 |
+| healthy | 0.39 -> 0.40 (joint 4) | 0.0039 -> 0.0016 |
+| friction x2 / x4 / x8, joint 4 | 0.39 -> 0.78 / 1.50 / 2.85 | 0.0039 -> 0.0032 / 0.0069 / 0.0142 |
+| friction x8, joint 2 / joint 3 / joint 6 | 0.19 -> 1.47 / 0.19 -> 1.42 / 0.15 -> 0.92 | 0.0014 -> 0.0032 / 0.0004 -> 0.0060 / 0.0135 -> 0.0562 |
+| locked joint 4 | 0.39 -> 9.31 | 0.0039 -> 0.0589 |
 | backlash 0.02-0.12 rad | unchanged | unchanged |
 | delay 10 / 30 ms | unchanged | unchanged |
-| delay 50 ms | 0.15 -> 2.57 | 0.0119 -> 0.1277 (the loop oscillates) |
+| delay 50 ms | 0.15 -> 2.59 | 0.0135 -> 0.1220 (the loop oscillates) |
 
 Friction and a locked joint are clearly visible. **Backlash and short delays are not visible in either
 channel at this speed**: the applied torque stays consistent with the dynamics, and the controller rides
 through a few percent of lost torque. They are in the set deliberately, because a detector's rate has to
 be reported including the faults it cannot find.
+
+## Detectability preview
+
+`docs/PREVIEW_DETECTION.md`: with an independent numpy model and a copy of the analysis side's rule, friction x8, the locked
+joint and the 50 ms delay are caught; friction x4 and below, short delays and backlash are not. Changing the torque signal
+from `tau_measured` to `tau_applied` is the difference between missing and catching the friction faults.
 
 ## Not built
 

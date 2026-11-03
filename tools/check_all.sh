@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Re-run every host-side check on the outputs that already exist. No simulator needed.
 #
-#   tools/check_all.sh            # unit tests, then every run in data/ out/o5 out/o4 out/o6 out/push,
+#   tools/check_all.sh            # unit tests, then every run in data/ out/o5 out/o4 out/extra out/o6 out/push,
 #                                 # then the payload and push scores
 #
 # Exit code 0 only if all of them pass. The push check prints a STRICT and an AMENDED verdict; the
@@ -16,7 +16,7 @@ rc=0
 echo "== unit tests"
 "$PY" -m unittest discover tests 2>&1 | tail -3 || rc=1
 
-for d in data out/o5 out/o4 out/o6 out/push; do
+for d in data out/o5 out/o4 out/extra out/o6 out/push; do
   n=0; bad=0
   for f in "$d"/*.parquet; do
     [ -e "$f" ] || continue

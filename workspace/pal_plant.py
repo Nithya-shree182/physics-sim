@@ -53,7 +53,9 @@ def _urdf_inertials(path):
             "mass": float(m.get("value")),
             "com": np.array([float(x) for x in o.get("xyz").split()])
                    if o is not None and o.get("xyz") else np.zeros(3),
-            "diag": np.array([float(I.get("ixx")), float(I.get("iyy")), float(I.get("izz"))])}
+            "tensor": np.array([[float(I.get("ixx")), float(I.get("ixy")), float(I.get("ixz"))],
+                                [float(I.get("ixy")), float(I.get("iyy")), float(I.get("iyz"))],
+                                [float(I.get("ixz")), float(I.get("iyz")), float(I.get("izz"))]])}
     return out
 
 
@@ -98,35 +100,35 @@ class Plant:
 
         Callable between runs (no reset needed); read back and asserted every time."""
         nb = len(self.bodies)
-        masses, coms, diags = [], [], []
+        masses, coms, tensors = [], [], []
         for i, b in enumerate(self.bodies):
             if b not in self.urdf:
                 masses.append(float(self.stock_masses[i])); coms.append(np.zeros(3))
-                diags.append(np.full(3, 1e-3)); continue
+                tensors.append(np.eye(3) * 1e-3); continue
             u = self.urdf[b]
-            m0, c0, d0 = u["mass"], u["com"], u["diag"]
+            m0, c0, T0 = u["mass"], u["com"], u["tensor"]
             if b in ARM_LINKS:
-                m0, d0 = m0 * mass_scale, d0 * mass_scale
+                m0, T0 = m0 * mass_scale, T0 * mass_scale
             if b == "panda_hand" and payload_kg > 0:
-                # hand + point mass at the TCP: combined mass, COM, parallel-axis inertia
+                # hand + point mass at the TCP: combined mass and COM; full tensor by parallel axes
                 cp = np.array([0.0, 0.0, PAYLOAD_TCP_Z])
                 m = m0 + payload_kg
                 c = (m0 * c0 + payload_kg * cp) / m
                 dh, dp = c0 - c, cp - c
-                d = d0 + m0 * (np.dot(dh, dh) - dh ** 2) + payload_kg * (np.dot(dp, dp) - dp ** 2)
-                masses.append(m); coms.append(c); diags.append(d)
-            else:
-                masses.append(m0); coms.append(c0); diags.append(d0)
+                T = (T0 + m0 * (np.dot(dh, dh) * np.eye(3) - np.outer(dh, dh))
+                     + payload_kg * (np.dot(dp, dp) * np.eye(3) - np.outer(dp, dp)))
+                m0, c0, T0 = m, c, T
+            masses.append(m0); coms.append(c0); tensors.append(T0)
         masses = np.array(masses, np.float32); coms = np.array(coms, np.float32)
-        diags = np.array(diags, np.float32)
-        quats = np.tile(np.array([1., 0, 0, 0], np.float32), (nb, 1))
+        quats = np.tile(np.array([1.0, 0, 0, 0], np.float32), (nb, 1))
         self.art.set_body_masses(masses.reshape(1, nb))
         self.art.set_body_coms(coms.reshape(1, nb, 3), quats.reshape(1, nb, 4))
-        try:
-            self.art.set_body_inertias(diags.reshape(1, nb, 3))
-        except Exception:
-            f = np.zeros((nb, 9), np.float32); f[:, 0], f[:, 4], f[:, 8] = diags.T
-            self.art.set_body_inertias(f.reshape(1, nb, 9))
+        # set_body_inertias takes the FULL 3x3 tensor (9 numbers) in the link frame; it rejects the
+        # 3-number form. Before 2026-11-03 only the diagonal was written (off-diagonal terms dropped,
+        # up to 0.008 kg*m^2 on M). Verified end to end by pal_selftest.py T5 against an independent
+        # numpy mass matrix (pal_inertia_convention.py tried the alternatives: a principal-axes
+        # quaternion is NOT how this API works).
+        self.art.set_body_inertias(np.array(tensors, np.float32).reshape(1, nb, 9))
         back = np.asarray(self.art.get_body_masses()).reshape(nb)
         assert np.allclose(back, masses, atol=1e-4), "mass write did not take"
         self.payload_kg, self.mass_scale = payload_kg, mass_scale

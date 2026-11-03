@@ -13,7 +13,7 @@ history; where it disagrees with REVIEW.md (written later the same day), REVIEW.
 ```bash
 tools/pal_pipeline.sh pal_o5_sweep.py out/o5     # current way: sim -> Parquet -> checks (see README.md)
 tools/run_sim.sh pal_selftest.py                 # plant self-test; run after any change to the plant
-python3 -m unittest discover tests               # 26 unit tests, no simulator needed
+python3 -m unittest discover tests               # 30 unit tests, no simulator needed
 ```
 
 Older scripts and the notes below predate 2026-11-03 (the scene audit and early probes build the OLD plant, whose
@@ -170,10 +170,10 @@ ownership.
 | **O2** residual | Closes at 0.15% at rest, <1% slow, <2% up to 50% of velocity limit; above it an artifact that grows with physics rate (see `docs/RESIDUAL_FLOOR.md`), not model error. Wrench conversion fixed. |
 | **O3** confidence | `c(q)` works directionally but never exceeds 0.13 anywhere; needs rescaling. Threshold is a guess. |
 | **O4** payload | Known-mass data recorded (0.5-3 kg, three poses + moving) and verified to 0.02% with independent URDF kinematics (`tools/check_payload.py`). The estimator is the analysis side's (`observers/payload.py`); not run on this data. |
-| **O5** detection | Built: friction, stuck joint, delay, backlash injectors; 5% mass mismatch; seeded sensor noise; 23 labelled runs in effort mode (`docs/O5_INJECTORS.md`). Backlash and short delays are invisible at this speed. Detector is the analysis side's; not yet run on our data. |
+| **O5** detection | Built: friction, stuck joint, delay, backlash injectors; 5% mass mismatch; seeded sensor noise; 26 labelled runs in effort mode, plus the analysis side's requested set in `out/extra` (`docs/O5_INJECTORS.md`). Backlash and short delays are invisible at this speed. Detector is the analysis side's; not yet run on our data. |
 | **O6** benchmark | Built and run: trapezoidal, S-curve, quintic over a speed grid at 0 and 2 kg, 26 runs; table and chart in `docs/REVIEW.md`, `docs/o6_comparison.svg`. |
 | **O7** dashboard | Dashboard is the analysis side's. Our parts (websocket stream, in-sim panel) not built. |
-| Validation push | Built and run (24 runs). Exact with friction off (0.2%); with realistic friction 15.7% worst case against a 15% pre-set limit: strict verdict FAIL, cause identified (`docs/VALIDATION.md`). |
+| Validation push | Built and run (24 runs). Exact with friction off (0.2%); with realistic friction 15.8% worst case against a 15% pre-set limit: strict verdict FAIL, cause identified (`docs/VALIDATION.md`). |
 
 ---
 

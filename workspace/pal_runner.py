@@ -50,6 +50,7 @@ class Scenario:
     push: PushSpec = None
     tau_limit: bool = True               # clip the command to the datasheet torque limits
     diagnostics: bool = False            # also return net = M qdd + C + g and the Jacobian per step
+    payload_events: tuple = ()           # ((t_s, kg), ...): payload changes mid-run, e.g. a pickup at 3 s
 
 
 class Runner:
@@ -113,6 +114,11 @@ class Runner:
         for k in range(steps):
             t = k / hz
             active = self.inj.update(t)
+            for ev_t, ev_kg in sc.payload_events:
+                if k == int(round(ev_t * hz)):
+                    p.set_inertials(ev_kg, sc.mass_scale)
+                    writer.labels["payload_kg"] = ev_kg
+                    writer.labels["payload_attached"] = ev_kg > 0
             if sc.push is not None:
                 on = sc.push.start_s <= t < sc.push.end_s
                 p.push(sc.push.force if on else (0.0, 0.0, 0.0))
@@ -137,9 +143,18 @@ class Runner:
             log["q"].append(self._v(art.get_joint_positions())); log["qd"].append(qd_now.copy())
             log["cmd"].append(tau.copy()); log["q_des"].append(qs)
         p.push((0.0, 0.0, 0.0)); self.inj.clear()
+        out = {k: np.array(v) for k, v in log.items()}
+        # Measured, not asserted: the speed the run actually reached, per joint and overall, as a
+        # fraction of the datasheet velocity limit. The analysis side applies its 50% band from this.
+        frac = np.max(np.abs(out["qd"]), axis=0) / cfg.QD_MAX
+        writer.manifest_extra["speed_fraction"] = float(frac.max())
+        writer.manifest_extra["speed_fraction_per_joint"] = [round(float(x), 4) for x in frac]
+        if sc.payload_events:
+            writer.manifest_extra["payload_schedule"] = [[0.0, sc.payload_kg]] + [[t, kg] for t, kg in sc.payload_events]
         if write:
             writer.close()
-        return {k: np.array(v) for k, v in log.items()}
+        out["speed_fraction"] = float(frac.max())
+        return out
 
     def _manifest(self, sc):
         import os

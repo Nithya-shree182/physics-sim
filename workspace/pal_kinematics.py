@@ -29,13 +29,18 @@ def rot_axis(a, th):
 class Urdf:
     def __init__(self, path, mass_scale=1.0, payload_kg=0.0, payload_offset=(0.0, 0.0, 0.1034)):
         root = ET.parse(path).getroot()
-        self.mass, self.com = {}, {}
+        self.mass, self.com, self.inertia = {}, {}, {}
         for l in root.findall("link"):
             it = l.find("inertial")
             if it is None:
                 continue
             o = it.find("origin")
             nm = l.get("name")
+            i_el = it.find("inertia")
+            Ixx, Iyy, Izz = (float(i_el.get(k)) for k in ("ixx", "iyy", "izz"))
+            Ixy, Ixz, Iyz = (float(i_el.get(k)) for k in ("ixy", "ixz", "iyz"))
+            self.inertia[nm] = np.array([[Ixx, Ixy, Ixz], [Ixy, Iyy, Iyz], [Ixz, Iyz, Izz]]) * (
+                mass_scale if nm in ARM_LINKS else 1.0)
             self.mass[nm] = float(it.find("mass").get("value")) * (mass_scale if nm in ARM_LINKS else 1.0)
             self.com[l.get("name")] = (np.array([float(x) for x in o.get("xyz").split()])
                                        if o is not None and o.get("xyz") else np.zeros(3))
@@ -77,6 +82,62 @@ class Urdf:
             R, p = pose["panda_hand"]
             out["payload"] = (self.payload[0], p + R @ self.payload[1])
         return out
+
+    def mass_matrix(self, q, finger=0.04, armature=0.0):
+        """Joint-space mass matrix M(q) of the 7 arm joints, composite-rigid-body from the URDF.
+
+        Sum over every massive link of  m Jv^T Jv + Jw^T (R I R^T) Jw,  with the full 3x3 inertia
+        tensor (off-diagonal terms included). The gripper and fingers ride on link 7, so they enter
+        through joints 1-7 only. `armature` (kg*m^2) is added to every diagonal term, which is how
+        the plant's dynamics include the reflected rotor inertia.
+        """
+        pose = {"panda_link0": (np.eye(3), np.zeros(3))}
+        axis_w, origin_w, joint_of_child = {}, {}, {}
+        todo = list(self.joints)
+        while todo:
+            rest = []
+            for j in todo:
+                if j["parent"] not in pose:
+                    rest.append(j); continue
+                R, p = pose[j["parent"]]
+                Rj = R @ rpy(*j["rpy"]); pj = p + R @ j["xyz"]
+                if j["type"] == "revolute":
+                    k = int(j["name"][-1]) - 1
+                    axis_w[k] = Rj @ (j["axis"] / np.linalg.norm(j["axis"])); origin_w[k] = pj
+                    Rj = Rj @ rot_axis(j["axis"], q[k])
+                elif j["type"] == "prismatic":
+                    pj = pj + Rj @ (j["axis"] * finger)
+                pose[j["child"]] = (Rj, pj)
+                joint_of_child[j["child"]] = j
+            if len(rest) == len(todo):
+                break
+            todo = rest
+        parent_of = {j["child"]: j["parent"] for j in self.joints}
+
+        def ancestors(link):
+            ks = []
+            while link in parent_of:
+                j = joint_of_child[link]
+                if j["type"] == "revolute":
+                    ks.append(int(j["name"][-1]) - 1)
+                link = parent_of[link]
+            return ks
+
+        M = np.zeros((ARM, ARM))
+        bodies = [(n, self.mass[n], self.inertia[n], self.com[n]) for n in self.mass]
+        if self.payload[0] > 0:
+            bodies.append(("payload", self.payload[0], np.zeros((3, 3)), self.payload[1]))
+        for name, m, I, c in bodies:
+            host = "panda_hand" if name == "payload" else name
+            R, p = pose[host]
+            pc = p + R @ c
+            Jv, Jw = np.zeros((3, ARM)), np.zeros((3, ARM))
+            for k in ancestors(host):
+                Jw[:, k] = axis_w[k]
+                Jv[:, k] = np.cross(axis_w[k], pc - origin_w[k])
+            Iw = R @ I @ R.T
+            M += m * Jv.T @ Jv + Jw.T @ Iw @ Jw
+        return M + armature * np.eye(ARM)
 
     def gravity(self, q, finger):
         """tau_g = d(U)/dq with U = sum m g z, by central differences."""

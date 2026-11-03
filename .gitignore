@@ -20,3 +20,6 @@ __pycache__/
 # The .npz is only the container-side intermediate on the way to parquet, so it is not
 # tracked; tools/npz_to_parquet.py regenerates the parquet from it if ever needed.
 data/*.npz
+
+# bulk run bundles for hand-over (tools/package_handover.sh); never in git
+handover/

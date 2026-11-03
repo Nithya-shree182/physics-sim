@@ -6,7 +6,7 @@ healthy stretch (the analysis side's detector calibrates on the first 3 s). Spee
 velocity limit, inside the <= 50% regime where the residual floor is physical.
 
   * healthy x6, different noise seeds: the false-alarm statistics need runs that differ
-  * friction x2 / x4 / x8 (of the Gaz values, in N*m) on joints 2, 4, 6
+  * friction x2 / x4 / x8 (of the Gaz values, in N*m) on joints 2, 3, 4, 6
   * a locked joint 4, backlash 0.02 / 0.06 / 0.12 rad on joint 1 and 0.12 rad on joint 7, command delay 10 / 30 / 50 ms
 
 The plant has the deliberate 5% arm-mass mismatch against the analysis side's URDF model, and
@@ -40,7 +40,7 @@ runner = Runner(plant, OUT, mj_every=10)
 traj = T.multisine(0.20)
 
 specs = [FaultSpec("none")] * 6
-specs += [FaultSpec("friction", j, m, ONSET_S) for m in (2.0, 4.0, 8.0) for j in (1, 3, 5)]
+specs += [FaultSpec("friction", j, m, ONSET_S) for m in (2.0, 4.0, 8.0) for j in (1, 2, 3, 5)]
 specs += [FaultSpec("stuck_joint", 3, 200.0, ONSET_S)]
 # backlash only acts where the joint torque REVERSES sign; gravity-loaded joints 2-6 never reverse
 # (measured: backlash on joints 4 and 6 changed nothing), so it goes on joints 1 and 7.
@@ -53,11 +53,15 @@ print(f"\n  {len(specs)} runs | {DURATION_S:g}s each, fault at {ONSET_S:g}s | {H
 print(f"  {'scenario':<28}{'|tau_cmd-net| pre':>19}{'post':>9}{'track rms pre':>15}{'post':>9}  joint", flush=True)
 summary, n_healthy = [], 0
 for i, f in enumerate(specs):
-    name = f"o5_healthy_s{n_healthy}" if f.type == "none" else f"o5_{f.tag}"
     if f.type == "none":
+        name, seed = f"o5_healthy_s{n_healthy}", 1000 + n_healthy      # s0 shares seed 1000 with every faulty run
         n_healthy += 1
+    else:
+        name, seed = f"o5_{f.tag}", 1000
+    # Matched baselines (analysis side's request, round 4 A2): healthy_s0 is the exact fault-free twin of
+    # every faulty run (same trajectory, same noise realisation); s1..s5 differ, for the false-alarm spread.
     sc = Scenario(name=name, traj=traj, traj_type="slow_reference", duration_s=DURATION_S,
-                  fault=f, noise_seed=1000 + i, diagnostics=True)
+                  fault=f, noise_seed=seed, diagnostics=True)
     log = runner.run(sc)
     hz = int(HZ)
     pre, post = slice(int(1.0 * hz), int(ONSET_S * hz)), slice(int((ONSET_S + 0.5) * hz), int(DURATION_S * hz))
@@ -69,7 +73,7 @@ for i, f in enumerate(specs):
     else:
         j = f.joint
     row = {"run_id": f"{name}_{hz}hz", "type": f.type, "joint": f.joint, "param": f.param,
-           "noise_seed": 1000 + i, "joint_shown": j,
+           "noise_seed": seed, "joint_shown": j,
            "applied_minus_net_pre": float(r[pre, j].mean()), "applied_minus_net_post": float(r[post, j].mean()),
            "track_err_pre_rad": float(e[pre, j].max()), "track_err_post_rad": float(e[post, j].max()),
            "track_rms_pre_rad": float(np.sqrt((e[pre, j] ** 2).mean())), "track_rms_post_rad": float(np.sqrt((e[post, j] ** 2).mean())),

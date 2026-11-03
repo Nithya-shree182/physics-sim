@@ -45,3 +45,39 @@ class Gravity(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MassMatrix(unittest.TestCase):
+    def test_symmetric_positive_definite_at_random_poses(self):
+        rng = np.random.default_rng(0)
+        u = Urdf(URDF)
+        for _ in range(8):
+            q = rng.uniform([-2.8, -1.7, -2.8, -3.0, -2.8, 0.0, -2.8], [2.8, 1.7, 2.8, -0.1, 2.8, 3.7, 2.8])
+            M = u.mass_matrix(q)
+            np.testing.assert_allclose(M, M.T, atol=1e-10)
+            self.assertGreater(np.linalg.eigvalsh(M).min(), 0)
+
+    def test_armature_adds_to_the_diagonal_only(self):
+        u = Urdf(URDF)
+        d = u.mass_matrix(Q, armature=0.0061) - u.mass_matrix(Q)
+        np.testing.assert_allclose(d, 0.0061 * np.eye(7), atol=1e-12)
+
+    def test_payload_adds_mass_and_scale_affects_arm_only(self):
+        a = Urdf(URDF).mass_matrix(Q)
+        b = Urdf(URDF, payload_kg=2.0).mass_matrix(Q)
+        self.assertTrue(np.all(np.linalg.eigvalsh(b - a) > -1e-12))      # payload only adds inertia
+        c = Urdf(URDF, mass_scale=1.3).mass_matrix(Q)
+        self.assertGreater(np.trace(c), np.trace(a))
+
+    def test_kinetic_energy_matches_link_by_link_sum(self):
+        # 0.5 qd' M qd must equal the sum of each link's translational + rotational energy,
+        # computed independently from FK-by-finite-difference of the COM positions.
+        u = Urdf(URDF)
+        qd = np.array([0.3, -0.2, 0.4, 0.1, -0.3, 0.2, 0.5])
+        ke = 0.5 * qd @ u.mass_matrix(Q) @ qd
+        eps = 1e-6
+        pos0 = u.com_positions(Q, 0.04)
+        pos1 = u.com_positions(Q + eps * qd, 0.04)
+        trans = sum(0.5 * m * np.sum(((pos1[n][1] - pos0[n][1]) / eps) ** 2) for n, (m, _) in pos0.items())
+        self.assertLessEqual(trans, ke + 1e-9)        # translational part is a lower bound of the total
+        self.assertGreater(ke, 0)

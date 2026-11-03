@@ -8,6 +8,9 @@
      ~1.0 N*m of (tau_cmd - net) in the direction of motion, within 10%
  T3  inertials rewritten mid-run: gravity with a 3 kg payload and the arm mass mismatch matches an
      independent numpy-from-URDF calculation (pal_kinematics), within 0.15 N*m
+ T5  the simulator's mass matrix M (plus the 0.0061 armature it leaves out) matches an independent
+     numpy composite-rigid-body calculation from the URDF, with full inertia tensors, at three poses
+     and payloads of 0 and 2 kg. This is the first check of M itself (T3 checks only gravity).
  T4  a pushed force is recovered from the applied torque: F_est = -(J^T)^+ (tau_cmd - net)
      for 10 N along x, within 15%
 
@@ -90,6 +93,22 @@ for k in range(1000, 1450):
 est = np.mean(est, axis=0)
 check("T4", abs(est[0] - 10.0) < 1.5 and abs(est[1]) < 1.5 and abs(est[2]) < 1.5,
       f"pushed {F.tolist()} N, estimated force {np.round(est[:3], 2).tolist()} N (torques {np.round(est[3:], 2).tolist()})")
+
+# T5 -----------------------------------------------------------------------------------------
+worst = 0.0; worst_diag_only = 0.0
+for pose in ("home", "horizontal_reach", "folded"):
+    for kg in (0.0, 2.0):
+        sc = Scenario(name="selftest", traj=T.hold(cfg.PROBE_POSES[pose]), traj_type="hold", duration_s=1.0,
+                      payload_kg=kg, mass_scale=DEFAULT_MASS_SCALE)
+        runner.run(sc, write=False)
+        q = np.asarray(plant.art.get_joint_positions()).flatten()[:ARM]
+        M_sim = np.asarray(plant.art.get_mass_matrices()).reshape(9, 9)[:ARM, :ARM] + cfg.ARMATURE[0] * np.eye(ARM)
+        M_ref = Urdf(cfg.URDF_PATH, mass_scale=DEFAULT_MASS_SCALE, payload_kg=kg).mass_matrix(q, 0.04, cfg.ARMATURE[0])
+        d = np.abs(M_sim - M_ref)
+        worst = max(worst, d.max())
+        worst_diag_only = max(worst_diag_only, np.abs(np.diag(d)).max())
+check("T5", worst < 5e-4, f"simulator M (+armature) vs independent numpy M, worst abs difference {worst:.5f} kg*m^2 "
+      f"(diagonal only {worst_diag_only:.5f}; limit 0.0005)")
 
 print(f"\nSELFTEST RESULT: {'PASS' if all(results) else 'FAIL'}  ({sum(results)}/{len(results)})", flush=True)
 simulation_app.close()

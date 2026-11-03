@@ -1,47 +1,112 @@
 # Notes for nithya (analysis side), from dev (simulator side)
 
-> ## LATEST (2026-11-03, end of day): read this block first, it supersedes the older sections below
+> ## LATEST (2026-11-04): read this block first, it supersedes everything below
 >
-> Everything on `dev` was rebuilt after an external-style review (`docs/REVIEW.md`). What matters to you:
+> Written after reading your rounds 3, 4 and 5 and your `0088d5e`. Short version: **one decision of yours
+> from round 4 has to change, one of your findings was right and is now fixed, and your run list is built.**
 >
-> 1. **The old data is superseded.** The plant's friction was in the wrong units (about 200x too much on
->    joint 2) and `tau_measured` cannot show friction at all. Do not use the earlier `data/slow_reference_*`
->    or any earlier `out/o5` run. They are deleted/regenerated.
-> 2. **New contract for fault detection: effort mode, applied torque.** All runs are `drive_mode = torque`.
->    The fault residual is `tau_applied - tau_model` (the controller is computed torque using the plant's own
->    M, C, g; `tau_applied` is what was commanded). `tau_measured` is net torque: use it for external loads
->    (payload, push), not for friction/backlash/stuck-joint. Your `residual.py` currently refuses
->    `tau_applied` on a position-mode log; these logs are torque mode, so it needs an effort-mode path.
-> 3. **The plant carries a 5% arm-mass mismatch** (links 1-7 heavier than the URDF; manifest key
->    `plant_link_mass_scale`) and, where stated, **seeded sensor noise** (`sensor_noise` in the manifest:
->    q 2e-5 rad, qd 1e-3 rad/s, torque 0.02 N*m; representative values, not identified). Your model keeps the
->    URDF values.
-> 4. **Friction is real now:** Gaz values x1.15 in N*m through the torque-valued API
->    (manifest `friction_values`, columns static, dynamic, viscous). Healthy `tau_applied - net` is 0.13-0.40 N*m
->    RMS per joint, so a healthy run has a friction offset your detector's calibration window must absorb.
-> 5. **Data you can run on (all schema-valid, all pass `tools/check_run.py`):**
->    - `data/ref_matched_{0kg,1kg}_1000hz.*` (tracked): slow reference, **no mass mismatch, no noise**: calibrate
->      your model here.
->    - `out/o5/` (not tracked, ~4 MB each, 23 runs): the fault set with noise and mismatch.
->      Faults: friction x2/x4/x8, locked joint, backlash, delay; six healthy runs with different noise seeds
->      for false-alarm rates. Ask and we will hand them over; `tools/pal_pipeline.sh pal_o5_sweep.py out/o5`
->      regenerates them in ~12 min.
->    - `out/o4/` (19 runs): known payloads 0 / 0.5 / 1 / 2 / 3 kg held at three poses, plus moving runs.
->      A 0 kg run at each pose is the tare. Score your estimator with the same rule as
->      `tools/check_payload.py` (within 3% or 0.02 kg).
->    - `out/push/` (24 runs): known forces at the gripper; compare with `tools/check_push.py`.
-> 6. **What the fault set cannot show:** backlash (0.02-0.12 rad) and delays up to 30 ms leave no signature in
->    either the applied-torque residual or tracking at 20% speed. They are in the set on purpose; report your
->    detection rate including them. A 50 ms delay makes the loop oscillate and is visible.
-> 7. **Attacks are out of scope** (`docs/PROPOSAL_AMENDMENTS.md`). `attack_type` is always `none`. The demo and
->    O5 pass text are rewritten there.
-> 8. **Validation push:** `docs/VALIDATION.md`. The residual-to-force maths is exact with friction off (0.2%);
->    with realistic friction the estimate is good to 15% or a few N (one run is 15.7%, limit 15%).
-> 9. **O6** (trajectory benchmark) is built and run: `docs/REVIEW.md`, `docs/o6_comparison.svg`.
+> ### 1. The decision that has to change: fault data is effort mode, and the fault signal is `tau_applied`
 >
-> What we still need from you: run `observers/` on the data above (Pinocchio does not install on our machine),
-> report detection and false-positive rates with and without the confidence gate, and tell us if anything in the
-> manifest or columns is missing for your code.
+> Round 4 said "we will not ask for effort-mode datasets" and asked for position-mode fault runs. That was
+> reasonable on what we had told you then. It is wrong, because of something we found afterwards
+> (`docs/REVIEW.md` F2): **`tau_measured` is the net joint torque and obeys Newton's law whatever produced it,
+> so it cannot show friction, backlash or a locked joint.** Measured on 14 position-mode runs:
+>
+> | run | `tau_measured - (M qdd + C + g)` on the faulted joint, after onset |
+> |---|---|
+> | healthy | 0.001 N*m |
+> | friction x8 on joint 2 or 4 | 0.002 / 0.001 N*m |
+> | joint 4 locked (it did not move) | 0.001 N*m; `tau_measured` stayed within 0.3 N*m of gravity |
+>
+> The torque we **apply** does show them (`tau_applied - net` = the friction: 1.388 N*m for 1.4 injected).
+> `tau_applied` exists only in effort mode (it is zero in position mode, as you already know). So:
+>
+> - **All our runs are now `drive_mode = "torque"`**, a computed-torque controller using the plant's own M, C, g.
+> - **For friction, stuck joint and backlash, use `compute_residual(run, model, torque="applied")`.** Your
+>   `residual.py` already supports this for `drive_mode == "torque"`. **`observers/detector.py`'s command-line
+>   entry (line 149) calls it without `torque=`, so it defaults to `measured` and will stay silent on friction faults
+>   in our logs; check that every other caller (the dashboard engine included) passes `torque="applied"` for these logs.**
+> - Keep `tau_measured` for **external loads** (payload, push): it is right for those.
+> - **Your synthetic "8 of 8 detected" does not transfer** to this plant unless your synthetic generator puts
+>   friction into `tau_measured` (we think it does; please check). The same goes for the dashboard's replay:
+>   `data/real/` holds our OLD logs (position mode, wrong friction, see 2); please replace them.
+>
+> ### 2. The old logs are superseded
+>
+> `slow_reference_0kg/1p0kg` were taken on a plant whose friction was passed in the wrong units (about 200x too
+> much on joint 2) and whose inertia was authored on the diagonal only. Do not use them or the 14-run `out/o5`.
+>
+> ### 3. Your armature finding (round 5 B) was right; it is closed
+>
+> - **Yes**, `get_mass_matrices()` excludes the 0.0061 armature; the plant's dynamics include it.
+> - **Yes**, our effort-mode feedforward used that `M`. Effect: `0.0061 * qdd`, about 0.01-0.02 N*m at 20% speed,
+>   absorbed by the feedback. `tau_applied - (M_full qdd + C + g)` is the friction exactly (0.004-0.007 N*m on a
+>   zero-friction plant, `pal_selftest.py` T1). It is not the above-knee artifact: the old ablation (armature on
+>   or off) moved the mean RMS residual by 0.02 N*m out of 2.4.
+> - **Your off-diagonal lead was also right, and bigger than 0.009.** We wrote only the inertia diagonal. We now
+>   check the simulator's `M` against an independent numpy composite-rigid-body calculation (`pal_selftest.py`
+>   T5): with the diagonal-only plant they differed by up to **0.015 kg*m^2**; after writing the full 3x3 tensor
+>   (the API takes 9 numbers in the link frame; a principal-axes quaternion is the wrong way, we tried it) the
+>   difference is **0.00004 kg*m^2**, with and without payload, at three poses. `M_logged + 0.0061 I` now equals
+>   an independent `M`.
+>
+> ### 4. Your questions (round 3 D, round 4 D, round 5)
+>
+> | question | answer |
+> |---|---|
+> | Does `tau_measured` include friction? | **No.** It is net torque (table in section 1). |
+> | In effort mode, which signal is `tau_measured`? | The read-back from PhysX (`get_measured_joint_efforts`). `tau_applied` is the command (`get_applied_joint_efforts`). They are separate columns and differ by friction and external loads, so the residual is not circular. |
+> | Which rate/stiffness gave 27.98%? | `pal_timing_rate.py`, 1000 Hz, 400 N*m/rad, 100% speed. It matches the corrected sweep (27.79%); the old 2.78% was the invalid figure. |
+> | Joints 5-7 residual 1.4-1.8% on the empty arm? | Not re-measured. Probable cause was the diagonal-only inertia (now fixed); please re-measure on `data/ref_matched_0kg`. |
+> | `speed_fraction` in the manifest? | Done: measured peak speed over the run, `speed_fraction` and `speed_fraction_per_joint` (fractions of the datasheet limit). |
+> | Log the analytic `qdd`? | Already logged: `qdd_cmd_*` are analytic. |
+> | Sensor noise? | Done. q 2e-5 rad, qd 1e-3 rad/s, torque 0.02 N*m, seeded per run, recorded under `sensor_noise` in the manifest. Yours were qd 2e-3 and torque 0.05; say if you want ours raised to match. |
+>
+> ### 5. Your run list (round 4 C and round 5 C), all built and checked
+>
+> Same-seed matched baselines are provided throughout: a healthy run with the same trajectory and the same noise
+> realisation as each faulty run.
+>
+> | your ID | what | where |
+> |---|---|---|
+> | C2a / C2b | excitation, 50% speed, 0 and 1 kg, same noise seed | `out/extra/c2_excitation_*` |
+> | C4 | friction x3 joint 3, friction x3 joint 6, locked joint 4, 50 ms delay, from 3 s of 6 s, 0 kg | `out/extra/c4_*_s1000`, healthy twin `c4_healthy_0kg_s1000` |
+> | C4b | the same with 1 kg held, and the 1 kg healthy twin | `out/extra/c4b_*` |
+> | C5 | one fault-free run, 60 s | `out/extra/c5_healthy_60s` |
+> | C6 | payload picked up mid-run, 0 to 1 kg at 3 s (`payload_kg` per row flips; `payload_schedule` in the manifest) | `out/extra/c6_pickup_0to1kg` |
+> | C9 | seeds 2001 and 2002 of C4, each with its twin | `out/extra/c4_*_s2001`, `*_s2002` |
+> | C3a / C3b | payload ladder 0.5-3 kg; holds at home, horizontal reach, folded (near-singular is not included), each with a 0 kg tare | `out/o4/` |
+> | beyond your list | 26-run fault sweep (friction x2/x4/x8 on joints 2, 3, 4, 6; locked joint; backlash; delay; six healthy seeds), validation push (24 runs), O6 trajectory benchmark | `out/o5`, `out/push`, `out/o6` |
+> | not built | C7 impact (no injector); C8 attacks (out of scope by decision, see 7) | |
+>
+> Calibration data for your model: `data/ref_matched_{0kg,1kg}_1000hz.*` (tracked in git): no mass mismatch, no
+> noise. Everything else carries a 5% arm-mass mismatch (`plant_link_mass_scale`) and noise.
+>
+> **How to get the runs:** about 120 Parquet files, too big for git. Run `tools/package_handover.sh` on our side;
+> it writes one tarball with a sha256 manifest. (It still has to be sent to you by hand.)
+>
+> ### 6. What the fault set can and cannot show
+>
+> Backlash (0.02-0.12 rad) and delays up to 30 ms leave no signature in either channel at 20% speed; they are in
+> the set on purpose, so report your rate including them. A 50 ms delay makes the loop oscillate and is visible.
+> A quick numpy preview with an independent model and a copy of your detector rule is in
+> `docs/PREVIEW_DETECTION.md`; it is a stand-in, not your result.
+>
+> ### 7. Attacks are out of scope
+>
+> `attack_type` is always `none`. Your plan to treat tampered goals as a separate geometric check is moot;
+> `docs/PROPOSAL_AMENDMENTS.md` rewrites the demo and the O5 pass text for faults only.
+>
+> ### 8. What we still need from you
+>
+> 1. Change the detector to use `torque="applied"` on `drive_mode == "torque"` logs, and re-run on the data above.
+> 2. Run `observers/` on `data/ref_matched_*` and report the residual per joint (your D1 question).
+> 3. Replace `data/real/` in the dashboard with the new reference runs.
+> 4. Tell us which noise levels you want, and the shape of the live feed you need (we have not built one; our runner
+>    takes payload, fault and speed as scenario parameters, so a control channel is a small step once the shape is
+>    agreed).
+> 5. Validation push: `docs/VALIDATION.md` and `tools/check_push.py`. The conversion is exact with friction off
+>    (0.2%); with realistic friction it is good to 15% or a few N, because static friction is not in the model.
 
 (Older sections follow; where they conflict with the block above, the block wins.)
 

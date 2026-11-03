@@ -31,11 +31,11 @@ changed. Only the experiment was.
 
 | group | runs | worst magnitude error | worst off-axis | peak speed in window |
 |---|---|---|---|---|
-| friction ON, realistic plant | 18 | **15.7%** (limit 15%) | 1.25 N | 48% of limit |
-| friction OFF, control | 6 | **0.2%** | 0.01 N | 19% of limit |
+| friction ON, realistic plant | 18 | **15.8%** (limit 15%) | 1.29 N | 49% of limit |
+| friction OFF, control | 6 | **0.2%** | 0.01 N | 20% of limit |
 
 Median error with friction on is 5.5%; 17 of 18 runs are within 10.4%. The one run over the line is
-`push_folded_y_10N` at 15.7% (1.57 N of 10 N). **The strict, pre-registered criterion therefore FAILS by 0.7
+`push_folded_y_10N` at 15.8% (1.58 N of 10 N). **The strict, pre-registered criterion therefore FAILS by 0.7
 points on one run.**
 
 ## Why, and what that means
@@ -47,7 +47,7 @@ has none. That sets a floor on the accuracy of any residual-based force estimate
 
 The floor can be computed from the plant, not from the results: the largest force static friction can hide
 is `|| |(J^T)^+| . tau_static ||`, using the manifest's static friction values and the Jacobian at the pose.
-It is 2.5-4.1 N across these runs, a conservative worst case, and every observed error (at most 1.57 N) is
+It is 2.5-4.1 N across these runs, a conservative worst case, and every observed error (at most 1.58 N) is
 inside it. `tools/check_push.py` prints this as the AMENDED verdict (error within max(15%, dead band)),
 which passes.
 

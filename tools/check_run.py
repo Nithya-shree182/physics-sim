@@ -69,15 +69,20 @@ def main():
     import json
     man = json.loads(a.parquet.with_suffix('.json').read_text())
     mass_scale = float(man.get('plant_link_mass_scale', 1.0))
-    payload = float(man.get('payload_kg', 0.0))
-    urdf = Urdf(a.urdf, mass_scale=mass_scale, payload_kg=payload)
+    payload_col = d["payload_kg"].to_numpy(dtype=float)           # per row: a pickup changes it mid-run
+    payload = float(payload_col[-1])
+    urdfs = {}
+    def urdf_for(kg):
+        if kg not in urdfs:
+            urdfs[kg] = Urdf(a.urdf, mass_scale=mass_scale, payload_kg=kg)
+        return urdfs[kg]
     rows = np.linspace(int(0.1 * n), n - 1, a.samples).astype(int)
-    g_urdf = np.array([urdf.gravity(q[k], finger) for k in rows])
+    g_urdf = np.array([urdf_for(float(payload_col[k])).gravity(q[k], finger) for k in rows])
     err = np.abs(g_urdf - g_sim[rows])
     worst = err.max(axis=0)
     passed = bool((worst < GRAVITY_TOL_NM).all())
     ok &= passed
-    print(f"2 GRAVITY   {'PASS' if passed else 'FAIL'}   URDF-numpy (arm mass scale {mass_scale:g}, payload {payload:g} kg) vs simulator g(q), worst abs error per joint "
+    print(f"2 GRAVITY   {'PASS' if passed else 'FAIL'}   URDF-numpy (arm mass scale {mass_scale:g}, payload {'0 to ' if payload_col.min() != payload_col.max() else ''}{payload:g} kg) vs simulator g(q), worst abs error per joint "
           f"[N*m]: {np.round(worst, 3).tolist()}  (tolerance {GRAVITY_TOL_NM})")
 
     traj_type = str(d["traj_type"].iloc[0])
