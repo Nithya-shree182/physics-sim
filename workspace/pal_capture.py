@@ -18,6 +18,7 @@ import xml.etree.ElementTree as ET
 import numpy as np
 from isaacsim import SimulationApp
 simulation_app = SimulationApp({"headless": True})
+print("[PAL] pal_capture.py running", flush=True)
 
 from pxr import PhysxSchema
 from isaacsim.core.api import World

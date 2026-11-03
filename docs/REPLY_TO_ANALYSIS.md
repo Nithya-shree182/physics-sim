@@ -161,3 +161,52 @@ be reported alongside any detection rate.
 We are keeping 1000 Hz for this reason, even though a full telemetry frame costs ~1.29 ms
 and therefore cannot stream in real time at that rate. Decimating `M`/`J` is the trade we
 are making instead — hence adopting your `mj_fresh` encoding.
+
+
+---
+
+# The operating envelope — this sets your detection thresholds
+
+Mapped on 2026-11-03 (`workspace/pal_fast_random.py`, `out/residual_floor.json`). The
+discretization floor is **not one number**: it has a knee at ~50% of velocity limit, and
+the knee is wrist-specific.
+
+Worst-joint RMS residual as a fraction of that joint's torque limit, 1000 Hz:
+
+| speed | j1 | j2 | j3 | j4 | j5 | j6 | j7 | worst |
+|---|---|---|---|---|---|---|---|---|
+| 10% | 0.09 | 0.31 | 0.39 | 0.20 | 0.23 | 0.24 | 0.01 | **0.39%** |
+| 25% | 0.24 | 0.78 | 0.96 | 0.53 | 0.54 | 0.60 | 0.03 | **0.96%** |
+| 50% | 0.54 | 1.57 | 1.81 | 1.14 | 1.03 | 1.27 | 0.07 | **1.81%** |
+| 75% | 1.43 | 3.15 | 3.45 | 2.20 | **8.80** | **7.79** | **8.01** | 8.80% |
+| 100% | 3.87 | 5.79 | 6.59 | 4.45 | **27.79** | **25.31** | **20.54** | 27.79% |
+
+Joints 5/6/7 have 12 N·m limits rather than 87 **and** much lower inertia, so the same
+absolute discretization error is a larger fraction and the lighter links make a stiffer
+ODE. Both effects land on the same three joints.
+
+Confirmed over 24 random poses, phases and speeds (correlation with speed 0.596). The
+scatter at frac 0.75 — 2.47% to 28.68% — means the floor depends on **pose as well as
+speed**, so a single scalar threshold will be wrong somewhere in the workspace.
+
+### Converted into payload terms
+
+At 4.63 N·m/kg on joint 4:
+
+| speed | floor at j4 | smallest detectable payload | 3-sigma threshold |
+|---|---|---|---|
+| 10% | 0.174 N·m | 0.038 kg | 0.113 kg |
+| 25% | 0.457 | 0.099 | 0.296 |
+| 50% | 0.987 | 0.213 | 0.640 |
+| 75% | 1.917 | 0.414 | 1.242 |
+| 100% | 3.870 | 0.836 | **2.507** |
+
+**At full speed most of the 0.1-3.0 kg ladder is invisible.** Our recommendation, and we
+think it is close to forced: run O4 and O5 at or below 50% of velocity limit.
+
+### A conflict worth agreeing on now
+
+O6 benchmarks trajectory styles and wants fast motion. O2/O4/O5 need slow motion to stay
+below the knee. They cannot share a speed regime. O6 should report cycle time, peak torque
+and energy at speed, while any residual-based claim stays below the knee — and the results
+should say which regime each number came from rather than mixing them.

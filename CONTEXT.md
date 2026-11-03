@@ -18,17 +18,17 @@ HEADLESS=1 ./start_sim_docker.sh     # no window
 container `unhealthy`, GPU idle. Fix is `docker rm -f pal-isaac-sim` and relaunch. Use a
 watchdog loop when scripting it:
 
+Run any probe script through the watchdog runner:
+
 ```bash
-for attempt in 1 2 3; do
-  docker rm -f pal-isaac-sim >/dev/null 2>&1
-  HEADLESS=1 ./start_sim_docker.sh > logs/run.log 2>&1 &
-  LPID=$!; booted=0
-  for i in $(seq 1 36); do sleep 5
-    [ "$(wc -l < logs/run.log 2>/dev/null || echo 0)" -gt 400 ] && { booted=1; break; }; done
-  [ "$booted" = "1" ] && { wait $LPID; break; }
-  kill $LPID 2>/dev/null
-done
+tools/run_sim.sh pal_fast_random.py            # -> logs/pal_fast_random.log
+PAL_STEPS=5000 PAL_PAYLOAD_KG=2 tools/run_sim.sh pal_capture.py
 ```
+
+It waits for the script's own `[PAL]` marker rather than log volume, allows 420 s for
+boot, kills what it abandons, tells a crash from a hang, and prints the real boot time.
+The earlier inline watchdog counted log lines and gave up at 200 s, which reported slow
+boots as hangs — so the old "1 in 5" hang figures measured the detector, not the sim.
 
 ## Layout
 
@@ -150,7 +150,29 @@ ownership.
 
 ---
 
-## The residual floor — know this number
+## The operating envelope — know these numbers
+
+**Run O4 and O5 at or below 50% of velocity limit.** Below the knee the floor is under 2%
+on every joint and the whole 0.1–3.0 kg payload ladder is detectable; above it the wrist
+joints collapse.
+
+```
+speed   worst joint   smallest detectable payload   3-sigma threshold
+ 10%       0.39%              0.038 kg                   0.113 kg
+ 25%       0.96%              0.099                      0.296
+ 50%       1.81%              0.213                      0.640
+ 75%       8.80%   <- knee    0.414                      1.242
+100%      27.79%              0.836                      2.507
+```
+
+The knee is joints 5/6/7: 12 N·m limits instead of 87, and lower inertia, so the same
+absolute error is a bigger fraction *and* a stiffer ODE. Confirmed over 24 random
+poses — the floor depends on pose as well as speed (2.47% to 28.68% at frac 0.75).
+
+**Objective conflict:** O6 wants fast motion; O2/O4/O5 need slow. They cannot share a
+speed regime, and the results must say which regime each number came from.
+
+## Why that floor exists
 
 The fast-motion residual is **time discretization of a stiff drive**, first order in `dt`
 (fitted exponent 1.049). Not a modelling error, and not removable by a better model:

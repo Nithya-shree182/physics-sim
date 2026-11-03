@@ -9,6 +9,7 @@ J_v^T W reproduces the measured change in the gravity term.
 import numpy as np
 from isaacsim import SimulationApp
 simulation_app = SimulationApp({"headless": True})
+print("[PAL] pal_jacobian_fix.py running", flush=True)
 
 from pxr import UsdPhysics, Usd, UsdGeom
 from isaacsim.core.api import World

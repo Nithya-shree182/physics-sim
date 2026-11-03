@@ -21,6 +21,7 @@ Three tests, each one able to fail independently:
 import numpy as np
 from isaacsim import SimulationApp
 simulation_app = SimulationApp({"headless": True})
+print("[PAL] pal_model_test.py running", flush=True)
 
 from pxr import UsdPhysics
 from isaacsim.core.api import World

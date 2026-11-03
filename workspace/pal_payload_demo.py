@@ -9,6 +9,7 @@ for it. The nominal model has to come from somewhere else.
 import numpy as np
 from isaacsim import SimulationApp
 simulation_app = SimulationApp({"headless": True})
+print("[PAL] pal_payload_demo.py running", flush=True)
 
 from pxr import UsdPhysics
 from isaacsim.core.api import World

@@ -404,3 +404,94 @@ cause is the method: `set_joint_positions()` appears to move the drive target as
 there was no tracking error to restore from. The underlying question — why a 0.14 rad
 tracking error produced only ~10 N·m against a 400 N·m/rad drive — is unresolved, but it
 matters much less now that discretization accounts for the residual.
+
+
+---
+
+# Added 2026-11-03 (later)
+
+## The operating envelope — the most useful number produced so far
+
+P1 said the residual floor is time discretization. Mapping it (`pal_fast_random.py`,
+`out/residual_floor.json`) shows the floor is **not one number**: it has a sharp knee, and
+the knee is wrist-specific.
+
+Worst-joint RMS residual as a fraction of that joint's torque limit, 1000 Hz:
+
+| speed | j1 | j2 | j3 | j4 | j5 | j6 | j7 | worst |
+|---|---|---|---|---|---|---|---|---|
+| 10% | 0.09 | 0.31 | 0.39 | 0.20 | 0.23 | 0.24 | 0.01 | **0.39%** |
+| 25% | 0.24 | 0.78 | 0.96 | 0.53 | 0.54 | 0.60 | 0.03 | **0.96%** |
+| 50% | 0.54 | 1.57 | 1.81 | 1.14 | 1.03 | 1.27 | 0.07 | **1.81%** |
+| 75% | 1.43 | 3.15 | 3.45 | 2.20 | **8.80** | **7.79** | **8.01** | 8.80% |
+| 100% | 3.87 | 5.79 | 6.59 | 4.45 | **27.79** | **25.31** | **20.54** | 27.79% |
+
+Below 50% of velocity limit every joint stays under 1.81% and growth is smooth. Above it
+joints 5/6/7 collapse while 1–4 barely move. Those three have 12 N·m limits rather than
+87 **and** much lower inertia, so the same absolute error is a larger fraction and the
+lighter links make a stiffer ODE. Both effects land on the same three joints.
+
+Confirmed over 24 random poses, phases and speeds (correlation with speed 0.596):
+
+```
+frac 0.15: median 0.62%   frac 0.50: median 2.31%
+frac 0.30: median 1.20%   frac 0.75: median 11.01%, max 28.68%
+```
+
+The scatter at 0.75 (2.47% to 28.68%) shows the floor is a function of **speed and pose**,
+not speed alone.
+
+### What it means for O4 and O5
+
+A payload contributes about 4.63 N·m/kg at joint 4, so the floor converts directly into a
+detection limit:
+
+| speed | floor at j4 | smallest detectable payload | 3-sigma threshold |
+|---|---|---|---|
+| 10% | 0.174 N·m | 0.038 kg | 0.113 kg |
+| 25% | 0.457 | 0.099 | 0.296 |
+| 50% | 0.987 | 0.213 | 0.640 |
+| 75% | 1.917 | 0.414 | 1.242 |
+| 100% | 3.870 | 0.836 | **2.507** |
+
+**At full speed most of the 0.1–3.0 kg ladder is invisible.**
+
+**Decision needed, and it is close to forced: run O4 and O5 at or below 50% of velocity
+limit.** Below the knee the floor is under 2% everywhere and the whole payload ladder
+stays detectable.
+
+### A conflict this creates between objectives
+
+O6 benchmarks trajectory styles and wants fast motion. O2/O4/O5 need slow motion to stay
+below the knee. **They cannot share a speed regime.** O6 should report its cycle-time,
+peak-torque and energy figures at speed, while any residual-based claim stays below the
+knee — and the results should say so rather than quietly mixing the two.
+
+## P10 — the boot hang, revised
+
+The earlier "1 in 5, then three in a row" figures were produced by a watchdog that could
+not distinguish a slow boot from a hang. It counted lines in `docker logs` and gave up at
+200 s; Isaac's extension loading can exceed that on a cold cache. One run reported
+"attempt 1–4 hung" when attempt 4 had in fact succeeded and finished after the loop
+abandoned it — and because the loop only killed the previous container at the *start* of
+the next attempt, abandoned runs kept holding the GPU.
+
+**Fixed.** `tools/run_sim.sh` waits for the script's own `[PAL]` marker rather than log
+volume, allows 420 s, kills what it abandons, distinguishes a crash from a hang, and
+reports the real boot time. First use: "script started after 28s", one attempt.
+
+**The true hang rate is therefore unknown** — the earlier numbers measured the detector,
+not the simulator. It will be re-measured as runs accumulate.
+
+## Motion generation — decided on paper, not yet built
+
+See `docs/MOTION_STACK.md`. Recommendation: Lula IK plus our own trajectory generators
+(which O6 needs anyway, and which give analytic `q_cmd`/`qd_cmd`/`qdd_cmd`), with
+`PickPlaceController` reserved for the O7 demo run.
+
+The reason it is an attestation decision rather than a convenience one: the motion stack
+determines which attack classes are detectable. A tampered **Cartesian goal** passes
+through IK into a perfectly self-consistent joint trajectory and produces **no residual**;
+only a spoofed **joint setpoint** is visible to the residual. If tampered goals are in
+scope for O5, that needs a geometric or intent check, and it should be scoped now rather
+than discovered when the detection table has a column of zeros.

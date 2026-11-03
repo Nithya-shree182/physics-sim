@@ -9,6 +9,7 @@ import time
 import numpy as np
 from isaacsim import SimulationApp
 simulation_app = SimulationApp({"headless": True})
+print("[PAL] pal_o1_test.py running", flush=True)
 
 from isaacsim.core.api import World
 from isaacsim.core.utils.stage import add_reference_to_stage

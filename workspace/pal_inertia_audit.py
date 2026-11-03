@@ -17,6 +17,7 @@ import xml.etree.ElementTree as ET
 import numpy as np
 from isaacsim import SimulationApp
 simulation_app = SimulationApp({"headless": True})
+print("[PAL] pal_inertia_audit.py running", flush=True)
 
 from pxr import UsdPhysics, Usd, Gf
 from isaacsim.core.api import World

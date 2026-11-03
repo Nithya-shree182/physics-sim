@@ -43,6 +43,7 @@ simulation_app = SimulationApp({
     "renderer": "RaytracedLighting",
     "anti_aliasing": 3,
 })
+print("[PAL] pal_scene.py running", flush=True)
 
 # ── 2. Imports that require a live SimulationApp ───────────────────────────────────────
 from pxr import Usd, UsdGeom, UsdLux, UsdShade, Gf, PhysxSchema
