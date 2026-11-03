@@ -29,7 +29,8 @@ ATTEMPTS="${PAL_ATTEMPTS:-3}"
 mkdir -p "$ROOT/logs" "$ROOT/data" "$ROOT/out"
 # The container runs as uid 1234 — neither root nor the host user — so host directories at
 # the usual 755 are not writable by it, and that fails only at the END of a run.
-chmod 777 "$ROOT/data" "$ROOT/out" 2>/dev/null || true
+mkdir -p "$ROOT/out/o5"
+chmod 777 "$ROOT/data" "$ROOT/out" "$ROOT/out/o5" 2>/dev/null || true
 
 cleanup() { docker rm -f "$NAME" >/dev/null 2>&1 || true; }
 trap 'echo; echo "interrupted, stopping $NAME"; cleanup; exit 130' INT TERM
@@ -45,7 +46,7 @@ for attempt in $(seq 1 "$ATTEMPTS"); do
     -e ACCEPT_EULA=Y -e PRIVACY_CONSENT=Y -e OMNI_KIT_ACCEPT_EULA=YES \
     -e NVIDIA_DRIVER_CAPABILITIES=all -e ISAAC_SIM_HEADLESS="${HEADLESS:-1}" \
     "${X11_ARGS[@]}" \
-    $(env | grep -E '^PAL_(STEPS|TRAJ|PAYLOAD_KG|PHYSICS_HZ|MJ_EVERY|RUN_ID|DRIVE_MODE|FRAC|SEED|GIT_COMMIT|MACHINE)=' | sed 's/^/-e /') \
+    $(env | grep -E '^PAL_(STEPS|TRAJ|PAYLOAD_KG|PHYSICS_HZ|MJ_EVERY|RUN_ID|DRIVE_MODE|FRAC|SEED|GIT_COMMIT|MACHINE|NO_FRICTION|FRICTION_API|DURATION_S|ONSET_S)=' | sed 's/^/-e /') \
     -v "$CACHE/kit:/isaac-sim/kit/cache:rw" -v "$CACHE/ov:/root/.cache/ov:rw" \
     -v "$ROOT/workspace:/workspace:rw" \
     -v "$ROOT/assets/franka_panda:/workspace/assets:ro" \

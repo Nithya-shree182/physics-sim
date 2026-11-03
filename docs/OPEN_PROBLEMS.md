@@ -83,7 +83,13 @@ articulation.
 **Blocks:** O2 calibration sign-off, and therefore everything downstream. The slow-run PASS
 at 0.49% is not sufficient evidence — that run was 98% gravity.
 
-### P2 — ~~Joint friction never reaches the plant~~ **FIXED 2026-11-02**
+### P2 — ~~Joint friction never reaches the plant~~ **FIXED 2026-11-02, then CORRECTED 2026-11-03: it reaches the plant in the wrong units**
+
+> **Correction.** Friction does reach the plant, but `set_friction_coefficients` takes a dimensionless
+> PhysX coefficient and we passed N*m values, so joint 2 carries ~38 N*m instead of ~0.2. The torque-valued
+> API is `art._physics_view.set_dof_friction_properties`. Also, `tau_measured` is net torque and cannot
+> show friction at all. See `docs/REVIEW.md` F1 and F2.
+
 
 **Root cause was worse than friction.** `world.reset()` silently discards *everything*
 written through the tensor API — body masses, centres of mass, inertias, joint friction

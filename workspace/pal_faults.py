@@ -9,7 +9,7 @@ The fault types are the ones schema/telemetry_v0.yaml already allows (`friction`
 
     FaultSpec("friction", joint=3, param=4.0, onset_s=3.0)   # Coulomb friction x4 on joint 3
     FaultSpec("stuck_joint", joint=3, param=200.0)           # friction (N*m) far above the drive
-    FaultSpec("delay", joint=-1, param=25.0)                 # position targets arrive 25 ms late
+    FaultSpec("delay", joint=0, param=0.025)                 # position targets arrive 25 ms late
 
 Usage inside a stepping loop (Isaac Sim not imported here, so this stays unit-testable):
 
@@ -32,22 +32,26 @@ TYPES = ("none", "friction", "stuck_joint", "delay")
 @dataclass
 class FaultSpec:
     type: str = "none"
-    joint: int = -1            # 0-6, or -1 for faults that are not per-joint (delay)
-    param: float = np.nan      # friction: multiplier | stuck_joint: friction N*m | delay: ms
+    joint: int = -1            # 0-6; -1 only for type none. The schema requires a joint for every
+                               # fault, so delay carries a nominal 0 although it hits every joint.
+    param: float = np.nan      # friction: multiplier | stuck_joint: friction N*m | delay: seconds
     onset_s: float = 3.0       # simulated seconds into the run
 
     def __post_init__(self):
         if self.type not in TYPES:
             raise ValueError(f"fault type {self.type!r} not in {TYPES}")
-        if self.type in ("friction", "stuck_joint") and not 0 <= self.joint < ARM:
+        if (self.type == "none") != (self.joint == -1):
+            raise ValueError("joint must be -1 exactly when type is none (schema rule)")
+        if self.type != "none" and not 0 <= self.joint < ARM:
             raise ValueError(f"{self.type} needs joint 0-6, got {self.joint}")
 
     @property
     def tag(self):
         if self.type == "none":
             return "healthy"
-        j = f"j{self.joint}" if self.joint >= 0 else "all"
-        return f"{self.type}_{j}_{self.param:g}"
+        j = "all" if self.type == "delay" else f"j{self.joint}"
+        p = f"{self.param * 1e3:g}ms" if self.type == "delay" else f"{self.param:g}"
+        return f"{self.type}_{j}_{p}"
 
 
 class FaultInjector:
@@ -62,7 +66,7 @@ class FaultInjector:
         self.clear()
         self.spec = spec
         self.active = False
-        n = int(round(spec.param * 1e-3 * self.hz)) if spec.type == "delay" else 0
+        n = int(round(spec.param * self.hz)) if spec.type == "delay" else 0
         self._line = deque()
         self._delay_steps = n
 

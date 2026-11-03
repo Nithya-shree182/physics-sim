@@ -20,11 +20,6 @@ from isaacsim import SimulationApp
 simulation_app = SimulationApp({"headless": True})
 print("[PAL] pal_capture.py running", flush=True)
 
-from pxr import PhysxSchema
-from isaacsim.core.api import World
-from isaacsim.core.utils.stage import add_reference_to_stage
-from isaacsim.storage.native import get_assets_root_path
-from isaacsim.core.prims import Articulation
 import pal_config as cfg
 from pal_telemetry import TelemetryWriter
 
@@ -36,72 +31,10 @@ TRAJ = os.environ.get("PAL_TRAJ", "slow_reference")
 PAYLOAD = float(os.environ.get("PAL_PAYLOAD_KG", 0.0))
 MJ_EVERY = int(os.environ.get("PAL_MJ_EVERY", 1))
 RUN_ID = os.environ.get("PAL_RUN_ID", f"{TRAJ}_{PAYLOAD:g}kg_{int(HZ)}hz")
-TCP_Z = 0.1034                      # m along panda_hand z; matches the analysis side
 
-world = World(stage_units_in_meters=1.0, physics_dt=DT, rendering_dt=1/30.0)
-pc = world.get_physics_context()
-pc.set_solver_type(cfg.SOLVER_TYPE); pc.enable_ccd(cfg.ENABLE_CCD)
-pc.enable_stablization(cfg.ENABLE_STABILIZATION); pc.set_gravity(cfg.GRAVITY)
-sp = PhysxSchema.PhysxSceneAPI.Apply(pc.get_current_physics_scene_prim())
-sp.CreateMinPositionIterationCountAttr(cfg.POSITION_ITERATIONS)
-sp.CreateMinVelocityIterationCountAttr(cfg.VELOCITY_ITERATIONS)
-
-add_reference_to_stage(usd_path=get_assets_root_path() + cfg.ROBOT_USD_SUBPATH,
-                       prim_path=cfg.ROBOT_PRIM)
-art = Articulation(cfg.ROBOT_PRIM)
-world.reset(); art.initialize()
-idx = np.arange(ARM)
-
-# ── URDF inertials, plus the payload folded into panda_hand at the TCP ───────────────
-root = ET.parse(cfg.URDF_PATH).getroot()
-U = {}
-for l in root.findall("link"):
-    it = l.find("inertial")
-    if it is None:
-        continue
-    m, o, I = it.find("mass"), it.find("origin"), it.find("inertia")
-    U[l.get("name")] = {"mass": float(m.get("value")),
-        "com": np.array([float(x) for x in o.get("xyz").split()])
-               if o is not None and o.get("xyz") else np.zeros(3),
-        "diag": np.array([float(I.get("ixx")), float(I.get("iyy")), float(I.get("izz"))])}
-
-bodies = list(art.body_names); nb = len(bodies)
-cur = np.asarray(art.get_body_masses()).reshape(nb)
-masses, coms, diags = [], [], []
-for i, b in enumerate(bodies):
-    if b not in U:
-        masses.append(float(cur[i])); coms.append(np.zeros(3)); diags.append(np.full(3, 1e-3))
-        continue
-    m0, c0, d0 = U[b]["mass"], U[b]["com"], U[b]["diag"]
-    if b == "panda_hand" and PAYLOAD > 0:
-        # Composite of hand + point mass at the TCP: combined mass, combined COM, and the
-        # payload's parallel-axis contribution about that combined COM.
-        cp = np.array([0.0, 0.0, TCP_Z])
-        m = m0 + PAYLOAD
-        c = (m0 * c0 + PAYLOAD * cp) / m
-        dh, dp = c0 - c, cp - c
-        d = d0 + m0 * (np.dot(dh, dh) - dh**2) + PAYLOAD * (np.dot(dp, dp) - dp**2)
-        masses.append(m); coms.append(c); diags.append(d)
-    else:
-        masses.append(m0); coms.append(c0); diags.append(d0)
-
-masses = np.array(masses, np.float32)
-coms = np.array(coms, np.float32)
-diags = np.array(diags, np.float32)
-quats = np.tile(np.array([1., 0, 0, 0], np.float32), (nb, 1))
-
-art.set_gains(kps=np.full((1, ARM), 400.0 * cfg.DEG_PER_RAD, np.float32),
-              kds=np.full((1, ARM), 80.0 * cfg.DEG_PER_RAD, np.float32), joint_indices=idx)
-art.set_body_masses(masses.reshape(1, nb))
-art.set_body_coms(coms.reshape(1, nb, 3), quats.reshape(1, nb, 4))
-try:
-    art.set_body_inertias(diags.reshape(1, nb, 3))
-except Exception:
-    f = np.zeros((nb, 9), np.float32); f[:, 0], f[:, 4], f[:, 8] = diags.T
-    art.set_body_inertias(f.reshape(1, nb, 9))
-art.set_armatures(cfg.ARMATURE.reshape(1, ARM).astype(np.float32), joint_indices=idx)
-fric = cfg.FRICTION_COULOMB_STATIC * cfg.PLANT_FRICTION_SCALE
-art.set_friction_coefficients(fric.reshape(1, ARM).astype(np.float32), joint_indices=idx)
+from pal_plant import build_plant, PAYLOAD_TCP_Z as TCP_Z
+plant = build_plant(HZ, payload_kg=PAYLOAD)
+world, art, idx, fric = plant.world, plant.art, plant.idx, plant.fric
 
 # ── Trajectory ────────────────────────────────────────────────────────────────────────
 F0 = np.array([.55, .45, .60, .50, .75, .70, .80])

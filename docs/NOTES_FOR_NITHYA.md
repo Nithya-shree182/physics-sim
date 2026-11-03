@@ -139,12 +139,36 @@ barely disturbs the arm and wrist joint 6 shows nothing even at x8, so those cas
 entirely on your residual channel. Runs are in `out/o5/` (git-ignored, ~4 MB each); we have
 not run your detector on them because Pinocchio is not installed on our host.
 
-## 8. Where to look
+## 8. Correction to section 7, and two findings that change O5 (2026-11-03, later)
+
+An external-style review (`docs/REVIEW.md`) found three things. **Please do not run your
+detector on `out/o5` as first described.**
+
+1. **The O5 data was schema-invalid** (seven manifest fields missing; delay runs had
+   `fault_joint = -1`; delay parameter was in ms, not seconds). Fixed, and all 14 runs now pass
+   `schema/validate.py`. Section 7 said it was ready; it was not.
+2. **Our plant's friction is wrong** (`REVIEW.md` F1). We passed N*m values to a dimensionless
+   PhysX coefficient; joint 2 carries about 38 N*m of friction instead of ~0.2. All friction
+   data and the `data/` reference runs are on this plant. A corrected plant is the next job.
+3. **`tau_measured` cannot see friction or a stuck joint** (`REVIEW.md` F2). It is the net
+   joint torque, so `tau_measured - (M qdd + C + g)` is ~0.001 N*m with friction x8 or a locked
+   joint. Only the *applied* torque shows it, and `tau_applied` exists only in effort mode.
+   Your detector's residual channel will therefore stay quiet on real friction faults unless
+   O5 data is recorded in effort mode and the fault residual is `tau_applied - tau_model`.
+   Payload is unaffected (it is an external load). Your synthetic friction detection result
+   does not transfer to PhysX data for this reason.
+
+What we need from you: confirm you are happy to add an effort-mode path to `residual.py`
+(`tau_applied - tau_model`), and tell us if your synthetic generator puts friction into
+`tau_measured` (we think it does).
+
+## 9. Where to look
 
 | | |
 |---|---|
 | corrected floor and effort-mode table | `docs/RESIDUAL_FLOOR.md` |
 | correction to the old P1 claim | `docs/OPEN_PROBLEMS.md` (P1) |
 | effort-mode test | `workspace/pal_effort_test.py`, `logs/pal_effort_test_{500,1000,2000}.log` |
+| review, with all findings | `docs/REVIEW.md` |
 | O5 injectors and first sweep | `docs/O5_INJECTORS.md`, `workspace/pal_faults.py`, `workspace/pal_o5_sweep.py` |
 | decoupled controller rate test (no effect) | `workspace/pal_rate_decouple.py` |

@@ -27,11 +27,6 @@ from isaacsim import SimulationApp
 simulation_app = SimulationApp({"headless": True})
 print("[PAL] pal_o5_sweep.py running", flush=True)
 
-from pxr import PhysxSchema
-from isaacsim.core.api import World
-from isaacsim.core.utils.stage import add_reference_to_stage
-from isaacsim.storage.native import get_assets_root_path
-from isaacsim.core.prims import Articulation
 import pal_config as cfg
 from pal_telemetry import TelemetryWriter
 from pal_faults import FaultSpec, FaultInjector
@@ -45,72 +40,10 @@ MJ_EVERY = int(os.environ.get("PAL_MJ_EVERY", 10))
 DURATION_S = float(os.environ.get("PAL_DURATION_S", 6.0))
 ONSET_S = float(os.environ.get("PAL_ONSET_S", 3.0))
 OUT_DIR = "/workspace/out/o5"
-TCP_Z = 0.1034                      # m along panda_hand z; matches the analysis side
 
-world = World(stage_units_in_meters=1.0, physics_dt=DT, rendering_dt=1/30.0)
-pc = world.get_physics_context()
-pc.set_solver_type(cfg.SOLVER_TYPE); pc.enable_ccd(cfg.ENABLE_CCD)
-pc.enable_stablization(cfg.ENABLE_STABILIZATION); pc.set_gravity(cfg.GRAVITY)
-sp = PhysxSchema.PhysxSceneAPI.Apply(pc.get_current_physics_scene_prim())
-sp.CreateMinPositionIterationCountAttr(cfg.POSITION_ITERATIONS)
-sp.CreateMinVelocityIterationCountAttr(cfg.VELOCITY_ITERATIONS)
-
-add_reference_to_stage(usd_path=get_assets_root_path() + cfg.ROBOT_USD_SUBPATH,
-                       prim_path=cfg.ROBOT_PRIM)
-art = Articulation(cfg.ROBOT_PRIM)
-world.reset(); art.initialize()
-idx = np.arange(ARM)
-
-# ── URDF inertials, plus the payload folded into panda_hand at the TCP ───────────────
-root = ET.parse(cfg.URDF_PATH).getroot()
-U = {}
-for l in root.findall("link"):
-    it = l.find("inertial")
-    if it is None:
-        continue
-    m, o, I = it.find("mass"), it.find("origin"), it.find("inertia")
-    U[l.get("name")] = {"mass": float(m.get("value")),
-        "com": np.array([float(x) for x in o.get("xyz").split()])
-               if o is not None and o.get("xyz") else np.zeros(3),
-        "diag": np.array([float(I.get("ixx")), float(I.get("iyy")), float(I.get("izz"))])}
-
-bodies = list(art.body_names); nb = len(bodies)
-cur = np.asarray(art.get_body_masses()).reshape(nb)
-masses, coms, diags = [], [], []
-for i, b in enumerate(bodies):
-    if b not in U:
-        masses.append(float(cur[i])); coms.append(np.zeros(3)); diags.append(np.full(3, 1e-3))
-        continue
-    m0, c0, d0 = U[b]["mass"], U[b]["com"], U[b]["diag"]
-    if b == "panda_hand" and PAYLOAD > 0:
-        # Composite of hand + point mass at the TCP: combined mass, combined COM, and the
-        # payload's parallel-axis contribution about that combined COM.
-        cp = np.array([0.0, 0.0, TCP_Z])
-        m = m0 + PAYLOAD
-        c = (m0 * c0 + PAYLOAD * cp) / m
-        dh, dp = c0 - c, cp - c
-        d = d0 + m0 * (np.dot(dh, dh) - dh**2) + PAYLOAD * (np.dot(dp, dp) - dp**2)
-        masses.append(m); coms.append(c); diags.append(d)
-    else:
-        masses.append(m0); coms.append(c0); diags.append(d0)
-
-masses = np.array(masses, np.float32)
-coms = np.array(coms, np.float32)
-diags = np.array(diags, np.float32)
-quats = np.tile(np.array([1., 0, 0, 0], np.float32), (nb, 1))
-
-art.set_gains(kps=np.full((1, ARM), 400.0 * cfg.DEG_PER_RAD, np.float32),
-              kds=np.full((1, ARM), 80.0 * cfg.DEG_PER_RAD, np.float32), joint_indices=idx)
-art.set_body_masses(masses.reshape(1, nb))
-art.set_body_coms(coms.reshape(1, nb, 3), quats.reshape(1, nb, 4))
-try:
-    art.set_body_inertias(diags.reshape(1, nb, 3))
-except Exception:
-    f = np.zeros((nb, 9), np.float32); f[:, 0], f[:, 4], f[:, 8] = diags.T
-    art.set_body_inertias(f.reshape(1, nb, 9))
-art.set_armatures(cfg.ARMATURE.reshape(1, ARM).astype(np.float32), joint_indices=idx)
-fric = cfg.FRICTION_COULOMB_STATIC * cfg.PLANT_FRICTION_SCALE
-art.set_friction_coefficients(fric.reshape(1, ARM).astype(np.float32), joint_indices=idx)
+from pal_plant import build_plant, PAYLOAD_TCP_Z as TCP_Z
+plant = build_plant(HZ, payload_kg=PAYLOAD)
+world, art, idx, fric = plant.world, plant.art, plant.idx, plant.fric
 
 
 F0 = np.array([.55, .45, .60, .50, .75, .70, .80])
@@ -131,8 +64,8 @@ for mult in (2.0, 4.0, 8.0):
     for j in (1, 3, 5):
         SCENARIOS.append(FaultSpec("friction", j, mult, ONSET_S))
 SCENARIOS.append(FaultSpec("stuck_joint", 3, 200.0, ONSET_S))
-for ms in (10.0, 25.0, 50.0):
-    SCENARIOS.append(FaultSpec("delay", -1, ms, ONSET_S))
+for sec in (0.010, 0.025, 0.050):
+    SCENARIOS.append(FaultSpec("delay", 0, sec, ONSET_S))
 
 inj = FaultInjector(art, fric, HZ)
 q0 = traj(0.0)[0]
@@ -156,7 +89,16 @@ def run(spec):
         labels={"traj_type": TRAJ, "drive_mode": "position_stiff", "payload_kg": PAYLOAD,
                 "payload_attached": False, "fault_type": spec.type,
                 "fault_joint": spec.joint, "fault_param": spec.param, "attack_type": "none"},
-        manifest={"physics_hz": HZ, "armature": cfg.ARMATURE.tolist(),
+        manifest={"git_commit": os.environ.get("PAL_GIT_COMMIT", "uncommitted"),
+                  "machine": os.environ.get("PAL_MACHINE", "omen-5090"),
+                  "solver": {"type": cfg.SOLVER_TYPE,
+                             "position_iterations": cfg.POSITION_ITERATIONS,
+                             "velocity_iterations": cfg.VELOCITY_ITERATIONS},
+                  "asset": {"usd": cfg.ROBOT_USD_SUBPATH, "urdf": cfg.URDF_PATH,
+                            "inertials_authored_from_urdf": True},
+                  "gravity": [0.0, 0.0, cfg.GRAVITY], "seed": 0,
+                  "finger_q_ref": cfg.FINGER_OPEN,
+                  "physics_hz": HZ, "armature": cfg.ARMATURE.tolist(),
                   "friction_source": cfg.FRICTION_SOURCE,
                   "plant_friction_scale": cfg.PLANT_FRICTION_SCALE,
                   "friction_values": fric.tolist(), "torque_convention": cfg.TORQUE_CONVENTION,
@@ -193,7 +135,7 @@ print(f"  {'scenario':<26}{'track err pre':>15}{'track err post':>16}{'tau rms c
       f"{'  joint':>7}", flush=True)
 for spec in SCENARIOS:
     r = run(spec); summary.append(r)
-    j = spec.joint if spec.joint >= 0 else int(np.argmax(np.array(r["track_err_post_rad"])))
+    j = spec.joint if spec.type != "delay" else int(np.argmax(np.array(r["track_err_post_rad"])))
     pre, post = r["track_err_pre_rad"][j], r["track_err_post_rad"][j]
     dt_ = r["tau_rms_post"][j] - r["tau_rms_pre"][j]
     print(f"  {spec.tag:<26}{pre:>14.4f} {post:>15.4f} {dt_:>+15.3f}  j{j}", flush=True)

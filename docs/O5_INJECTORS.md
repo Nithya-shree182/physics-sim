@@ -1,5 +1,11 @@
 # O5 fault injectors: what exists, how to run it, what it showed
 
+> **Superseded in part, 2026-11-03 (see `docs/REVIEW.md` F1, F2).** The friction runs below use
+> a dimensionless PhysX coefficient where N*m was intended, so their severities are not N*m;
+> and `tau_measured` cannot see friction or a stuck joint at all, so the residual channel is
+> blind to them. The injector structure and the delay/stuck-joint mechanics stand; the friction
+> numbers and the position-mode recording plan do not. To be regenerated after the fix.
+
 Written for: whoever generates or reads the O5 datasets (both sides).
 
 Scope was decided on 2026-11-03: **faults, not attackers.** The plant changes; the analysis
@@ -19,9 +25,10 @@ Injectors, using the fault names `schema/telemetry_v0.yaml` already allows:
 |---|---|---|
 | `friction` | multiplier on that joint's Coulomb friction (base = Gaz x 1.15) | `set_friction_coefficients` at onset |
 | `stuck_joint` | friction in N*m (200, far above the drive) | same call, huge value |
-| `delay` | milliseconds | commanded position targets pass through a FIFO of that many physics steps |
+| `delay` | seconds (same unit as the analysis side's synthetic logs) | commanded position targets pass through a FIFO of that many physics steps |
 
-Each run is 6 s with the fault switched on at 3 s, so `fault_active` flips mid-run and every
+`fault_joint` is a nominal 0 for `delay` (it hits every joint) because the schema requires a joint
+for every fault. Each run is 6 s with the fault switched on at 3 s, so `fault_active` flips mid-run and every
 run carries its own healthy stretch (the analysis side's detector calibrates on the first 3 s).
 
 ```bash

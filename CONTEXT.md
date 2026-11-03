@@ -60,6 +60,7 @@ The probe scripts are kept deliberately — each one is the evidence for a claim
 | `pal_residual_diag.py` | ablation: iterations, rate, armature, stiffness |
 | `pal_capture.py` | writes a telemetry run in the agreed schema |
 | `pal_o5_sweep.py` / `pal_faults.py` | O5 fault injectors and the 14-scenario sweep |
+| `pal_friction_visibility.py` | is injected friction visible in `tau_measured`? in `tau_applied`? (only the latter) |
 | `pal_effort_test.py` | does the residual artifact survive in effort mode? (yes) |
 | `pal_rate_decouple.py` | does controller rate matter? (no) |
 | `pal_inertia_dump.py` | per-body mass / COM / inertia across all three sources |
@@ -91,6 +92,15 @@ Isaac Sim (authored): [0, −4.663, −0.636, 22.954, 0.623, 2.441, 0.001]
 ```
 
 Two independent engines, same parameters, same answer. Do not revert this.
+
+## Read first: two open findings (2026-11-03, `docs/REVIEW.md`)
+
+- The plant's friction is wrong: `set_friction_coefficients` is dimensionless, we passed N*m.
+  Fix is the torque-valued `set_dof_friction_properties`. All friction data is superseded.
+- `tau_measured` is net torque, so friction and stuck joints are invisible to the residual.
+  Only `tau_applied` (effort mode) shows them. This reverses the position-mode plan for O5.
+
+Both are awaiting a go-ahead; they change the plant and the analysis-side contract.
 
 ## Three traps, in order of time lost
 
