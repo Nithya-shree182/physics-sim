@@ -210,3 +210,66 @@ O6 benchmarks trajectory styles and wants fast motion. O2/O4/O5 need slow motion
 below the knee. They cannot share a speed regime. O6 should report cycle time, peak torque
 and energy at speed, while any residual-based claim stays below the knee — and the results
 should say which regime each number came from rather than mixing them.
+
+
+---
+
+# CORRECTION 2026-11-03 — the residual floor, measured properly
+
+**This supersedes the envelope table sent earlier in this document, and the "time
+discretization, first order in dt" claim. Both were wrong.** Full detail in
+`docs/RESIDUAL_FLOOR.md`.
+
+The earlier rate sweep rebuilt the `World` once per rate inside a single process, which
+does not give a clean plant — your R2.3 instinct to question it was right, and the
+inconsistency you spotted (27.98% and 2.78% both at 1000 Hz) was the symptom. Re-run with
+one container per rate, identical settle/warm-up/measurement windows in simulated seconds,
+and trajectory amplitude a function of speed only:
+
+| speed | 250 Hz | 500 Hz | 1000 Hz | 2000 Hz | rate-dependent? |
+|---|---|---|---|---|---|
+| 10% | 0.43% | 0.43% | 0.43% | 0.43% | no (x1.00) |
+| 20% | 0.85% | 0.86% | 0.86% | 0.86% | no (x1.00) |
+| 30% | 1.26% | 1.27% | 1.27% | 1.27% | no (x1.00) |
+| 50% | **2.05%** | **2.05%** | **2.05%** | **2.05%** | no (x1.00) |
+| 75% | 3.08% | 4.29% | 8.79% | 17.96% | **YES (x5.8)** |
+| 100% | 7.26% | 14.85% | 30.21% | 53.76% | **YES (x7.4)** |
+
+**Below ~50% the residual is physical** — identical to two decimals across an 8x range of
+physics rate, and linear in speed. **Above ~50% a rate-dependent artifact takes over**,
+roughly doubling per doubling of rate, reaching a peak of 112% of a joint's torque limit at
+2000 Hz / full speed.
+
+This is strong support for your R2.3 hypothesis. Below the knee the arm tracks well and the
+drive is gentle; above it tracking falls to ~54% of commanded velocity, the drive works
+hard, and the rate-dependent term appears. That is an implicit-drive signature, not the arm.
+
+Also ruled out by measurement, so you need not re-test them: finite-difference noise
+(analytic qdd gives the same answer), filtering (2%), timing alignment, Coriolis form,
+solver iterations (4 vs 128), armature, velocity saturation, and mass-matrix slicing.
+
+### For your thresholds
+
+| speed | floor at j4 | smallest detectable payload | 3-sigma threshold |
+|---|---|---|---|
+| 10% | ~0.13 N*m | 0.03 kg | 0.09 kg |
+| 30% | ~0.41 | 0.09 | 0.27 |
+| 50% | ~0.69 | 0.15 | 0.45 |
+| 100% (1 kHz) | ~3.70 | 0.80 | 2.40 |
+
+**Recommendation: record O2/O4/O5 data at or below 50% of velocity limit.** Below the knee
+the whole 0.1-3.0 kg ladder is detectable and the number does not depend on a simulator
+setting.
+
+### Your R2.3 test is still the right next step
+
+We have not yet run effort mode. If the above-knee residual collapses there, it belongs to
+the position drive and all attestation data should be recorded in effort mode.
+
+### Confirmations from a full windowed run
+
+- payload response **4.629 N*m/kg** at joint 4 with the TCP attachment, against your 4.60
+- an unknown **2 kg** object weighed from torque alone to 0.01-0.03% at three poses
+- your scaled confidence formulation reproduced in the simulator: raw c = 0.1238 at home,
+  scaled c = 0.2127, c_vertical = 0.2686, force gain 4.85 — and the elbow-singular pose
+  correctly gated at a force gain of 27.16

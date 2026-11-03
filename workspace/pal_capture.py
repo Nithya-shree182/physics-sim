@@ -150,11 +150,13 @@ writer = TelemetryWriter(
               "finger_q_ref": cfg.FINGER_OPEN})
 
 for k in range(STEPS):
-    t = k * DT
-    qt, qdt, qddt = traj(t)
+    t_cmd = k * DT                      # time the command is issued
+    qt, qdt, qddt = traj(t_cmd)
     art.set_joint_position_targets(np.concatenate([qt, [.04, .04]]).reshape(1, -1))
     world.step(render=False)
-    writer.capture(k, t, DT, q_cmd=qt, qd_cmd=qdt, qdd_cmd=qddt)
+    # The row holds POST-step values, so its timestamp is the end of the step, not the
+    # start. Caught by the analysis side (R2.2): t = k*DT lagged the data by one step.
+    writer.capture(k, (k + 1) * DT, DT, q_cmd=qt, qd_cmd=qdt, qdd_cmd=qddt)
 
 writer.close()
 print(f"[capture] traj={TRAJ} payload={PAYLOAD}kg steps={STEPS} mj_every={MJ_EVERY}", flush=True)

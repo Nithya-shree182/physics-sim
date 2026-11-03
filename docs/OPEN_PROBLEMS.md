@@ -408,6 +408,25 @@ matters much less now that discretization accounts for the residual.
 
 ---
 
+# SUPERSEDED — read docs/RESIDUAL_FLOOR.md first
+
+Everything below about the residual floor predates the controlled sweep of 2026-11-03 and
+parts of it are **wrong**. The authoritative result is `docs/RESIDUAL_FLOOR.md`:
+
+| speed | 250 Hz | 500 Hz | 1000 Hz | 2000 Hz | rate-dependent? |
+|---|---|---|---|---|---|
+| 10% | 0.43% | 0.43% | 0.43% | 0.43% | no (x1.00) |
+| 20% | 0.85% | 0.86% | 0.86% | 0.86% | no (x1.00) |
+| 30% | 1.26% | 1.27% | 1.27% | 1.27% | no (x1.00) |
+| 50% | **2.05%** | **2.05%** | **2.05%** | **2.05%** | no (x1.00) |
+| 75% | 3.08% | 4.29% | 8.79% | 17.96% | **YES (x5.8)** |
+| 100% | 7.26% | 14.85% | 30.21% | 53.76% | **YES (x7.4)** |
+
+**Below ~50% of velocity limit the residual is physical** — identical across an 8x range of
+physics rate, linear in speed. **Above it a rate-dependent artifact takes over.** The
+earlier "time discretization, first order in dt" conclusion came from a sweep that rebuilt
+the `World` per rate inside one process; re-run properly, the trend inverts.
+
 # Added 2026-11-03 (later)
 
 ## The operating envelope — the most useful number produced so far

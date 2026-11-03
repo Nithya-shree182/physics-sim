@@ -11,6 +11,8 @@ Checks:
   - M is symmetric with a positive diagonal, ee_quat is a unit quaternion
   - fault_joint is -1 exactly when fault_type is none
   - the manifest has every required field and its physics_hz matches dt
+  - the manifest states a timing convention; mj_every > 1 comes with an mj_fresh column;
+    a stated row count matches the file
 
 Exit code 0 means no errors. Warnings (for example unknown extra columns) do not fail.
 """
@@ -162,6 +164,12 @@ def validate_manifest(manifest: dict, schema: dict, df: pd.DataFrame | None = No
         expected = 1.0 / float(manifest["physics_hz"])
         if not np.allclose(df["dt"].to_numpy(), expected, rtol=1e-6):
             errors.append(f"dt does not equal 1/physics_hz = {expected:.6g} s")
+    if df is not None and int(manifest.get("mj_every", 1) or 1) > 1 and "mj_fresh" not in df:
+        errors.append("manifest mj_every > 1 but the mj_fresh column is missing")
+    if df is not None and "rows" in manifest and int(manifest["rows"]) != len(df):
+        errors.append(f"manifest says {manifest['rows']} rows, file has {len(df)}")
+    if "timing" not in manifest and "timing_convention" not in manifest:
+        errors.append("manifest states no timing convention ('timing' or 'timing_convention')")
     return errors
 
 

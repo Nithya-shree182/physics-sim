@@ -3,6 +3,7 @@
 # boot from a real hang.
 #
 #   tools/run_sim.sh pal_capture.py [logfile]
+#   HEADLESS=0 tools/run_sim.sh pal_experiment.py      # with a window on the host display
 #   PAL_STEPS=5000 PAL_PAYLOAD_KG=2 tools/run_sim.sh pal_capture.py logs/cap.log
 #
 # Why this exists: the previous inline watchdog detected "booted" by counting lines in
@@ -35,9 +36,15 @@ trap 'echo; echo "interrupted, stopping $NAME"; cleanup; exit 130' INT TERM
 
 for attempt in $(seq 1 "$ATTEMPTS"); do
   cleanup
+  X11_ARGS=()
+  if [ "${HEADLESS:-1}" = "0" ]; then
+    xhost +local:docker >/dev/null 2>&1 || true
+    X11_ARGS=(-v /tmp/.X11-unix:/tmp/.X11-unix -e DISPLAY="${DISPLAY:-:0}")
+  fi
   docker run -d --name "$NAME" --gpus all --network host \
     -e ACCEPT_EULA=Y -e PRIVACY_CONSENT=Y -e OMNI_KIT_ACCEPT_EULA=YES \
-    -e NVIDIA_DRIVER_CAPABILITIES=all \
+    -e NVIDIA_DRIVER_CAPABILITIES=all -e ISAAC_SIM_HEADLESS="${HEADLESS:-1}" \
+    "${X11_ARGS[@]}" \
     $(env | grep -E '^PAL_(STEPS|TRAJ|PAYLOAD_KG|PHYSICS_HZ|MJ_EVERY|RUN_ID|DRIVE_MODE|FRAC|SEED|GIT_COMMIT|MACHINE)=' | sed 's/^/-e /') \
     -v "$CACHE/kit:/isaac-sim/kit/cache:rw" -v "$CACHE/ov:/root/.cache/ov:rw" \
     -v "$ROOT/workspace:/workspace:rw" \

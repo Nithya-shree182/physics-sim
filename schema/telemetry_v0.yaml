@@ -107,6 +107,12 @@ optional_columns:
   - group: joint_reaction_wrenches
     fields:
       - {name: "wrench_{b}_{k}", bodies: [0, 10], components: [0, 5], dtype: float64, unit: "N (0-2), N*m (3-5)", source: "get_measured_joint_forces()[0, :, :]"}
+  - group: decimation
+    note: >
+      Present only when M and J are read every Nth step (manifest mj_every > 1). Between
+      reads the last M and J are held; mj_fresh is True on the rows where they were read.
+    fields:
+      - {name: mj_fresh, dtype: bool, unit: "-", source: "pal_telemetry.py (dev)"}
 
 # One JSON per run, next to the parquet file.
 manifest:
@@ -132,3 +138,9 @@ manifest:
     - seed
     - payload_kg
     - finger_q_ref            # finger position held during the run, m
+  optional:
+    - timing_convention       # Isaac Sim logs: which step's torque goes with which row (dev's writer)
+    - timing                  # synthetic logs: "tau at row k moves qd[k] to qd[k+1]"
+    - mj_every                # M/J read every Nth step; > 1 requires the mj_fresh column
+    - payload_attachment      # {body, offset_m, model}
+    - rows                    # row count written by the capture

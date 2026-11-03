@@ -152,27 +152,34 @@ ownership.
 
 ## The operating envelope — know these numbers
 
-**Run O4 and O5 at or below 50% of velocity limit.** Below the knee the floor is under 2%
-on every joint and the whole 0.1–3.0 kg payload ladder is detectable; above it the wrist
-joints collapse.
+**Full detail in `docs/RESIDUAL_FLOOR.md`.** Worst-joint RMS residual as a fraction of that
+joint's torque limit:
 
-```
-speed   worst joint   smallest detectable payload   3-sigma threshold
- 10%       0.39%              0.038 kg                   0.113 kg
- 25%       0.96%              0.099                      0.296
- 50%       1.81%              0.213                      0.640
- 75%       8.80%   <- knee    0.414                      1.242
-100%      27.79%              0.836                      2.507
-```
+| speed | 250 Hz | 500 Hz | 1000 Hz | 2000 Hz | rate-dependent? |
+|---|---|---|---|---|---|
+| 10% | 0.43% | 0.43% | 0.43% | 0.43% | no (x1.00) |
+| 20% | 0.85% | 0.86% | 0.86% | 0.86% | no (x1.00) |
+| 30% | 1.26% | 1.27% | 1.27% | 1.27% | no (x1.00) |
+| 50% | **2.05%** | **2.05%** | **2.05%** | **2.05%** | no (x1.00) |
+| 75% | 3.08% | 4.29% | 8.79% | 17.96% | **YES (x5.8)** |
+| 100% | 7.26% | 14.85% | 30.21% | 53.76% | **YES (x7.4)** |
 
-The knee is joints 5/6/7: 12 N·m limits instead of 87, and lower inertia, so the same
-absolute error is a bigger fraction *and* a stiffer ODE. Confirmed over 24 random
-poses — the floor depends on pose as well as speed (2.47% to 28.68% at frac 0.75).
+**Two regimes.** Below ~50% the residual does not move when the physics rate changes by 8x
+— it is physical, and no rate setting will reduce it. Above ~50% it roughly doubles per
+doubling of rate, reaching a peak of 112% of a joint's torque limit at 2000 Hz / full
+speed, which cannot be a real reading.
 
-**Objective conflict:** O6 wants fast motion; O2/O4/O5 need slow. They cannot share a
-speed regime, and the results must say which regime each number came from.
+**Run O2, O4 and O5 at or below 50% of velocity limit.** That is not a judgement call: it
+is where the measurement stops depending on a simulator setting.
 
-## Why that floor exists
+**O6 conflicts with this** and cannot be fixed — benchmarking wants speed. Report its
+timing and energy figures at speed, keep residual claims below the knee, and say which
+regime each number came from.
+
+Verified in practice at rest: an unknown 2 kg object weighed to 0.01-0.03% at three poses;
+payload response 4.629 N*m/kg, matching the analysis side's independent 4.60.
+
+## Why the above-knee artifact exists
 
 The fast-motion residual is **time discretization of a stiff drive**, first order in `dt`
 (fitted exponent 1.049). Not a modelling error, and not removable by a better model:

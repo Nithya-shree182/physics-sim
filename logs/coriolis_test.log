@@ -1,0 +1,415 @@
+2026-11-03T05:54:27Z [Info] [carb] Logging to file: /isaac-sim/kit/logs/Kit/Isaac-Sim Python/6.0/kit_20261103_055427.log
+[0.072s] [ext: omni.assets.plugins-0.0.0] startup
+[0.073s] [ext: omni.blobkey-1.1.2] startup
+[0.073s] [ext: omni.kit.async_engine-0.0.3] startup
+[0.584s] [ext: omni.client.lib-1.1.1] startup
+[0.611s] [ext: omni.client-1.3.0] startup
+2026-11-03T05:54:27Z [637ms] [Warning] [carb.omniclient.plugin]  114: OmniHub: ThreadId(02) Hub encountered error. Trying to reconnect to Hub. retry_reason="Hub failed to launch: Io(\"child exited with exit status: 1 without writing file \\\"/tmp/hub-isaac-sim-2E3C019E.config.json\\\"\")"
+2026-11-03T05:54:27Z [708ms] [Warning] [carb.omniclient.plugin]  114: OmniHub: ThreadId(02) Hub encountered error. Trying to reconnect to Hub. retry_reason="Hub failed to launch: Io(\"child exited with exit status: 1 without writing file \\\"/tmp/hub-isaac-sim-2E3C019E.config.json\\\"\")"
+2026-11-03T05:54:27Z [790ms] [Warning] [carb.omniclient.plugin]  114: OmniHub: ThreadId(02) Hub encountered error. Trying to reconnect to Hub. retry_reason="Hub failed to launch: Io(\"child exited with exit status: 1 without writing file \\\"/tmp/hub-isaac-sim-2E3C019E.config.json\\\"\")"
+2026-11-03T05:54:27Z [882ms] [Warning] [carb.omniclient.plugin]  114: OmniHub: ThreadId(02) Hub encountered error. Trying to reconnect to Hub. retry_reason="Hub failed to launch: Io(\"child exited with exit status: 1 without writing file \\\"/tmp/hub-isaac-sim-2E3C019E.config.json\\\"\")"
+2026-11-03T05:54:28Z [985ms] [Warning] [carb.omniclient.plugin]  114: OmniHub: ThreadId(02) Hub encountered error. Trying to reconnect to Hub. retry_reason="Hub failed to launch: Io(\"child exited with exit status: 1 without writing file \\\"/tmp/hub-isaac-sim-2E3C019E.config.json\\\"\")"
+2026-11-03T05:54:28Z [1,097ms] [Warning] [carb.omniclient.plugin]  114: OmniHub: ThreadId(02) Hub encountered error. Trying to reconnect to Hub. retry_reason="Hub failed to launch: Io(\"child exited with exit status: 1 without writing file \\\"/tmp/hub-isaac-sim-2E3C019E.config.json\\\"\")"
+2026-11-03T05:54:28Z [1,219ms] [Warning] [carb.omniclient.plugin]  114: OmniHub: ThreadId(02) Hub encountered error. Trying to reconnect to Hub. retry_reason="Hub failed to launch: Io(\"child exited with exit status: 1 without writing file \\\"/tmp/hub-isaac-sim-2E3C019E.config.json\\\"\")"
+2026-11-03T05:54:28Z [1,351ms] [Warning] [carb.omniclient.plugin]  114: OmniHub: ThreadId(02) Hub encountered error. Trying to reconnect to Hub. retry_reason="Hub failed to launch: Io(\"child exited with exit status: 1 without writing file \\\"/tmp/hub-isaac-sim-2E3C019E.config.json\\\"\")"
+2026-11-03T05:54:28Z [1,493ms] [Warning] [carb.omniclient.plugin]  114: OmniHub: ThreadId(02) Hub encountered error. Trying to reconnect to Hub. retry_reason="Hub failed to launch: Io(\"child exited with exit status: 1 without writing file \\\"/tmp/hub-isaac-sim-2E3C019E.config.json\\\"\")"
+2026-11-03T05:54:28Z [1,645ms] [Warning] [carb.omniclient.plugin]  114: OmniHub: ThreadId(02) Hub encountered error. Trying to reconnect to Hub. retry_reason="Hub failed to launch: Io(\"child exited with exit status: 1 without writing file \\\"/tmp/hub-isaac-sim-2E3C019E.config.json\\\"\")"
+2026-11-03T05:54:28Z [1,808ms] [Warning] [carb.omniclient.plugin]  114: OmniHub: ThreadId(02) Hub encountered error. Trying to reconnect to Hub. retry_reason="Hub failed to launch: Io(\"child exited with exit status: 1 without writing file \\\"/tmp/hub-isaac-sim-2E3C019E.config.json\\\"\")"
+2026-11-03T05:54:29Z [1,980ms] [Warning] [carb.omniclient.plugin]  114: OmniHub: ThreadId(02) Hub encountered error. Trying to reconnect to Hub. retry_reason="Hub failed to launch: Io(\"child exited with exit status: 1 without writing file \\\"/tmp/hub-isaac-sim-2E3C019E.config.json\\\"\")"
+2026-11-03T05:54:29Z [2,161ms] [Warning] [carb.omniclient.plugin]  114: OmniHub: ThreadId(02) Hub encountered error. Trying to reconnect to Hub. retry_reason="Hub failed to launch: Io(\"child exited with exit status: 1 without writing file \\\"/tmp/hub-isaac-sim-2E3C019E.config.json\\\"\")"
+2026-11-03T05:54:29Z [2,354ms] [Warning] [carb.omniclient.plugin]  114: OmniHub: ThreadId(02) Hub encountered error. Trying to reconnect to Hub. retry_reason="Hub failed to launch: Io(\"child exited with exit status: 1 without writing file \\\"/tmp/hub-isaac-sim-2E3C019E.config.json\\\"\")"
+2026-11-03T05:54:29Z [2,555ms] [Warning] [carb.omniclient.plugin]  114: OmniHub: ThreadId(02) Hub encountered error. Trying to reconnect to Hub. retry_reason="Hub failed to launch: Io(\"child exited with exit status: 1 without writing file \\\"/tmp/hub-isaac-sim-2E3C019E.config.json\\\"\")"
+2026-11-03T05:54:29Z [2,766ms] [Warning] [carb.omniclient.plugin]  114: OmniHub: ThreadId(02) Hub encountered error. Trying to reconnect to Hub. retry_reason="Hub failed to launch: Io(\"child exited with exit status: 1 without writing file \\\"/tmp/hub-isaac-sim-2E3C019E.config.json\\\"\")"
+2026-11-03T05:54:30Z [2,987ms] [Warning] [carb.omniclient.plugin]  114: OmniHub: ThreadId(02) Hub encountered error. Trying to reconnect to Hub. retry_reason="Hub failed to launch: Io(\"child exited with exit status: 1 without writing file \\\"/tmp/hub-isaac-sim-2E3C019E.config.json\\\"\")"
+2026-11-03T05:54:30Z [3,219ms] [Warning] [carb.omniclient.plugin]  114: OmniHub: ThreadId(02) Hub encountered error. Trying to reconnect to Hub. retry_reason="Hub failed to launch: Io(\"child exited with exit status: 1 without writing file \\\"/tmp/hub-isaac-sim-2E3C019E.config.json\\\"\")"
+2026-11-03T05:54:30Z [3,462ms] [Warning] [carb.omniclient.plugin]  114: OmniHub: ThreadId(02) Hub encountered error. Trying to reconnect to Hub. retry_reason="Hub failed to launch: Io(\"child exited with exit status: 1 without writing file \\\"/tmp/hub-isaac-sim-2E3C019E.config.json\\\"\")"
+2026-11-03T05:54:30Z [3,711ms] [Warning] [carb.omniclient.plugin]  114: OmniHub: ThreadId(02) Hub encountered error. Trying to reconnect to Hub. retry_reason="Hub failed to launch: Io(\"child exited with exit status: 1 without writing file \\\"/tmp/hub-isaac-sim-2E3C019E.config.json\\\"\")"
+2026-11-03T05:54:31Z [3,974ms] [Warning] [carb.omniclient.plugin]  114: OmniHub: ThreadId(02) Hub encountered error. Trying to reconnect to Hub. retry_reason="Hub failed to launch: Io(\"child exited with exit status: 1 without writing file \\\"/tmp/hub-isaac-sim-2E3C019E.config.json\\\"\")"
+2026-11-03T05:54:31Z [4,245ms] [Warning] [carb.omniclient.plugin]  114: OmniHub: ThreadId(02) Hub encountered error. Trying to reconnect to Hub. retry_reason="Hub failed to launch: Io(\"child exited with exit status: 1 without writing file \\\"/tmp/hub-isaac-sim-2E3C019E.config.json\\\"\")"
+2026-11-03T05:54:31Z [4,526ms] [Warning] [carb.omniclient.plugin]  114: OmniHub: ThreadId(02) Hub encountered error. Trying to reconnect to Hub. retry_reason="Hub failed to launch: Io(\"child exited with exit status: 1 without writing file \\\"/tmp/hub-isaac-sim-2E3C019E.config.json\\\"\")"
+2026-11-03T05:54:31Z [4,818ms] [Warning] [carb.omniclient.plugin]  114: OmniHub: ThreadId(02) Hub encountered error. Trying to reconnect to Hub. retry_reason="Hub failed to launch: Io(\"child exited with exit status: 1 without writing file \\\"/tmp/hub-isaac-sim-2E3C019E.config.json\\\"\")"
+2026-11-03T05:54:32Z [5,121ms] [Warning] [carb.omniclient.plugin]  114: OmniHub: ThreadId(02) Hub encountered error. Trying to reconnect to Hub. retry_reason="Hub failed to launch: Io(\"child exited with exit status: 1 without writing file \\\"/tmp/hub-isaac-sim-2E3C019E.config.json\\\"\")"
+2026-11-03T05:54:32Z [5,433ms] [Warning] [carb.omniclient.plugin]  114: OmniHub: ThreadId(02) Hub encountered error. Trying to reconnect to Hub. retry_reason="Hub failed to launch: Io(\"child exited with exit status: 1 without writing file \\\"/tmp/hub-isaac-sim-2E3C019E.config.json\\\"\")"
+2026-11-03T05:54:32Z [5,754ms] [Warning] [carb.omniclient.plugin]  114: OmniHub: ThreadId(02) Hub encountered error. Trying to reconnect to Hub. retry_reason="Hub failed to launch: Io(\"child exited with exit status: 1 without writing file \\\"/tmp/hub-isaac-sim-2E3C019E.config.json\\\"\")"
+2026-11-03T05:54:33Z [6,087ms] [Warning] [carb.omniclient.plugin]  114: OmniHub: ThreadId(02) Hub encountered error. Trying to reconnect to Hub. retry_reason="Hub failed to launch: Io(\"child exited with exit status: 1 without writing file \\\"/tmp/hub-isaac-sim-2E3C019E.config.json\\\"\")"
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+E0000 00:00:1793685277.957779      53 descriptor_database.cc:633] File already exists in database: grpc/health/v1/health.proto
+W0000 00:00:1793685277.957811      53 message.cc:301] Protobuf GeneratedMessageFactory: File is already registered: grpc/health/v1/health.proto
+2026-11-03T05:54:33Z [6,428ms] [Warning] [carb.omniclient.plugin]  114: OmniHub: ThreadId(02) Hub encountered error. Trying to reconnect to Hub. retry_reason="Hub failed to launch: Io(\"child exited with exit status: 1 without writing file \\\"/tmp/hub-isaac-sim-2E3C019E.config.json\\\"\")"
+2026-11-03T05:54:33Z [6,780ms] [Warning] [carb.omniclient.plugin]  114: OmniHub: ThreadId(02) Hub encountered error. Trying to reconnect to Hub. retry_reason="Hub failed to launch: Io(\"child exited with exit status: 1 without writing file \\\"/tmp/hub-isaac-sim-2E3C019E.config.json\\\"\")"
+2026-11-03T05:54:34Z [7,141ms] [Warning] [carb.omniclient.plugin]  114: OmniHub: ThreadId(02) Hub encountered error. Trying to reconnect to Hub. retry_reason="Hub failed to launch: Io(\"child exited with exit status: 1 without writing file \\\"/tmp/hub-isaac-sim-2E3C019E.config.json\\\"\")"
+2026-11-03T05:54:34Z [7,513ms] [Warning] [carb.omniclient.plugin]  114: OmniHub: ThreadId(02) Hub encountered error. Trying to reconnect to Hub. retry_reason="Hub failed to launch: Io(\"child exited with exit status: 1 without writing file \\\"/tmp/hub-isaac-sim-2E3C019E.config.json\\\"\")"
+2026-11-03T05:54:34Z [7,895ms] [Warning] [carb.omniclient.plugin]  114: OmniHub: ThreadId(02) Hub encountered error. Trying to reconnect to Hub. retry_reason="Hub failed to launch: Io(\"child exited with exit status: 1 without writing file \\\"/tmp/hub-isaac-sim-2E3C019E.config.json\\\"\")"
+2026-11-03T05:54:35Z [8,287ms] [Warning] [carb.omniclient.plugin]  114: OmniHub: ThreadId(02) Hub encountered error. Trying to reconnect to Hub. retry_reason="Hub failed to launch: Io(\"child exited with exit status: 1 without writing file \\\"/tmp/hub-isaac-sim-2E3C019E.config.json\\\"\")"
+2026-11-03T05:54:35Z [8,688ms] [Warning] [carb.omniclient.plugin]  114: OmniHub: ThreadId(02) Hub encountered error. Trying to reconnect to Hub. retry_reason="Hub failed to launch: Io(\"child exited with exit status: 1 without writing file \\\"/tmp/hub-isaac-sim-2E3C019E.config.json\\\"\")"
+2026-11-03T05:54:36Z [9,100ms] [Warning] [carb.omniclient.plugin]  114: OmniHub: ThreadId(02) Hub encountered error. Trying to reconnect to Hub. retry_reason="Hub failed to launch: Io(\"child exited with exit status: 1 without writing file \\\"/tmp/hub-isaac-sim-2E3C019E.config.json\\\"\")"
+2026-11-03T05:54:36Z [9,522ms] [Warning] [carb.omniclient.plugin]  114: OmniHub: ThreadId(02) Hub encountered error. Trying to reconnect to Hub. retry_reason="Hub failed to launch: Io(\"child exited with exit status: 1 without writing file \\\"/tmp/hub-isaac-sim-2E3C019E.config.json\\\"\")"
+2026-11-03T05:54:37Z [9,953ms] [Warning] [carb.omniclient.plugin]  114: OmniHub: ThreadId(02) Hub encountered error. Trying to reconnect to Hub. retry_reason="Hub failed to launch: Io(\"child exited with exit status: 1 without writing file \\\"/tmp/hub-isaac-sim-2E3C019E.config.json\\\"\")"
+2026-11-03T05:54:37Z [10,395ms] [Warning] [carb.omniclient.plugin]  114: OmniHub: ThreadId(02) Hub encountered error. Trying to reconnect to Hub. retry_reason="Hub failed to launch: Io(\"child exited with exit status: 1 without writing file \\\"/tmp/hub-isaac-sim-2E3C019E.config.json\\\"\")"
+[10.877s] [ext: omni.protobuf.lib-1.0.0] startup
+[10.879s] [ext: omni.grpc.lib-1.0.0] startup
+[10.883s] [ext: omni.metrics.core-0.0.3] startup
+[10.883s] [ext: omni.datastore-0.0.0] startup
+[10.884s] [ext: omni.gpu_foundation.shadercache.vulkan-1.0.0] startup
+[10.894s] [ext: omni.hsscclient-1.1.4] startup
+[10.895s] [ext: omni.stats-1.0.1] startup
+[10.896s] [ext: omni.ujitso.default-1.0.0] startup
+[10.900s] [ext: omni.gpu_foundation-0.0.0] startup
+[11.321s] [ext: carb.windowing.plugins-1.0.1] startup
+[11.321s] [ext: omni.kit.renderer.init-1.0.1] startup
+2026-11-03T05:54:38Z [11,322ms] [Warning] [omni.platforminfo.plugin] failed to open the default display.  Can't verify X Server version.
+
+|---------------------------------------------------------------------------------------------|
+| Driver Version: 595.99.02     | Graphics API: Vulkan
+|=============================================================================================|
+| GPU | Name                             | Active | LDA | GPU Memory | Vendor-ID | LUID       |
+|     |                                  |        |     |            | Device-ID | UUID       |
+|     |                                  |        |     |            | Bus-ID    |            |
+|---------------------------------------------------------------------------------------------|
+| 0   | NVIDIA GeForce RTX 5090 Laptop.. | Yes: 0 |     | 24463   MB | 10de      | 0          |
+|     |                                  |        |     |            | 2c58      | 6c1f284a.. |
+|     |                                  |        |     |            | 2         |            |
+|=============================================================================================|
+| OS: 24.04.3 LTS (Noble Numbat) ubuntu, Version: 24.04.3, Kernel: 7.0.0-38-generic
+| Processor: Intel(R) Core(TM) Ultra 9 275HX
+| Cores: 24 | Logical Cores: 24
+|---------------------------------------------------------------------------------------------|
+| Total Memory (MB): 62426 | Free Memory: 50307
+| Total Page/Swap (MB): 8191 | Free Page/Swap: 0
+|---------------------------------------------------------------------------------------------|
+2026-11-03T05:54:39Z [12,198ms] [Warning] [omni.rtx] CPU performance profile is set to powersave. This profile sets the CPU to the lowest frequency reducing performance.
+2026-11-03T05:54:39Z [12,209ms] [Warning] [omni.rtx] IOMMU is enabled.
+[12.403s] [ext: omni.kit.pipapi-0.0.0] startup
+[12.408s] [ext: omni.kit.pip_archive-0.0.0] startup
+[12.409s] [ext: isaacsim.pip.newton-0.6.1] startup
+[12.409s] [ext: omni.pip.compute-1.9.2] startup
+[12.410s] [ext: omni.isaac.core_archive-5.3.1] startup
+[12.410s] [ext: omni.kit.telemetry-0.5.2] startup
+[12.443s] [ext: omni.kit.loop-isaac-1.6.0] startup
+[12.445s] [ext: omni.kit.test-2.0.7] startup
+[12.769s] [ext: omni.materialx.libs-1.0.9] startup
+[12.779s] [ext: omni.gpucompute.plugins-0.0.0] startup
+[12.779s] [ext: omni.usd.config-1.0.7] startup
+[12.784s] [ext: omni.usd.libs-1.0.3] startup
+[12.874s] [ext: omni.iray.libs-0.0.1] startup
+[12.880s] [ext: omni.mdl-57.0.3] startup
+[13.041s] [ext: omni.mdl.neuraylib-0.2.20] startup
+[13.049s] [ext: omni.kit.usd.mdl-1.1.9] startup
+[13.173s] [ext: omni.appwindow-1.2.2] startup
+[13.175s] [ext: omni.kit.renderer.core-1.2.2] startup
+2026-11-03T05:54:40Z [13,170ms] [Warning] [carb.windowing-glfw.plugin] GLFW initialization failed.
+2026-11-03T05:54:40Z [13,170ms] [Warning] [carb] Failed to startup plugin carb.windowing-glfw.plugin (interfaces: [carb::windowing::IGLContext v1.0],[carb::windowing::IWindowing v1.5]) (impl: carb.windowing-glfw.plugin)
+[13.219s] [ext: omni.kit.renderer.capture-2.0.1] startup
+[13.222s] [ext: omni.kit.renderer.imgui-2.0.6] startup
+2026-11-03T05:54:40Z [13,195ms] [Warning] [carb.windowing-glfw.plugin] GLFW initialization failed.
+2026-11-03T05:54:40Z [13,195ms] [Warning] [carb] Failed to startup plugin carb.windowing-glfw.plugin (interfaces: [carb::windowing::IGLContext v1.0],[carb::windowing::IWindowing v1.5]) (impl: carb.windowing-glfw.plugin)
+2026-11-03T05:54:40Z [13,197ms] [Warning] [carb.windowing-glfw.plugin] GLFW initialization failed.
+2026-11-03T05:54:40Z [13,197ms] [Warning] [carb] Failed to startup plugin carb.windowing-glfw.plugin (interfaces: [carb::windowing::IGLContext v1.0],[carb::windowing::IWindowing v1.5]) (impl: carb.windowing-glfw.plugin)
+[13.286s] [ext: omni.ui-3.2.0] startup
+[13.303s] [ext: omni.kit.mainwindow-1.0.3] startup
+[13.305s] [ext: carb.audio-0.1.0] startup
+[13.308s] [ext: omni.uiaudio-1.0.0] startup
+[13.309s] [ext: omni.kit.uiapp-0.0.0] startup
+[13.309s] [ext: omni.usd.schema.metrics.assembler-110.1.0] startup
+[13.313s] [ext: omni.usd.schema.audio-0.0.1] startup
+[13.317s] [ext: omni.usd_resolver-1.0.0] startup
+[13.321s] [ext: omni.usd.core-1.8.3] startup
+[13.325s] [ext: omni.metropolis.schema-0.0.3] startup
+[13.327s] [ext: isaacsim.anim.robot.schema-0.1.1] startup
+[13.328s] [ext: omni.usd.schema.anim-0.0.1] startup
+[13.348s] [ext: omni.usd.schema.geospatial-0.0.1] startup
+[13.352s] [ext: omni.usd.schema.omnigraph-1.0.1] startup
+[13.359s] [ext: omni.usd.schema.semantics-0.0.0] startup
+[13.362s] [ext: omni.activity.core-1.0.3] startup
+[13.364s] [ext: omni.cubric-0.1.0] startup
+[13.364s] [ext: omni.graph.exec-0.9.6] startup
+[13.365s] [ext: omni.hydra.scene_delegate-0.3.5] startup
+[13.368s] [ext: usdrt.scenegraph-7.6.3] startup
+[13.402s] [ext: omni.hydra.usdrt_delegate-7.5.2] startup
+[13.410s] [ext: omni.inspect-1.0.2] startup
+[13.413s] [ext: omni.kit.actions.core-1.0.0] startup
+[13.416s] [ext: omni.kit.audiodeviceenum-1.0.2] startup
+[13.418s] [ext: omni.kit.commands-1.5.0] startup
+[13.432s] [ext: omni.kit.exec.core-0.13.5] startup
+[13.434s] [ext: omni.kit.usd_undo-0.1.8] startup
+[13.436s] [ext: omni.kit.window.popup_dialog-2.0.25] startup
+[13.447s] [ext: omni.kit.widget.nucleus_connector-2.3.1] startup
+[13.462s] [ext: omni.timeline-1.1.0] startup
+[13.465s] [ext: omni.usd-1.16.0] startup
+[13.584s] [ext: omni.graph.core-3.1.2] startup
+[13.587s] [ext: omni.kit.notification_manager-1.0.11] startup
+[13.595s] [ext: isaacsim.core.deprecation_manager-0.4.2] startup
+[13.597s] [ext: isaacsim.replicator.agent.schema-0.1.1] startup
+[13.598s] [ext: isaacsim.robot.schema-6.3.7] startup
+[13.609s] [ext: isaacsim.robot_motion.schema-0.2.1] startup
+[13.611s] [ext: omni.anim.behavior.schema-110.1.0] startup
+[13.616s] [ext: omni.anim.graph.schema-110.1.1] startup
+[13.623s] [ext: omni.anim.navigation.schema-110.1.0] startup
+[13.627s] [ext: omni.behavior.tree.schema-110.1.0] startup
+[13.629s] [ext: omni.isaac.ml_archive-3.3.0] startup
+[13.629s] [ext: omni.kit.asset_converter-6.0.1] startup
+[13.647s] [ext: omni.pip.cloud-1.5.4] startup
+[13.664s] [ext: omni.usd.schema.flow-110.0.0] startup
+[13.665s] [ext: omni.usd.schema.mujoco-1.1.1] startup
+[13.666s] [ext: omni.usd.schema.newton-1.2.1] startup
+[13.668s] [ext: omni.usd.schema.omni_lens_distortion-1.0.0] startup
+[13.669s] [ext: omni.usd.schema.omni_projectors-1.0.0] startup
+[13.669s] [ext: omni.usd.schema.omni_sensors-0.0.0] startup
+[13.678s] [ext: omni.usd.schema.omniscripting-1.0.1] startup
+[13.684s] [ext: omni.usd.schema.physical_lighting-0.1.0] startup
+[13.688s] [ext: omni.usd.schema.physx-110.1.13] startup
+[13.722s] [ext: omni.usd.schema.render_settings.rtx-1.0.2] startup
+[13.728s] [ext: omni.usd.schema.usd_particle_field-1.0.0] startup
+[13.728s] [ext: isaacsim.core.version-2.1.1] startup
+[13.730s] [ext: omni.kit.menu.core-1.2.0] startup
+[13.734s] [ext: omni.kit.menu.utils-2.2.4] startup
+[13.773s] [ext: isaacsim.app.about-2.3.1] startup
+[13.784s] [ext: isaacsim.asset.transformer-1.2.5] startup
+[13.793s] [ext: omni.scene.optimizer.core-110.1.0] startup
+[13.852s] [ext: isaacsim.asset.importer.utils-1.8.1] startup
+[13.862s] [ext: omni.convexdecomposition-110.1.13] startup
+[13.866s] [ext: omni.physics-110.1.13] startup
+[13.870s] [ext: omni.physx.gpu-110.1.13] startup
+[13.870s] [ext: omni.physx.foundation-110.1.13] startup
+[13.873s] [ext: omni.usdphysics-110.1.13] startup
+[13.875s] [ext: omni.physx.cooking-110.1.13] startup
+[13.878s] [ext: omni.physx-110.1.13] startup
+[13.904s] [ext: omni.physics.physx-110.1.13] startup
+[13.907s] [ext: isaacsim.asset.exporter.urdf-2.0.5] startup
+[13.941s] [ext: omni.kit.clipboard-1.1.1] startup
+[13.943s] [ext: omni.kit.usd.layers-2.6.1] startup
+[13.977s] [ext: omni.kit.widget.context_menu-1.4.0] startup
+[13.983s] [ext: omni.kit.context_menu-1.9.0] startup
+[13.993s] [ext: omni.kit.helper.file_utils-0.1.10] startup
+[13.998s] [ext: omni.kit.widget.nucleus_info-2.0.2] startup
+[14.001s] [ext: omni.kit.search_core-1.0.8] startup
+[14.003s] [ext: omni.kit.widget.path_field-2.0.13] startup
+[14.009s] [ext: omni.kit.widget.browser_bar-2.0.10] startup
+[14.013s] [ext: omni.kit.widget.filebrowser-2.13.4] startup
+[14.046s] [ext: omni.kit.widget.options_menu-1.1.6] startup
+[14.059s] [ext: omni.kit.widget.options_button-1.0.3] startup
+[14.061s] [ext: omni.kit.widget.search_delegate-1.0.9] startup
+[14.066s] [ext: omni.ui.scene-2.0.3] startup
+[14.074s] [ext: omni.kit.window.filepicker-2.15.5] startup
+[14.169s] [ext: omni.kit.window.file_importer-1.1.21] startup
+[14.174s] [ext: omni.kit.material.library-3.1.2] startup
+[14.210s] [ext: isaacsim.asset.transformer.rules-1.7.10] startup
+[14.293s] [ext: omni.usdex.libs-2.2.2] startup
+[14.305s] [ext: isaacsim.asset.importer.mjcf-3.10.1] startup
+[14.310s] [ext: isaacsim.asset.importer.urdf-3.11.2] startup
+[14.326s] [ext: omni.kit.primitive.mesh-1.1.0] startup
+[14.344s] [ext: omni.kit.stage_template.core-1.1.22] startup
+[14.346s] [ext: omni.kit.stage_templates-2.0.2] startup
+[14.354s] [ext: omni.usd.metrics.assembler-110.1.2] startup
+[14.359s] [ext: omni.warp.core-1.13.0] startup
+[14.850s] [ext: isaacsim.core.experimental.utils-0.17.2] startup
+[14.852s] [ext: omni.physics.stageupdate-110.1.13] startup
+[14.855s] [ext: omni.physics.tensors-110.1.13] startup
+[14.874s] [ext: omni.physx.tensors-110.1.13] startup
+[14.879s] [ext: isaacsim.core.simulation_manager-1.15.6] startup
+[14.916s] [ext: isaacsim.storage.native-1.9.3] startup
+[14.924s] [ext: omni.usd.metrics.assembler.physics-110.1.13] startup
+[14.934s] [ext: isaacsim.core.utils-4.1.7] startup
+[14.942s] [ext: isaacsim.core.prims-0.11.7] startup
+[18.123s] [ext: isaacsim.core.api-5.2.13] startup
+[18.178s] [ext: isaacsim.core.cloner-1.7.3] startup
+[18.183s] [ext: isaacsim.test.docstring-1.3.2] startup
+[18.217s] [ext: isaacsim.core.experimental.prims-1.8.9] startup
+[18.299s] [ext: isaacsim.core.experimental.primdata-0.3.2] startup
+[18.302s] [ext: omni.graph.tools-1.81.0] startup
+[18.457s] [ext: omni.graph-1.142.5] startup
+[18.591s] [ext: isaacsim.core.experimental.actuators-0.1.2] startup
+[18.636s] [ext: isaacsim.core.experimental.materials-0.7.1] startup
+[18.657s] [ext: isaacsim.core.experimental.objects-0.8.1] startup
+[18.989s] [ext: omni.hydra.engine.stats-1.0.5] startup
+[18.993s] [ext: omni.hydra.rtx.shadercache.vulkan-1.0.0] startup
+[18.995s] [ext: omni.index.libs-387500.4413.0] startup
+[18.995s] [ext: omni.index-1.0.1] startup
+[18.996s] [ext: omni.ujitso.client-0.0.0] startup
+[18.996s] [ext: omni.usd.schema.playback-1.0.0] startup
+[19.001s] [ext: omni.volume-0.5.2] startup
+[19.006s] [ext: omni.hydra.rtx-1.0.4] startup
+2026-11-03T05:54:46Z [18,994ms] [Warning] [omni.log] Source: omni.hydra was already registered.
+[19.041s] [ext: omni.kit.hydra_texture-1.6.0] startup
+[19.046s] [ext: omni.kit.raycast.query-1.2.0] startup
+[19.053s] [ext: omni.kit.viewport.legacy_gizmos-1.0.24] startup
+[19.057s] [ext: omni.kit.viewport.registry-104.0.6] startup
+[19.059s] [ext: omni.kit.viewport.scene_camera_model-1.0.7] startup
+[19.064s] [ext: omni.kit.widget.viewport-109.2.0] startup
+[19.090s] [ext: omni.kit.window.drop_support-1.0.8] startup
+[19.092s] [ext: omni.kit.viewport.window-109.0.2] startup
+[19.149s] [ext: omni.kit.viewport.utility-2.0.1] startup
+[19.155s] [ext: isaacsim.core.rendering_manager-0.4.3] startup
+[19.189s] [ext: omni.graph.action_core-1.1.9] startup
+[19.193s] [ext: omni.graph.action_nodes_core-2.11.0] startup
+[19.197s] [ext: omni.graph.action_nodes-2.11.0] startup
+[19.274s] [ext: omni.graph.action-2.10.2] startup
+[19.276s] [ext: omni.graph.image.core-0.6.1] startup
+[19.277s] [ext: omni.graph.image.nodes-1.3.1] startup
+[19.278s] [ext: omni.graph.nodes_core-2.11.0] startup
+[19.286s] [ext: omni.graph.nodes-2.12.0] startup
+[19.294s] [ext: omni.kit.hotkeys.core-1.3.12] startup
+[19.295s] [ext: omni.kit.property.adapter.core-1.1.1] startup
+[19.300s] [ext: omni.kit.property.adapter.usd-1.0.5] startup
+[19.304s] [ext: omni.kit.widget.filter-1.1.5] startup
+[19.308s] [ext: omni.kit.widget.highlight_label-1.0.3] startup
+[19.311s] [ext: omni.kit.widget.searchfield-1.1.8] startup
+[19.318s] [ext: omni.kit.window.file_exporter-1.0.36] startup
+[19.323s] [ext: omni.kit.widget.stage-4.4.0] startup
+[19.378s] [ext: omni.kit.window.content_browser_registry-0.0.6] startup
+[19.381s] [ext: omni.kit.window.file-2.0.10] startup
+[19.399s] [ext: omni.kit.window.content_browser-3.1.8] startup
+[19.428s] [ext: omni.kit.window.property-1.15.1] startup
+[19.523s] [ext: omni.kit.property.usd-4.9.4] startup
+[19.619s] [ext: omni.graph.scriptnode-2.10.2] startup
+[19.638s] [ext: omni.kit.widget.searchable_combobox-1.0.7] startup
+[19.644s] [ext: omni.kit.widget.settings-2.0.0] startup
+[19.657s] [ext: omni.kit.window.preferences-1.8.3] startup
+[19.686s] [ext: omni.kit.viewport.menubar.core-107.2.2] startup
+[19.735s] [ext: omni.syntheticdata-0.6.15] startup
+[19.829s] [ext: omni.replicator.nv-1.1.1] startup
+[19.846s] [ext: omni.videoencoding-0.2.1] startup
+[19.853s] [ext: omni.replicator.core-1.13.27] startup
+2026-11-03T05:54:47Z [19,919ms] [Warning] [pxr.Semantics] pxr.Semantics is deprecated - please use Semantics instead
+2026-11-03T05:54:47Z [20,121ms] [Warning] [omni.replicator.core.scripts.extension] No material configuration file, adding configuration to material settings directly.
+[20.751s] [ext: isaacsim.core.nodes-5.10.5] startup
+[20.870s] [ext: isaacsim.core.throttling-2.3.5] startup
+[20.874s] [ext: omni.kit.manipulator.viewport-107.0.1] startup
+[20.879s] [ext: omni.graph.visualization.nodes-2.1.4] startup
+[20.909s] [ext: omni.kit.window.extensions-1.5.10] startup
+[20.964s] [ext: isaacsim.gui.components-1.8.5] startup
+[20.999s] [ext: isaacsim.robot.surface_gripper-3.6.2] startup
+[21.021s] [ext: isaacsim.robot.manipulators-3.4.4] startup
+[21.051s] [ext: isaacsim.robot_motion.lula-4.1.3] startup
+[21.063s] [ext: isaacsim.robot_motion.motion_generation-8.2.9] startup
+[21.095s] [ext: isaacsim.cortex.framework-1.0.18] startup
+[21.098s] [ext: isaacsim.cortex.behaviors-2.0.17] startup
+[21.100s] [ext: isaacsim.examples.base-1.3.2] startup
+[21.106s] [ext: omni.kit.widget.zoombar-1.0.7] startup
+[21.109s] [ext: omni.kit.browser.core-2.3.18] startup
+[21.128s] [ext: omni.kit.browser.folder.core-2.0.2] startup
+[21.155s] [ext: omni.kit.widget.stage_icons-1.0.8] startup
+[21.160s] [ext: omni.kit.window.stage-2.6.1] startup
+[21.167s] [ext: omni.kit.menu.stage-1.2.7] startup
+[21.171s] [ext: omni.kit.usd.collect-3.0.6] startup
+[21.190s] [ext: omni.kit.widget.prompt-1.0.7] startup
+[21.194s] [ext: omni.kit.tool.collect-2.2.19] startup
+[21.205s] [ext: isaacsim.examples.browser-0.3.2] startup
+[21.215s] [ext: omni.kit.search.files-1.0.4] startup
+[21.217s] [ext: omni.kit.widget.calendar-1.0.9] startup
+[21.222s] [ext: omni.kit.widget.extended_searchfield-1.0.31] startup
+[21.259s] [ext: omni.simready.content.browser-0.3.7] startup
+[21.715s] [ext: isaacsim.gui.content_browser-0.4.3] startup
+[21.721s] [ext: omni.kit.selection-0.1.6] startup
+[21.725s] [ext: isaacsim.gui.menu-2.10.5] startup
+[21.755s] [ext: isaacsim.gui.property-1.6.4] startup
+[21.794s] [ext: omni.kit.viewport.actions-110.0.0] startup
+[21.805s] [ext: omni.kit.viewport.menubar.display-107.1.3] startup
+[21.811s] [ext: isaacsim.gui.sensors.icon-2.2.1] startup
+[21.822s] [ext: omni.behavior.scripting.core-110.1.0] startup
+[21.836s] [ext: isaacsim.replicator.behavior-1.5.4] startup
+[21.838s] [ext: isaacsim.replicator.experimental.domain_randomization-1.2.5] startup
+[21.894s] [ext: isaacsim.replicator.domain_randomization-1.2.2] startup
+[22.001s] [ext: isaacsim.replicator.writers-1.5.4] startup
+[22.105s] [ext: isaacsim.robot.experimental.wheeled_robots-0.2.11] startup
+[22.206s] [ext: isaacsim.robot.policy.examples-5.2.12] startup
+[22.279s] [ext: isaacsim.robot.wheeled_robots-5.2.4] startup
+[22.292s] [ext: isaacsim.robot.wheeled_robots.nodes-0.1.5] startup
+[22.358s] [ext: isaacsim.robot_motion.experimental.motion_generation-6.1.3] startup
+[22.394s] [ext: isaacsim.robot_motion.cumotion-1.3.1] startup
+[22.428s] [ext: omni.kit.numpy.common-0.1.3] startup
+[22.431s] [ext: isaacsim.sensors.camera-1.7.9] startup
+[22.493s] [ext: isaacsim.sensors.experimental.physics-3.0.2] startup
+[22.515s] [ext: omni.sensors.net-1.0.1] startup
+[22.519s] [ext: omni.sensors.nv.common-3.0.0] startup
+[22.533s] [ext: omni.sensors.nv.materials-2.0.0] startup
+[22.538s] [ext: omni.sensors.nv.acoustic-3.0.0] startup
+[22.542s] [ext: omni.sensors.nv.ids-2.0.1] startup
+[22.545s] [ext: omni.sensors.nv.lidar-3.0.0] startup
+[22.550s] [ext: omni.sensors.nv.radar-3.0.0] startup
+[22.553s] [ext: isaacsim.sensors.experimental.rtx-1.4.6] startup
+[23.473s] [ext: isaacsim.sensors.physics.nodes-1.5.3] startup
+[23.488s] [ext: isaacsim.util.debug_draw-3.2.3] startup
+[23.498s] [ext: isaacsim.sensors.physx-2.5.5] startup
+[23.515s] [ext: isaacsim.sensors.rtx-15.17.1] startup
+[23.560s] [ext: isaacsim.simulation_app-2.18.4] startup
+[23.561s] [ext: omni.anim.curve.core-1.6.0] startup
+[23.598s] [ext: omni.graph.ui_nodes-2.11.1] startup
+[23.698s] [ext: omni.hydra.scene_api-0.1.3] startup
+[23.706s] [ext: omni.kit.manipulator.camera-110.0.0] startup
+[23.737s] [ext: omni.kit.manipulator.selector-1.1.4] startup
+[23.742s] [ext: omni.kit.manipulator.transform-107.0.0] startup
+[23.772s] [ext: omni.kit.widget.toolbar-2.1.0] startup
+[23.802s] [ext: omni.kit.manipulator.tool.snap-1.5.14] startup
+[23.818s] [ext: omni.kit.viewport.manipulator.transform-107.0.4] startup
+[23.825s] [ext: omni.kit.manipulator.prim.core-108.0.2] startup
+[23.855s] [ext: omni.kit.manipulator.prim.usd-107.0.3] startup
+[23.859s] [ext: omni.kit.manipulator.prim-108.0.0] startup
+[23.859s] [ext: omni.kit.manipulator.selection-109.0.1] startup
+[23.865s] [ext: omni.kit.menu.create-2.0.2] startup
+[23.870s] [ext: omni.kit.property.audio-1.0.16] startup
+[23.879s] [ext: omni.kit.property.camera-1.0.14] startup
+[23.884s] [ext: omni.kit.property.geometry-2.1.2] startup
+[23.897s] [ext: omni.kit.property.light-1.0.14] startup
+2026-11-03T05:54:51Z [23,911ms] [Warning] [omni.usd] Encountered USD Warnings but USD Diagnostics are currently muted. To view USD Warnings, please set the '/persistent/app/usd/muteUsdDiagnostics' setting to false in Preferences page.
+[23.954s] [ext: omni.kit.property.material-1.14.6] startup
+[23.986s] [ext: omni.kit.property.render-1.2.2] startup
+[23.991s] [ext: omni.kit.property.transform-1.6.9] startup
+[24.020s] [ext: omni.kit.property.bundle-1.5.1] startup
+[24.025s] [ext: omni.kit.usdz_export-1.1.0] startup
+[24.033s] [ext: omni.kit.tool.asset_importer-6.0.1] startup
+[24.060s] [ext: omni.kit.ui.actions-1.0.5] startup
+[24.065s] [ext: omni.kit.viewport.menubar.camera-107.0.10] startup
+[24.087s] [ext: omni.kit.viewport.menubar.lighting-107.3.2] startup
+[24.101s] [ext: omni.kit.viewport.menubar.render-110.0.0] startup
+[24.114s] [ext: omni.kit.viewport.menubar.settings-110.0.1] startup
+[24.132s] [ext: omni.kit.window.console-1.1.9] startup
+[24.144s] [ext: omni.kit.window.status_bar-0.1.11] startup
+[24.149s] [ext: omni.kit.window.toolbar-3.0.3] startup
+[24.153s] [ext: omni.ocio-0.1.1] startup
+[24.155s] [ext: omni.physx.commands-110.1.13] startup
+[24.177s] [ext: omni.replicator.replicator_yaml-2.0.12] startup
+[24.210s] [ext: omni.rtx.window.settings-0.8.0] startup
+[24.228s] [ext: omni.rtx.settings.core-0.7.1] startup
+[24.254s] [ext: omni.usd.metrics.assembler.ui-110.1.1] startup
+[24.276s] [ext: semantics.schema.editor-2.0.2] startup
+[24.288s] [ext: semantics.schema.property-2.0.2] startup
+[24.293s] [ext: omni.kit.menu.common-2.0.2] startup
+[24.296s] [ext: isaacsim.exp.base-6.0.1] startup
+[24.296s] [ext: isaacsim.exp.base.python-6.0.1] startup
+[24.299s] Simulation App Starting
+[27.125s] Simulation App Startup Complete
+[27.127s] app ready
+Starting kit application with the following args:  ['/isaac-sim/exts/isaacsim.simulation_app/isaacsim/simulation_app/simulation_app.py', '/isaac-sim/apps/isaacsim.exp.base.python.kit', '--/app/tokens/exe-path=/isaac-sim/kit', '--/persistent/app/viewport/displayOptions=3094', '--/rtx/materialDb/syncLoads=True', '--/rtx/hydra/materialSyncLoads=True', '--/omni/kit/plugin/syncUsdLoads=True', '--/app/renderer/resolution/width=1280', '--/app/renderer/resolution/height=720', '--/app/window/width=1440', '--/app/window/height=900', '--/renderer/multiGpu/enabled=True', '--/app/fastShutdown=True', '--/app/installSignalHandlers=0', '--ext-folder', '/isaac-sim/exts', '--ext-folder', '/isaac-sim/apps', '--/physics/cudaDevice=0', '--/plugins/carb.tasking.plugin/threadCount=24', '--/plugins/omni.tbb.globalcontrol/maxThreadCount=24', '--portable', '--no-window', '--/app/window/hideUi=1']
+Passing the following args to the base kit application:  []
+Warp 1.13.0 initialized:
+   CUDA Toolkit 12.9, Driver 13.2
+   Devices:
+     "cpu"      : "x86_64"
+     "cuda:0"   : "NVIDIA GeForce RTX 5090 Laptop GPU" (23 GiB, sm_120, mempool enabled)
+   Kernel cache:
+     /isaac-sim/.cache/warp/1.13.0
+
+==============================================================================
+  WHICH MODEL FORM MATCHES tau_measured?   (peak qd = 100% of datasheet limit)
+==============================================================================
+  model form               mean RMS   worst % of limit
+  Mqdd+C+g                   3.4459             27.98%
+  Mqdd-C+g                   3.5826             28.61%
+  Mqdd+g                     3.4689             28.28%
+  Mqdd+C                     6.7214             30.35%
+  M_full                     3.4459             27.98%
+  C_only_is_nle              6.7214             30.35%
+
+  best: Mqdd+C+g at 27.98% of limit
+
+==============================================================================
+  SANITY: term magnitudes and whether C is already inside the gravity getter
+==============================================================================
+  at rest  g(q) = [ 0.00000e+00 -4.59630e+00 -6.36400e-01  2.28856e+01  6.22900e-01
+  2.49380e+00  1.00000e-04]
+  at rest  C    = [0. 0. 0. 0. 0. 0. 0.]   (must be ~0 if it is C*qd alone)
+  C is zero at rest -> the getter returns C*qd alone, as assumed.
+2026-11-03T05:55:12Z [45,347ms] [Warning] [omni.physx.tensors.plugin] DEPRECATED: Please use getDofFrictionProperties instead.
+2026-11-03T05:55:12Z [45,347ms] [Warning] [omni.physx.tensors.plugin] DEPRECATED: Please use setDofFrictionProperties instead.
+[57.356s] Simulation App Shutting Down
