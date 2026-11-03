@@ -7,7 +7,20 @@ observed and what it blocks.
 
 ## Blocking problems
 
-### P1 — ~~The three-term identity fails under fast motion~~ **SOLVED 2026-11-03**
+### P1 — The three-term identity fails under fast motion — **CORRECTED 2026-11-03: not "time discretization"**
+
+> **Correction.** The "SOLVED, first order in dt" conclusion below is wrong. Its rate sweep
+> (200/500/1000/2000 Hz -> 50.91/14.24/2.78/1.44%) came from `pal_residual_diag.py`, which
+> rebuilds `World` inside one process; Isaac warns that `physics_dt` is ignored on
+> subsequent constructions, so the rates were not what they claimed. Measured properly
+> (one rate per process, `pal_sweep.py`, see `RESIDUAL_FLOOR.md`) the residual **grows**
+> with physics rate above ~50% of velocity limit (30.21% at 1 kHz, 53.76% at 2 kHz) and is
+> rate-independent below it. `pal_rate_decouple.py` agrees (27.79% at 1 kHz, 35.26% at
+> 2 kHz) and also shows the **controller** rate is irrelevant: 2 kHz physics with a 1 kHz
+> or 500 Hz controller gives 35.31% / 35.45%. Only the 500 Hz row (14.24%) and the
+> solver-iteration / armature / mass-matrix controls from the old text still stand.
+> The accepted explanation is the implicit-drive hypothesis in `RESIDUAL_FLOOR.md`.
+> The text below is kept as the historical record.
 
 **It is time discretization, not a modelling error.** Measured on a 100%-of-limit
 excitation trajectory, worst joint as a fraction of its torque limit:

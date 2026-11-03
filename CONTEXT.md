@@ -3,7 +3,7 @@
 Physics Attestation Layer: a Franka Panda digital twin in Isaac Sim that audits the arm by
 comparing measured torque against model torque. Proposal is the PDF in the repo root.
 
-Last worked: 2026-11-03. Branch `dev`. **Nothing committed since the first commit.**
+Last worked: 2026-11-03. Branch `dev`.
 
 ---
 
@@ -140,7 +140,7 @@ ownership.
 | | status |
 |---|---|
 | **O1** telemetry | All 7 quantities available. Writer implemented against the analysis side's schema (`pal_telemetry.py` + `pal_capture.py`). Cannot stream at 1 kHz; `M`/`J` decimation is the agreed trade. |
-| **O2** residual | Closes at 0.15% at rest, <1% slow, ~2.8% fast at 1 kHz. The fast-motion residual is **time discretization, not model error** — first order in dt, confirmed. Wrench conversion fixed. |
+| **O2** residual | Closes at 0.15% at rest, <1% slow, <2% up to 50% of velocity limit; above it an artifact that grows with physics rate (see `docs/RESIDUAL_FLOOR.md`), not model error. Wrench conversion fixed. |
 | **O3** confidence | `c(q)` works directionally but never exceeds 0.13 anywhere; needs rescaling. Threshold is a guess. |
 | **O4** payload | Chain verified to 0.04% at rest across 0.1–3.0 kg. Estimator not built. |
 | **O5** detection | Plant now has real friction. Detector not built. |
@@ -181,13 +181,13 @@ payload response 4.629 N*m/kg, matching the analysis side's independent 4.60.
 
 ## Why the above-knee artifact exists
 
-The fast-motion residual is **time discretization of a stiff drive**, first order in `dt`
-(fitted exponent 1.049). Not a modelling error, and not removable by a better model:
-
-```
-200 Hz -> 50.91%     500 Hz -> 14.24%     1000 Hz -> 2.78%     2000 Hz -> 1.44%
-   (worst joint, as a fraction of its torque limit, on a 100%-of-limit trajectory)
-```
+The above-knee residual is an **artifact that grows with physics rate** (30.21% at 1 kHz,
+53.76% at 2 kHz at full speed; rate-independent below ~50% of velocity limit) — see
+`docs/RESIDUAL_FLOOR.md`. The earlier "time discretization, first order in dt" claim
+(200/500/1000/2000 Hz -> 50.91/14.24/2.78/1.44%) was **wrong**: that sweep rebuilt `World`
+in one process and the new `physics_dt` was ignored. Controller rate is irrelevant
+(`pal_rate_decouple.py`: 2 kHz physics with a 1 kHz controller gives 35.31% vs 35.26%).
+Not a modelling error, and not removable by a better model.
 
 Controls: solver iterations change nothing (4 vs 128), armature changes nothing (so it
 *is* inside the reported `M`). Residual rises with drive stiffness for the same reason.

@@ -136,6 +136,11 @@ side, and they are why we treated your gravity vector as the reference rather th
 
 ---
 
+> **CORRECTION 2026-11-03:** the "time discretization, first order in dt" finding and its
+> 200/500/1000/2000 Hz figures below are wrong (the sweep ignored `physics_dt`). The
+> residual is rate-independent below ~50% of velocity limit and grows with rate above it.
+> See `docs/RESIDUAL_FLOOR.md` and the correction in `docs/OPEN_PROBLEMS.md` (P1).
+
 ## From our side: one finding that affects your residual expectations
 
 **The fast-motion residual is time discretization, not a modelling error.** Measured on a

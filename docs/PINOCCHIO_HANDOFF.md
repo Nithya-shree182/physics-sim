@@ -417,6 +417,12 @@ and the thing measuring it are the same simulator.
 
 # Update — 2026-11-03
 
+> **CORRECTION 2026-11-03:** the "time discretization, first order in dt" finding and its
+> 200/500/1000/2000 Hz figures below are wrong (the sweep ignored `physics_dt`). The
+> residual is rate-independent below ~50% of velocity limit and grows with rate above it.
+> See `docs/RESIDUAL_FLOOR.md` and the correction in `docs/OPEN_PROBLEMS.md` (P1).
+
+
 ## The residual has a floor, and your model cannot remove it
 
 The fast-motion residual we reported as an open failure is **time discretization of a
