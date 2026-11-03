@@ -2,6 +2,30 @@
 
 Newest first. Current status and next steps are in [context.md](context.md).
 
+## 2026-11-03 (23:30 IST) — dashboard, first version
+
+- New `dashboard/` (Plotly Dash, `python dashboard/app.py`, see `dashboard/README.md`), built from the
+  final design canvas and `docs/DASHBOARD_PLAN.md`: header with source switch, pause, guided demo and
+  alert bell; O2 Arm & residual tab (arm twin with link tint, force arrow, manipulability ellipse and
+  alert rings; payload, confidence and worst-residual cards; mock load, speed, per-joint speed and
+  test-fault controls; one chart with a Residual / Torque / Confidence / Payload switch; residual bars
+  that select the joint; torque breakdown); O6 Benchmark tab (placeholder for dev's trajectories, session
+  evaluation, residual floor table, real empty-arm RMS computed from the log); right-hand drawer (O1, O3,
+  O4 with tare, alerts, about); pop-up alerts; five-step guided demo.
+- Two sources: a **stand-in plant** (our Pinocchio plant stepped live, labelled "not Isaac Sim") and a
+  **replay of dev's real logs** (0 kg and 1 kg). The analysis is the repo's own code (`compute_residual`,
+  confidence gates, payload formula) on a sliding window; the live detector reuses `detector.py`'s
+  constants and adds a payload-signature fit and a tracking-lag estimate. Alerts checked in the browser:
+  pickup gives a payload alert and 1.2 kg estimate, friction on joint 3 is named on joint 3, a 50 ms delay
+  is caught on the tracking channel only, near-singular pose gates and holds the estimate, over-speed holds
+  alarms.
+- New `tests/test_dashboard_engine.py` (5 tests). Full suite: 70 passed.
+- Bugs found in the browser and fixed: a callback that read and wrote the same slider looped; re-drawn joint
+  buttons fired their click callback every tick (now fixed buttons, only their contents change); merged
+  click+tick triggers hid the click (now read from `ctx.triggered`); 250 ms refresh lagged clicks (now 500 ms).
+- Not done (waits on dev): live Isaac Sim feed and control channel, real fault runs, O6 trajectories.
+  Playwright was installed in the `pal` env only to check the page; it is not needed to run it.
+
 ## 2026-11-03 (22:27 IST) — physics and proposal test suites, dev's `44f835b` reviewed
 
 - New `tests/test_physics_model.py` (20 tests): mass matrix symmetric and positive definite,

@@ -1,8 +1,8 @@
 # Dashboard plan (objective O7)
 
-Status: **design finalised, nothing built.** The interactive design canvas below is the
-reference to build from. The real dashboard waits for dev's live feed. Last updated
-2026-11-03 (night).
+Status: **first version built** (`dashboard/`, Plotly Dash; see `dashboard/README.md`), running on a
+stand-in plant and on replays of dev's real logs. The live Isaac Sim parts wait for dev's feed. The
+interactive design canvas below is the reference. Last updated 2026-11-03 (23:30 IST).
 
 ## Design canvases (claude.ai, private to Nithya's account)
 
