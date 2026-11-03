@@ -4,6 +4,12 @@ Read this first when picking the work up again. Status as of 2026-11-03. The cha
 themselves are listed in [changes.md](changes.md); what is waiting on dev is in
 [docs/NOTES_FOR_DEV.md](docs/NOTES_FOR_DEV.md).
 
+> **Update, 2026-11-03 (late evening):** parts of this file are out of date. Read
+> [setup.md](setup.md) first (setting up another machine, where we stopped, what is stale here,
+> one open lead) and [docs/DASHBOARD_PLAN.md](docs/DASHBOARD_PLAN.md) (dashboard decisions).
+> Dev's correction of the residual-floor claim (`docs/NOTES_FOR_NITHYA.md` section 1, on
+> `dev`) supersedes the "residual floor" paragraph below.
+
 ## The project in one paragraph
 
 A Franka Panda digital twin in NVIDIA Isaac Sim that audits the arm from physics: for every

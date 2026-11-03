@@ -2,13 +2,31 @@
 
 Newest first. Current status and next steps are in [context.md](context.md).
 
-## 2026-11-03 (evening) — first real Isaac Sim logs
+## 2026-11-03 (night) â€” setup file, dashboard plan in the repo, encoding repair
+
+- New `setup.md`: how to continue on another machine (no GPU needed; install, environment,
+  identity, checks), which files are not in git and how to restore each (real logs come from
+  `origin/dev` via a temporary worktree), where we stopped, what is stale in `context.md`,
+  an unverified lead on the simulator's mass matrix (J7 differs from ours by exactly the
+  armature, 0.0061), a start prompt for Claude Code, and next steps.
+- New `docs/DASHBOARD_PLAN.md`: the revised dashboard design (canvas URLs, decisions, theme,
+  colours, 50% trusted-speed band, build order). It had only existed in Claude's local memory.
+- `context.md`: banner pointing to `setup.md` and `DASHBOARD_PLAN.md`; content unchanged.
+- `changes.md`: the previous entry had been saved in a legacy Windows encoding, so its dashes
+  and middle dots showed as garbled characters on GitHub. Re-encoded as UTF-8 (7 bytes in 3
+  lines); text unchanged.
+- Dev's `cffda31` reviewed only as far as its `NOTES_FOR_NITHYA.md` sections 1 to 3: the
+  2.8% time-discretization claim is retracted (the rate sweep was invalid); below about 50% of
+  the velocity limit the residual is physical and rate-independent; effort mode does not remove
+  the above-knee artifact. Record at 50% or less in position mode.
+
+## 2026-11-03 (evening) â€” first real Isaac Sim logs
 
 **Dev's `dev` branch (`88adebc`) and `data/real/`**
 - Two 3 s `slow_reference` logs at 1 kHz (0 kg and 1 kg), `position_stiff` drive, both pass
   `schema/validate.py` unchanged (3000 rows, 182 columns).
-- Empty gripper: residual RMS 0.08–0.25 N·m on joints 1–4, 1–2% of limit on joints 5–7, so
-  the identity closes on slow motion. 1 kg: joints 2 and 4 jump to 3.1 and 4.6 N·m (as
+- Empty gripper: residual RMS 0.08â€“0.25 NÂ·m on joints 1â€“4, 1â€“2% of limit on joints 5â€“7, so
+  the identity closes on slow motion. 1 kg: joints 2 and 4 jump to 3.1 and 4.6 NÂ·m (as
   predicted), wrench fz about -8.9 N.
 - Payload: 1 kg reads 0.972 kg raw; the 0 kg run reads -0.028 kg, and using that as the tare
   gives 1.000 kg. The offset is a constant bias of the plant, so the tare must come from an
