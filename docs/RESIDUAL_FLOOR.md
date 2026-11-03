@@ -120,3 +120,30 @@ recorded in effort mode. If it survives, it is a property of the plant.
 
 Until then the 50% envelope stands on its own evidence: below it the measurement does not
 depend on a simulator setting, which is the only definition of "physical" available here.
+
+---
+
+## Effort-mode test (analysis side's R2.3), 2026-11-03
+
+`workspace/pal_effort_test.py`: drive off (kp = kd = 0, `switch_control_mode("effort")`),
+explicit torques `M(qdd_des + Kp e + Kd ed) + C + g` (Kp 400, Kd 40), same trajectory and
+windows as `pal_sweep.py`. Worst-joint RMS residual, % of torque limit:
+
+| speed | 500 Hz | 1000 Hz | 2000 Hz | position mode, 1000 Hz |
+|---|---|---|---|---|
+| 10% | 0.01 | 0.00 | 0.00 | 0.43 |
+| 50% | 1.38 | 1.64 | 1.82 | 2.05 |
+| 75% | 8.01 | 10.02 | 11.45 | 8.79 |
+| 100% | 15.93 | 19.94 | 22.72 | 30.21 |
+
+- **`tau_measured` is the applied torque in effort mode**: `tau_measured - tau_cmd` is
+  0.05–0.4% of a limit. So in position mode the reported torque is not the problem on its own.
+- **The knee and the above-knee artifact survive.** The floor does not collapse, so the
+  artifact is not explained by the position drive alone. R2.3's "if it stays" branch.
+- The rate dependence is much weaker than in position mode (x1.4 from 500 to 2000 Hz at full
+  speed, against x7.4 in position mode), and absolute values at 100% speed are lower.
+- **Confound:** effort-mode tracking is poor at speed (peak error 0.50–0.59 rad at 100%),
+  so the arm does not follow the reference as in position mode and the motions differ. The
+  comparison is indicative, not like-for-like.
+- Not yet explained. Next candidates: the model terms `M, C, g` being evaluated at the
+  end-of-step state while the torque acted over the step, and the finite-difference `qdd`.
