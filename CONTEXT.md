@@ -3,11 +3,21 @@
 Physics Attestation Layer: a Franka Panda digital twin in Isaac Sim that audits the arm by
 comparing measured torque against model torque. Proposal is the PDF in the repo root.
 
-Last worked: 2026-11-03. Branch `dev`.
+Last worked: 2026-11-03. Branch `dev`. **Start with `README.md` and `docs/REVIEW.md`.** This file is the long-form
+history; where it disagrees with REVIEW.md (written later the same day), REVIEW.md wins.
 
 ---
 
 ## Run it
+
+```bash
+tools/pal_pipeline.sh pal_o5_sweep.py out/o5     # current way: sim -> Parquet -> checks (see README.md)
+tools/run_sim.sh pal_selftest.py                 # plant self-test; run after any change to the plant
+python3 -m unittest discover tests               # 26 unit tests, no simulator needed
+```
+
+Older scripts and the notes below predate 2026-11-03 (the scene audit and early probes build the OLD plant, whose
+friction was in the wrong units). Their friction-related numbers are superseded by `docs/REVIEW.md`.
 
 ```bash
 ./start_sim_docker.sh                # windowed (default); writes out/physics_audit.json
@@ -58,7 +68,9 @@ The probe scripts are kept deliberately — each one is the evidence for a claim
 | `pal_coriolis_test.py` | which model form matches tau_measured? |
 | `pal_drive_test.py` | what does tau_measured actually represent? |
 | `pal_residual_diag.py` | ablation: iterations, rate, armature, stiffness |
-| `pal_capture.py` | writes a telemetry run in the agreed schema |
+| `pal_selftest.py` | plant self-test: friction in N*m, identity, mid-run inertials, push recovery |
+| `pal_capture.py` | reference captures for model calibration (effort mode, matched, no noise) |
+| `pal_validation_push.py`, `pal_o4_payload.py`, `pal_o6_benchmark.py` | validation push, payload data, trajectory benchmark |
 | `pal_o5_sweep.py` / `pal_faults.py` | O5 fault injectors and the 14-scenario sweep |
 | `pal_friction_visibility.py` | is injected friction visible in `tau_measured`? in `tau_applied`? (only the latter) |
 | `pal_effort_test.py` | does the residual artifact survive in effort mode? (yes) |
@@ -93,14 +105,14 @@ Isaac Sim (authored): [0, −4.663, −0.636, 22.954, 0.623, 2.441, 0.001]
 
 Two independent engines, same parameters, same answer. Do not revert this.
 
-## Read first: two open findings (2026-11-03, `docs/REVIEW.md`)
+## Resolved 2026-11-03 (details and evidence in `docs/REVIEW.md`)
 
-- The plant's friction is wrong: `set_friction_coefficients` is dimensionless, we passed N*m.
-  Fix is the torque-valued `set_dof_friction_properties`. All friction data is superseded.
-- `tau_measured` is net torque, so friction and stuck joints are invisible to the residual.
-  Only `tau_applied` (effort mode) shows them. This reverses the position-mode plan for O5.
-
-Both are awaiting a go-ahead; they change the plant and the analysis-side contract.
+- Friction: the old `set_friction_coefficients` takes a dimensionless coefficient; we had passed N*m (about 200x too
+  much on joint 2). `pal_plant.py` now uses the torque-valued `set_dof_friction_properties`; verified by
+  `pal_selftest.py`.
+- `tau_measured` is the net torque and cannot show friction, backlash or a locked joint. Fault data is now recorded in
+  effort mode and the fault residual uses `tau_applied`. `tau_measured` is still right for external loads.
+- Decided: faults, not attacks (`docs/PROPOSAL_AMENDMENTS.md`).
 
 ## Three traps, in order of time lost
 
@@ -157,11 +169,11 @@ ownership.
 | **O1** telemetry | All 7 quantities available. Writer implemented against the analysis side's schema (`pal_telemetry.py` + `pal_capture.py`). Cannot stream at 1 kHz; `M`/`J` decimation is the agreed trade. |
 | **O2** residual | Closes at 0.15% at rest, <1% slow, <2% up to 50% of velocity limit; above it an artifact that grows with physics rate (see `docs/RESIDUAL_FLOOR.md`), not model error. Wrench conversion fixed. |
 | **O3** confidence | `c(q)` works directionally but never exceeds 0.13 anywhere; needs rescaling. Threshold is a guess. |
-| **O4** payload | Chain verified to 0.04% at rest across 0.1–3.0 kg. Estimator not built. |
-| **O5** detection | Fault injectors built (friction, stuck joint, delay) and a 14-run sweep recorded: `docs/O5_INJECTORS.md`. Backlash, sensor noise, mass mismatch not built. Detector is the analysis side's (`observers/detector.py` on `nithya`); not yet run on our data. |
-| **O6** benchmark | Limits in config, generators not written. |
-| **O7** dashboard | Not started. Blocked by O1 throughput at 1 kHz. |
-| Validation push | `switch_control_mode("effort")` verified to work. |
+| **O4** payload | Known-mass data recorded (0.5-3 kg, three poses + moving) and verified to 0.02% with independent URDF kinematics (`tools/check_payload.py`). The estimator is the analysis side's (`observers/payload.py`); not run on this data. |
+| **O5** detection | Built: friction, stuck joint, delay, backlash injectors; 5% mass mismatch; seeded sensor noise; 23 labelled runs in effort mode (`docs/O5_INJECTORS.md`). Backlash and short delays are invisible at this speed. Detector is the analysis side's; not yet run on our data. |
+| **O6** benchmark | Built and run: trapezoidal, S-curve, quintic over a speed grid at 0 and 2 kg, 26 runs; table and chart in `docs/REVIEW.md`, `docs/o6_comparison.svg`. |
+| **O7** dashboard | Dashboard is the analysis side's. Our parts (websocket stream, in-sim panel) not built. |
+| Validation push | Built and run (24 runs). Exact with friction off (0.2%); with realistic friction 15.7% worst case against a 15% pre-set limit: strict verdict FAIL, cause identified (`docs/VALIDATION.md`). |
 
 ---
 
@@ -211,13 +223,12 @@ Controls: solver iterations change nothing (4 vs 128), armature changes nothing 
 any detection rate.** It is also why `PHYSICS_HZ` stays at 1000 despite telemetry not
 streaming in real time there.
 
-## Next three things
+## What is left
 
-1. **Validate a captured run end-to-end** against `schema/validate.py`. The capture was
-   still fighting boot hangs when the session ended; `data/` needed `chmod 777`.
-2. **Rescale the Jacobian and sweep `c(q)`** — though the analysis side has now claimed
-   this (their §5), so confirm before starting.
-3. **Wire the fault injectors (O5)** and the effort-mode validation push.
+1. Analysis side: run `observers/` on `data/ref_matched_*`, `out/o5`, `out/o4`; report detection and false-positive rates
+   with and without the confidence gate.
+2. Ours, not built: websocket stream and in-sim panel (O7); a grasped payload with gripper actuation; backlash with
+   impacts; faster-motion fault sets.
+3. Keep `docs/REVIEW.md` current when results change.
 
-Full list with evidence in `docs/OPEN_PROBLEMS.md`. Our reply to the analysis side's notes
-is `docs/REPLY_TO_ANALYSIS.md`.
+Full history with evidence in `docs/OPEN_PROBLEMS.md`.

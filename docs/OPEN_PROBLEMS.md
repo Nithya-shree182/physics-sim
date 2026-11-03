@@ -89,6 +89,9 @@ at 0.49% is not sufficient evidence — that run was 98% gravity.
 > PhysX coefficient and we passed N*m values, so joint 2 carries ~38 N*m instead of ~0.2. The torque-valued
 > API is `art._physics_view.set_dof_friction_properties`. Also, `tau_measured` is net torque and cannot
 > show friction at all. See `docs/REVIEW.md` F1 and F2.
+>
+> **Fixed later the same day:** `pal_plant.py` uses the torque-valued API (verified, `pal_selftest.py` T2) and fault
+> data is recorded in effort mode with `tau_applied`.
 
 
 **Root cause was worse than friction.** `world.reset()` silently discards *everything*

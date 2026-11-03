@@ -297,10 +297,13 @@ FRICTION_VISCOUS = FRICTION_VISCOUS_GAZ_CLAMPED if FRICTION_SOURCE == "gaz" else
 FRICTION_COULOMB_STATIC = FRICTION_COULOMB_GAZ
 FRICTION_OFFSET = FRICTION_OFFSET_GAZ
 FRICTION_COULOMB_DYNAMIC = 0.85 * FRICTION_COULOMB_GAZ   # [CHOICE] dynamic below static
-# MEASURED: this build has no PhysxJointAxisAPI, so PhysX's three-part friction model is
-# not reachable. The articulation tensor API takes ONE scalar per joint
-# (set_friction_coefficients), so FRICTION_COULOMB_STATIC is what actually reaches the
-# plant and the viscous term is lost.
+# CORRECTED 2026-11-03 (docs/REVIEW.md F1). An earlier note here said the three-part friction model
+# was unreachable and that set_friction_coefficients was the only route. That call takes a
+# DIMENSIONLESS PhysX coefficient, so passing these N*m values produced ~38 N*m of friction on
+# joint 2. The physics view's set_dof_friction_properties takes a static effort and a dynamic
+# effort in N*m and a viscous coefficient in N*m*s/rad; pal_plant.py uses it with
+# FRICTION_COULOMB_STATIC, FRICTION_COULOMB_DYNAMIC and FRICTION_VISCOUS below, each times
+# PLANT_FRICTION_SCALE. pal_selftest.py T2 verifies 1.0 N*m injected reads back as 1.0 N*m.
 #
 # ── DECIDED (2026-11-02) ─────────────────────────────────────────────────────────────
 # STICTION and BEARING WEAR are deliberately kept INDISTINGUISHABLE. One scalar carries

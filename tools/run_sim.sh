@@ -29,8 +29,8 @@ ATTEMPTS="${PAL_ATTEMPTS:-3}"
 mkdir -p "$ROOT/logs" "$ROOT/data" "$ROOT/out"
 # The container runs as uid 1234 — neither root nor the host user — so host directories at
 # the usual 755 are not writable by it, and that fails only at the END of a run.
-mkdir -p "$ROOT/out/o5"
-chmod 777 "$ROOT/data" "$ROOT/out" "$ROOT/out/o5" 2>/dev/null || true
+mkdir -p "$ROOT/out/o5" "$ROOT/out/o4" "$ROOT/out/o6" "$ROOT/out/push"
+chmod 777 "$ROOT/data" "$ROOT/out" "$ROOT/out/o5" "$ROOT/out/o4" "$ROOT/out/o6" "$ROOT/out/push" 2>/dev/null || true
 
 cleanup() { docker rm -f "$NAME" >/dev/null 2>&1 || true; }
 trap 'echo; echo "interrupted, stopping $NAME"; cleanup; exit 130' INT TERM

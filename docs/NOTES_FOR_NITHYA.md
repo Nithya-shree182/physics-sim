@@ -1,5 +1,51 @@
 # Notes for nithya (analysis side), from dev (simulator side)
 
+> ## LATEST (2026-11-03, end of day): read this block first, it supersedes the older sections below
+>
+> Everything on `dev` was rebuilt after an external-style review (`docs/REVIEW.md`). What matters to you:
+>
+> 1. **The old data is superseded.** The plant's friction was in the wrong units (about 200x too much on
+>    joint 2) and `tau_measured` cannot show friction at all. Do not use the earlier `data/slow_reference_*`
+>    or any earlier `out/o5` run. They are deleted/regenerated.
+> 2. **New contract for fault detection: effort mode, applied torque.** All runs are `drive_mode = torque`.
+>    The fault residual is `tau_applied - tau_model` (the controller is computed torque using the plant's own
+>    M, C, g; `tau_applied` is what was commanded). `tau_measured` is net torque: use it for external loads
+>    (payload, push), not for friction/backlash/stuck-joint. Your `residual.py` currently refuses
+>    `tau_applied` on a position-mode log; these logs are torque mode, so it needs an effort-mode path.
+> 3. **The plant carries a 5% arm-mass mismatch** (links 1-7 heavier than the URDF; manifest key
+>    `plant_link_mass_scale`) and, where stated, **seeded sensor noise** (`sensor_noise` in the manifest:
+>    q 2e-5 rad, qd 1e-3 rad/s, torque 0.02 N*m; representative values, not identified). Your model keeps the
+>    URDF values.
+> 4. **Friction is real now:** Gaz values x1.15 in N*m through the torque-valued API
+>    (manifest `friction_values`, columns static, dynamic, viscous). Healthy `tau_applied - net` is 0.13-0.40 N*m
+>    RMS per joint, so a healthy run has a friction offset your detector's calibration window must absorb.
+> 5. **Data you can run on (all schema-valid, all pass `tools/check_run.py`):**
+>    - `data/ref_matched_{0kg,1kg}_1000hz.*` (tracked): slow reference, **no mass mismatch, no noise**: calibrate
+>      your model here.
+>    - `out/o5/` (not tracked, ~4 MB each, 23 runs): the fault set with noise and mismatch.
+>      Faults: friction x2/x4/x8, locked joint, backlash, delay; six healthy runs with different noise seeds
+>      for false-alarm rates. Ask and we will hand them over; `tools/pal_pipeline.sh pal_o5_sweep.py out/o5`
+>      regenerates them in ~12 min.
+>    - `out/o4/` (19 runs): known payloads 0 / 0.5 / 1 / 2 / 3 kg held at three poses, plus moving runs.
+>      A 0 kg run at each pose is the tare. Score your estimator with the same rule as
+>      `tools/check_payload.py` (within 3% or 0.02 kg).
+>    - `out/push/` (24 runs): known forces at the gripper; compare with `tools/check_push.py`.
+> 6. **What the fault set cannot show:** backlash (0.02-0.12 rad) and delays up to 30 ms leave no signature in
+>    either the applied-torque residual or tracking at 20% speed. They are in the set on purpose; report your
+>    detection rate including them. A 50 ms delay makes the loop oscillate and is visible.
+> 7. **Attacks are out of scope** (`docs/PROPOSAL_AMENDMENTS.md`). `attack_type` is always `none`. The demo and
+>    O5 pass text are rewritten there.
+> 8. **Validation push:** `docs/VALIDATION.md`. The residual-to-force maths is exact with friction off (0.2%);
+>    with realistic friction the estimate is good to 15% or a few N (one run is 15.7%, limit 15%).
+> 9. **O6** (trajectory benchmark) is built and run: `docs/REVIEW.md`, `docs/o6_comparison.svg`.
+>
+> What we still need from you: run `observers/` on the data above (Pinocchio does not install on our machine),
+> report detection and false-positive rates with and without the confidence gate, and tell us if anything in the
+> manifest or columns is missing for your code.
+
+(Older sections follow; where they conflict with the block above, the block wins.)
+
+
 Written for: the analysis side, in reply to `docs/NOTES_FOR_DEV.md` round 2 on `origin/nithya`.
 Written 2026-11-03. Read section 1 first: it corrects something we told you earlier.
 

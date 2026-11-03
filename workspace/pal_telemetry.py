@@ -54,7 +54,7 @@ COLUMNS = _names()
 
 class TelemetryWriter:
     def __init__(self, articulation, run_id, out_dir="/workspace/data", *,
-                 ee_body_index=7, ee_prim=None, mj_every=1, labels=None, manifest=None):
+                 ee_body_index=7, ee_prim=None, mj_every=1, labels=None, manifest=None, noise=None):
         self.art = articulation
         self.run_id = run_id
         self.dir = Path(out_dir)
@@ -69,6 +69,7 @@ class TelemetryWriter:
         self._J = np.zeros((6, ARM))
         self._have_mj = False
         self.dropped = 0
+        self.noise = noise              # optional pal_sensors.SensorNoise, applied to logged values
 
     def capture(self, step, t, dt, *, q_cmd=None, qd_cmd=None, qdd_cmd=None,
                 push_force=None, fault_active=False, attack_active=False):
@@ -118,6 +119,8 @@ class TelemetryWriter:
             row[f"push_force_{k}"] = float(v)
         if self.mj_every > 1:
             row["mj_fresh"] = bool(fresh)
+        if self.noise is not None:
+            self.noise.apply(row)
         self.rows.append(row)
 
     def _ee_pose(self):
@@ -166,6 +169,8 @@ class TelemetryWriter:
                    "Measured: pre-step / post-step / midpoint evaluation give "
                    "27.99 / 27.98 / 27.98 percent residual, i.e. indistinguishable."}
         man.update(self.manifest_extra)
+        if self.noise is not None:
+            man["sensor_noise"] = self.noise.manifest()
         for k in ("drive_mode", "payload_kg", "traj_type"):
             if k in self.labels:
                 man[k] = self.labels[k]

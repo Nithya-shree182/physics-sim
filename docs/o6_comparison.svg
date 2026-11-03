@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="860" height="360" font-family="sans-serif" font-size="12"><rect width="100%" height="100%" fill="white"/>
+<text x="10" y="18" font-size="14" font-weight="bold">O6: cycle time against peak torque (lower-left is better)</text>
+<text x="55" y="48" font-weight="bold">payload 0 kg</text>
+<line x1="55.0" y1="295.0" x2="410.0" y2="295.0" stroke="#444"/><line x1="55.0" y1="295.0" x2="55.0" y2="30.0" stroke="#444"/>
+<text x="55" y="311" text-anchor="middle">0</text>
+<text x="154" y="311" text-anchor="middle">1</text>
+<text x="254" y="311" text-anchor="middle">2</text>
+<text x="353" y="311" text-anchor="middle">3</text>
+<line x1="55.0" y1="295" x2="410.0" y2="295" stroke="#ddd"/><text x="49" y="299" text-anchor="end">0</text>
+<line x1="55.0" y1="230" x2="410.0" y2="230" stroke="#ddd"/><text x="49" y="234" text-anchor="end">20</text>
+<line x1="55.0" y1="165" x2="410.0" y2="165" stroke="#ddd"/><text x="49" y="169" text-anchor="end">40</text>
+<line x1="55.0" y1="100" x2="410.0" y2="100" stroke="#ddd"/><text x="49" y="104" text-anchor="end">60</text>
+<line x1="55.0" y1="35" x2="410.0" y2="35" stroke="#ddd"/><text x="49" y="39" text-anchor="end">80</text>
+<text x="232" y="352" text-anchor="middle">cycle time (s)</text>
+<text x="14" y="162" transform="rotate(-90 14 162)" text-anchor="middle">peak torque (% of limit)</text>
+<polyline fill="none" stroke="#1f77b4" stroke-width="1.5" points="192.9,169.3 220.6,187.2 248.8,194.2 289.6,199.4"/>
+<circle cx="192.9" cy="169.3" r="4.5" fill="#1f77b4"/>
+<circle cx="220.6" cy="187.2" r="4.5" fill="#1f77b4"/>
+<circle cx="248.8" cy="194.2" r="4.5" fill="#1f77b4"/>
+<circle cx="289.6" cy="199.4" r="4.5" fill="#1f77b4"/>
+<circle cx="295.0" cy="62.0" r="4.5" fill="#1f77b4"/><text x="306" y="66">trapezoidal</text>
+<polyline fill="none" stroke="#d95f02" stroke-width="1.5" points="214.1,172.8 233.1,187.0 257.0,194.1 294.7,199.4"/>
+<rect x="210.1" y="168.8" width="8" height="8" fill="#d95f02"/>
+<rect x="229.1" y="183.0" width="8" height="8" fill="#d95f02"/>
+<rect x="253.0" y="190.1" width="8" height="8" fill="#d95f02"/>
+<rect x="290.7" y="195.4" width="8" height="8" fill="#d95f02"/>
+<rect x="291.0" y="74.0" width="8" height="8" fill="#d95f02"/><text x="306" y="82">s-curve</text>
+<polyline fill="none" stroke="#2a9d3f" stroke-width="1.5" points="184.3,126.3 214.1,174.6 253.9,189.5 313.5,198.6 393.1,203.3"/>
+<polygon points="184.3,121.3 179.3,130.3 189.3,130.3" fill="#2a9d3f"/>
+<polygon points="214.1,169.6 209.1,178.6 219.1,178.6" fill="#2a9d3f"/>
+<polygon points="253.9,184.5 248.9,193.5 258.9,193.5" fill="#2a9d3f"/>
+<polygon points="313.5,193.6 308.5,202.6 318.5,202.6" fill="#2a9d3f"/>
+<polygon points="393.1,198.3 388.1,207.3 398.1,207.3" fill="#2a9d3f"/>
+<polygon points="295.0,89.0 290.0,98.0 300.0,98.0" fill="#2a9d3f"/><text x="306" y="98">torque-aware</text>
+<text x="485" y="48" font-weight="bold">payload 2 kg</text>
+<line x1="485.0" y1="295.0" x2="840.0" y2="295.0" stroke="#444"/><line x1="485.0" y1="295.0" x2="485.0" y2="30.0" stroke="#444"/>
+<text x="485" y="311" text-anchor="middle">0</text>
+<text x="584" y="311" text-anchor="middle">1</text>
+<text x="684" y="311" text-anchor="middle">2</text>
+<text x="783" y="311" text-anchor="middle">3</text>
+<line x1="485.0" y1="295" x2="840.0" y2="295" stroke="#ddd"/><text x="479" y="299" text-anchor="end">0</text>
+<line x1="485.0" y1="230" x2="840.0" y2="230" stroke="#ddd"/><text x="479" y="234" text-anchor="end">20</text>
+<line x1="485.0" y1="165" x2="840.0" y2="165" stroke="#ddd"/><text x="479" y="169" text-anchor="end">40</text>
+<line x1="485.0" y1="100" x2="840.0" y2="100" stroke="#ddd"/><text x="479" y="104" text-anchor="end">60</text>
+<line x1="485.0" y1="35" x2="840.0" y2="35" stroke="#ddd"/><text x="479" y="39" text-anchor="end">80</text>
+<text x="662" y="352" text-anchor="middle">cycle time (s)</text>
+<text x="444" y="162" transform="rotate(-90 444 162)" text-anchor="middle">peak torque (% of limit)</text>
+<polyline fill="none" stroke="#1f77b4" stroke-width="1.5" points="622.9,100.5 650.6,116.8 678.8,123.8 719.6,129.0"/>
+<circle cx="622.9" cy="100.5" r="4.5" fill="#1f77b4"/>
+<circle cx="650.6" cy="116.8" r="4.5" fill="#1f77b4"/>
+<circle cx="678.8" cy="123.8" r="4.5" fill="#1f77b4"/>
+<circle cx="719.6" cy="129.0" r="4.5" fill="#1f77b4"/>
+<circle cx="725.0" cy="62.0" r="4.5" fill="#1f77b4"/><text x="736" y="66">trapezoidal</text>
+<polyline fill="none" stroke="#d95f02" stroke-width="1.5" points="644.1,106.3 663.1,116.3 687.0,123.8 724.7,129.1"/>
+<rect x="640.1" y="102.3" width="8" height="8" fill="#d95f02"/>
+<rect x="659.1" y="112.3" width="8" height="8" fill="#d95f02"/>
+<rect x="683.0" y="119.8" width="8" height="8" fill="#d95f02"/>
+<rect x="720.7" y="125.1" width="8" height="8" fill="#d95f02"/>
+<rect x="721.0" y="74.0" width="8" height="8" fill="#d95f02"/><text x="736" y="82">s-curve</text>
+<polyline fill="none" stroke="#2a9d3f" stroke-width="1.5" points="614.3,54.1 644.1,109.2 683.9,121.5 743.5,129.2 823.1,133.3"/>
+<polygon points="614.3,49.1 609.3,58.1 619.3,58.1" fill="#2a9d3f"/>
+<polygon points="644.1,104.2 639.1,113.2 649.1,113.2" fill="#2a9d3f"/>
+<polygon points="683.9,116.5 678.9,125.5 688.9,125.5" fill="#2a9d3f"/>
+<polygon points="743.5,124.2 738.5,133.2 748.5,133.2" fill="#2a9d3f"/>
+<polygon points="823.1,128.3 818.1,137.3 828.1,137.3" fill="#2a9d3f"/>
+<polygon points="725.0,89.0 720.0,98.0 730.0,98.0" fill="#2a9d3f"/><text x="736" y="98">torque-aware</text>
+</svg>
