@@ -9,3 +9,6 @@ logs/
 __pycache__/
 *.pyc
 .venv/
+
+# Telemetry logs (synthetic logs alone are ~250 MB)
+data/

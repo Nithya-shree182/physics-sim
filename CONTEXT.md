@@ -3,7 +3,7 @@
 Physics Attestation Layer: a Franka Panda digital twin in Isaac Sim that audits the arm by
 comparing measured torque against model torque. Proposal is the PDF in the repo root.
 
-Last worked: 2026-11-02. Branch `dev`. **Nothing committed since the first commit.**
+Last worked: 2026-11-03. Branch `dev`. **Nothing committed since the first commit.**
 
 ---
 
@@ -54,6 +54,11 @@ The probe scripts are kept deliberately — each one is the evidence for a claim
 | `pal_o1_test.py` | can telemetry run at 1 kHz? frame coherence? |
 | `pal_payload_demo.py` | O4 end to end on known masses |
 | `pal_dynamics_excite.py` | does the identity close under fast motion? |
+| `pal_timing_rate.py` | pre/post/midpoint state; physics rate vs throughput |
+| `pal_coriolis_test.py` | which model form matches tau_measured? |
+| `pal_drive_test.py` | what does tau_measured actually represent? |
+| `pal_residual_diag.py` | ablation: iterations, rate, armature, stiffness |
+| `pal_capture.py` | writes a telemetry run in the agreed schema |
 | `pal_inertia_dump.py` | per-body mass / COM / inertia across all three sources |
 | `pal_author_plant.py` | authoring the plant from the URDF |
 
@@ -84,7 +89,9 @@ Isaac Sim (authored): [0, −4.663, −0.636, 22.954, 0.623, 2.441, 0.001]
 
 Two independent engines, same parameters, same answer. Do not revert this.
 
-## The trap that cost the most time
+## Three traps, in order of time lost
+
+### 1. `world.reset()` discards tensor-API writes
 
 **`world.reset()` silently discards everything written through the tensor API** — body
 masses, COMs, inertias, joint friction, armature. All of it reverts to the asset's values.
@@ -97,6 +104,18 @@ stock asset.
 A readback taken immediately after the write proves nothing. `pal_scene.py` prints a
 `[survive]` line for exactly this reason; if it says `False`, stop and fix the ordering
 before trusting any number in the run.
+
+### 2. The boot hang
+
+Roughly 1 start in 5 early on, three in a row during the capture work. Empty `docker
+logs`, `unhealthy`, GPU idle. Always use the watchdog loop above. A long-lived container
+that scripts are sent into would remove this and the ~60 s boot cost per probe — worth
+doing if the probe count keeps growing.
+
+### 3. The container runs as uid 1234
+
+Not root, not the host user. A host directory at the usual 755 is **not writable**, and it
+fails at the *end* of a run after all the compute. `chmod 777 data out` before capturing.
 
 ---
 
@@ -120,8 +139,8 @@ ownership.
 
 | | status |
 |---|---|
-| **O1** telemetry | All 7 dynamics quantities available. **Cannot run at 1 kHz** — 0.42× real time, every step over budget. Schema and Parquet writer not written. |
-| **O2** residual | Closes at 0.15% at rest and 0.49% on a slow run, but **FAILS at 5.98% under fast motion**. Wrench conversion fixed and verified. |
+| **O1** telemetry | All 7 quantities available. Writer implemented against the analysis side's schema (`pal_telemetry.py` + `pal_capture.py`). Cannot stream at 1 kHz; `M`/`J` decimation is the agreed trade. |
+| **O2** residual | Closes at 0.15% at rest, <1% slow, ~2.8% fast at 1 kHz. The fast-motion residual is **time discretization, not model error** — first order in dt, confirmed. Wrench conversion fixed. |
 | **O3** confidence | `c(q)` works directionally but never exceeds 0.13 anywhere; needs rescaling. Threshold is a guess. |
 | **O4** payload | Chain verified to 0.04% at rest across 0.1–3.0 kg. Estimator not built. |
 | **O5** detection | Plant now has real friction. Detector not built. |
@@ -131,12 +150,30 @@ ownership.
 
 ---
 
+## The residual floor — know this number
+
+The fast-motion residual is **time discretization of a stiff drive**, first order in `dt`
+(fitted exponent 1.049). Not a modelling error, and not removable by a better model:
+
+```
+200 Hz -> 50.91%     500 Hz -> 14.24%     1000 Hz -> 2.78%     2000 Hz -> 1.44%
+   (worst joint, as a fraction of its torque limit, on a 100%-of-limit trajectory)
+```
+
+Controls: solver iterations change nothing (4 vs 128), armature changes nothing (so it
+*is* inside the reported `M`). Residual rises with drive stiffness for the same reason.
+
+**O5 detection thresholds must sit above this floor, and it must be reported alongside
+any detection rate.** It is also why `PHYSICS_HZ` stays at 1000 despite telemetry not
+streaming in real time there.
+
 ## Next three things
 
-1. **Diagnose why the identity fails under fast motion** (5.98% on joint 3). Note the
-   excitation test predates the inertial authoring, so **re-run it first** — the plant has
-   changed substantially and the number may have moved.
-2. **`schema/telemetry_v0.yaml` + Parquet writer.** The analysis side is blocked on this.
-3. **Rescale the Jacobian, sweep the workspace, set a real `c(q)` threshold.**
+1. **Validate a captured run end-to-end** against `schema/validate.py`. The capture was
+   still fighting boot hangs when the session ended; `data/` needed `chmod 777`.
+2. **Rescale the Jacobian and sweep `c(q)`** — though the analysis side has now claimed
+   this (their §5), so confirm before starting.
+3. **Wire the fault injectors (O5)** and the effort-mode validation push.
 
-Full list with evidence in `docs/OPEN_PROBLEMS.md`.
+Full list with evidence in `docs/OPEN_PROBLEMS.md`. Our reply to the analysis side's notes
+is `docs/REPLY_TO_ANALYSIS.md`.

@@ -7,7 +7,39 @@ observed and what it blocks.
 
 ## Blocking problems
 
-### P1 — The three-term identity fails under fast motion
+### P1 — ~~The three-term identity fails under fast motion~~ **SOLVED 2026-11-03**
+
+**It is time discretization, not a modelling error.** Measured on a 100%-of-limit
+excitation trajectory, worst joint as a fraction of its torque limit:
+
+```
+200 Hz -> 50.91%     500 Hz -> 14.24%     1000 Hz -> 2.78%     2000 Hz -> 1.44%
+```
+
+Fitting RMS residual against `dt` gives an exponent of **1.049** — first order in `dt`,
+the signature of discretization. Two controls:
+
+- **solver iterations change nothing** — 14.24% at 4, 14.22% at 128. Not convergence.
+- **armature changes nothing** — 2.3692 vs 2.3892. So armature *is* correctly inside the
+  reported `M`, which also closes a worry from the handoff.
+
+And from the other side, **residual rises with drive stiffness** (kp 80 → 12.17%,
+kp 5000 → 33.87%): a stiffer drive is a stiffer ODE and discretizes worse at a given `dt`.
+
+Five hypotheses were eliminated along the way, each by measurement rather than argument:
+timing misalignment (pre/post/midpoint state give 27.99/27.98/27.98%), Coriolis sign or
+definition (the assumed form wins; `C` is exactly zero at rest), finite-difference noise
+(filtering changes it 2%), velocity-limit saturation (the sweep never saturates), and the
+mass-matrix slice (full 9×9 identical to the 7×7 block).
+
+**Consequence, which is not a bug but a limit:** there is a residual floor set by the
+physics rate and the drive stiffness. At 1000 Hz with `position_stiff` it is ~2.8% of a
+joint's torque limit on fast motion and well under 1% on slow motion. O5 detection
+thresholds must sit above it, and it must be reported alongside any detection rate.
+
+Original report follows.
+
+#### P1 (original) — the three-term identity fails under fast motion
 
 A multi-sine excitation trajectory on all seven joints, with velocities driven toward the
 datasheet limits, gives:
@@ -84,7 +116,24 @@ the same simulator.
 
 **Owner:** analysis side (Pinocchio). See `docs/PINOCCHIO_HANDOFF.md`.
 
-### P4 — Telemetry cannot run at 1 kHz
+### P4 — Telemetry cannot run at 1 kHz — **decided: keep 1 kHz, decimate M/J**
+
+Throughput and residual pull in opposite directions, and the residual wins because it is
+the measurement.
+
+A full frame costs ~1.29 ms to read **regardless of physics rate** — the readback
+dominates, not the solver — so throughput is flat at about 780 steps/s (1000 Hz → 0.76×
+real time, 500 Hz → 1.52×, 400 Hz → 1.94×). Lowering the rate to buy real-time telemetry
+would multiply the residual floor by five (P1).
+
+`PHYSICS_HZ` was briefly set to 500 and has been **reverted to 1000**. The trade is made
+on the readback instead: `M` (49 columns) and `J` (42) are 57% of the frame and dominate
+its cost, and both change very little in a millisecond. `pal_telemetry.py` implements the
+analysis side's proposed encoding — `mj_every=N` with an `mj_fresh` flag.
+
+Original report follows.
+
+#### P4 (original) — telemetry cannot run at 1 kHz
 
 | | steps/s | vs real time |
 |---|---|---|
@@ -296,21 +345,17 @@ In order. The first two are prerequisites for trusting any later number.
 
 **1. ~~Fix P2~~ — done.** Tensor-API writes now survive, verified by a `[survive]` line.
 
-**2. Re-run the excitation test, then diagnose P1.** The 5.98% failure was measured on the
-*unauthored* plant — point masses, no rotational inertia, wrong COMs. The plant has since
-changed substantially, so the number may have moved on its own. Re-measure before
-investigating.
-
-If it persists: diagnose P1 (identity fails under fast motion). Test the half-step hypothesis by
+**2. ~~Diagnose P1~~ — solved.** Time discretization; see above. Test the half-step hypothesis by
 sampling state before and after the step and evaluating the model both ways. If that is not
 it, check the Coriolis sign convention and whether armature is actually present in the
 articulation. **Nothing downstream is trustworthy until this closes.**
 
 **3. ~~Settle P6~~ — done.** Resolved into the inertial authoring above.
 
-**4. Write `schema/telemetry_v0.yaml` and the Parquet writer.** This is the week-1 handoff
-artifact and the analysis side is blocked on it. Should carry `tau_measured`, `tau_applied`,
-`q_cmd`, the control mode, and a per-run manifest.
+**4. ~~Write the schema~~ — the analysis side already had one.** `schema/telemetry_v0.yaml`
+and `schema/validate.py` are adopted unchanged on `dev`. The writer
+(`workspace/pal_telemetry.py` + `workspace/pal_capture.py`) is implemented against it.
+Remaining: validate a captured run end-to-end against `schema/validate.py`.
 
 **5. Rescale the Jacobian and sweep the workspace for a real `c(q)` threshold.** Scale the
 rotational rows by the 0.472 m characteristic length, then sample a few thousand poses to
@@ -326,3 +371,36 @@ is already in place; masses are not.
 
 Then the objectives proper: trajectory generators (O6), fault and attack injectors (O5),
 dashboard (O7).
+
+
+---
+
+# Added 2026-11-03
+
+### P8 — The Isaac container has neither pandas nor pyarrow
+
+So the telemetry writer cannot emit Parquet directly. It writes compressed `.npz` with
+numpy alone and `tools/npz_to_parquet.py` converts on the host (`.venv-tools`). The
+analysis side still receives Parquet in their schema; only the conversion point moved.
+
+### P9 — `data/` must be world-writable for the container
+
+The container runs as **uid 1234**, not root and not the host user. A host directory
+created with the usual 755 permissions is not writable by it, and the failure surfaces
+only at the end of a run as `PermissionError` after all the compute is done.
+`chmod 777 data` before capturing. Worth folding into the launcher.
+
+### P10 — The boot hang is getting worse, not better
+
+Three hangs in a row during the capture work, against roughly 1 in 5 earlier. Each costs
+about 3 minutes of watchdog timeout. A long-lived container that scripts are sent into
+would remove both this and the ~60 s boot cost per probe; currently every probe pays the
+lottery.
+
+### F8 — The effective-stiffness test was invalid
+
+Section A of `pal_residual_diag.py` reported `k_eff` near zero and sometimes negative. The
+cause is the method: `set_joint_positions()` appears to move the drive target as well, so
+there was no tracking error to restore from. The underlying question — why a 0.14 rad
+tracking error produced only ~10 N·m against a 400 N·m/rad drive — is unresolved, but it
+matters much less now that discretization accounts for the residual.

@@ -38,6 +38,49 @@ art.set_gains(kps=np.full((1, N), 400.0 * cfg.DEG_PER_RAD, dtype=np.float32),
               joint_indices=idx)
 
 
+import xml.etree.ElementTree as ET
+
+BODIES = list(art.body_names)
+_root = ET.parse("/workspace/assets/panda_arm_hand.urdf").getroot()
+URDF = {}
+for _l in _root.findall("link"):
+    _it = _l.find("inertial")
+    if _it is None:
+        continue
+    _m, _o, _I = _it.find("mass"), _it.find("origin"), _it.find("inertia")
+    URDF[_l.get("name")] = {
+        "mass": float(_m.get("value")),
+        "com": [float(x) for x in _o.get("xyz").split()] if _o is not None and _o.get("xyz") else [0.0]*3,
+        "diag": [float(_I.get("ixx")), float(_I.get("iyy")), float(_I.get("izz"))],
+    }
+
+
+def author_plant():
+    """Overwrite the asset's inertial parameters with the URDF's.
+
+    Must be called AFTER the final world.reset(): a reset restores the articulation from
+    USD and silently discards every tensor-API write — masses, COMs, inertias, friction
+    and armature alike. That is what made the earlier run of this test meaningless.
+    """
+    nb = len(BODIES)
+    cur = np.asarray(art.get_body_masses()).reshape(nb)
+    m = np.array([URDF[b]["mass"] if b in URDF else float(cur[i])
+                  for i, b in enumerate(BODIES)], dtype=np.float32)
+    c = np.array([URDF[b]["com"] if b in URDF else [0.0]*3 for b in BODIES], dtype=np.float32)
+    d = np.array([URDF[b]["diag"] if b in URDF else [1e-3]*3 for b in BODIES], dtype=np.float32)
+    q = np.tile(np.array([1.0, 0, 0, 0], dtype=np.float32), (nb, 1))
+    art.set_body_masses(m.reshape(1, nb))
+    art.set_body_coms(c.reshape(1, nb, 3), q.reshape(1, nb, 4))
+    try:
+        art.set_body_inertias(d.reshape(1, nb, 3))
+    except Exception:
+        f = np.zeros((nb, 9), dtype=np.float32)
+        f[:, 0], f[:, 4], f[:, 8] = d[:, 0], d[:, 1], d[:, 2]
+        art.set_body_inertias(f.reshape(1, nb, 9))
+    art.set_armatures(cfg.ARMATURE.reshape(1, N).astype(np.float32), joint_indices=idx)
+    return m
+
+
 def set_friction(vals):
     art.set_friction_coefficients(np.asarray(vals, dtype=np.float32).reshape(1, N),
                                   joint_indices=idx)
@@ -56,30 +99,52 @@ def read():
 # ── Excitation trajectory: 3-harmonic multi-sine per joint, random phases ─────────────
 # Amplitudes sized against each joint's range, base frequency chosen so peak velocity
 # lands near the datasheet limit rather than at a token fraction of it.
-AMP = np.array([0.55, 0.40, 0.55, 0.45, 0.70, 0.60, 0.70])
+AMP_RAW = np.array([0.55, 0.40, 0.55, 0.45, 0.70, 0.60, 0.70])
 F0 = np.array([0.55, 0.45, 0.60, 0.50, 0.75, 0.70, 0.80])
+
+# Peak velocity of a 3-harmonic multi-sine with amplitudes A/(h+1)^2 and frequencies
+# F0*(h+1) is A * 2*pi*F0 * sum_h 1/(h+1).  Solve for A given a target peak velocity.
+_K = sum(1.0 / (h + 1) for h in range(3))
+
+
+def amps_for(frac):
+    """Amplitudes whose peak commanded velocity is `frac` of each joint's datasheet limit."""
+    return frac * cfg.QD_MAX / (2 * np.pi * F0 * _K)
+
+
+AMP = amps_for(0.60)
 PH = rng.uniform(0, 2 * np.pi, (3, N))
 CENTER = cfg.HOME_JOINTS.copy()
 
 
-def traj(t):
+def traj(t, amp=None):
+    a_base = AMP if amp is None else amp
     q = CENTER.copy()
     qd = np.zeros(N)
     for h in range(3):
         w = 2 * np.pi * F0 * (h + 1)
-        a = AMP / (h + 1) ** 2
+        a = a_base / (h + 1) ** 2
         q += a * np.sin(w * t + PH[h])
         qd += a * w * np.cos(w * t + PH[h])
     return q, qd
 
 
 def run(friction, label, steps=6000, warm=800):
-    set_friction(friction)
+    # Order matters: reset first, THEN write through the tensor API, then verify.
     world.reset()
+    art.set_gains(kps=np.full((1, N), 400.0 * cfg.DEG_PER_RAD, dtype=np.float32),
+                  kds=np.full((1, N), 80.0 * cfg.DEG_PER_RAD, dtype=np.float32),
+                  joint_indices=idx)
+    m_written = author_plant()
+    set_friction(friction)
     q0, _ = traj(0.0)
     art.set_joint_positions(np.concatenate([q0, [0.04, 0.04]]))
     for _ in range(300):
         world.step(render=False)
+    m_live = np.asarray(art.get_body_masses()).flatten()[:len(m_written)]
+    f_live = np.asarray(art.get_friction_coefficients()).flatten()[:N]
+    print(f"  [survive] masses {bool(np.allclose(m_live, m_written, atol=1e-4))}  "
+          f"friction {np.round(f_live, 3)}", flush=True)
 
     qd_prev = np.zeros(N)
     qdd_filt = np.zeros(N)
@@ -126,62 +191,44 @@ def report(R_raw, R_filt, P, QD, label):
     return rms_r, rms_f
 
 
-print("\n" + "=" * 94)
-print("  1 — EXCITATION TRAJECTORY, FRICTIONLESS PLANT   (pure M / C / g validation)")
-print("=" * 94)
-a = run(np.zeros(N), "multi-sine, 3 harmonics, all 7 joints, friction = 0")
-rms_r0, rms_f0 = report(*a)
-print(f"\n  raw vs filtered qdd: RMS residual {np.mean(rms_r0):.4f} -> {np.mean(rms_f0):.4f} N*m "
-      f"({100*(1-np.mean(rms_f0)/np.mean(rms_r0)):.0f}% of it was finite-difference noise)")
+print("\n" + "=" * 96)
+print("  VELOCITY-FRACTION SWEEP — is the residual model error, or limit saturation?")
+print("=" * 96)
+print("  The previous run commanded peak velocities up to 2.47x the datasheet limit.")
+print("  A joint pinned at its velocity limit is held there by a CONSTRAINT force, which")
+print("  appears in tau_measured and is nowhere in M qdd + C qd + g. If that is what the")
+print("  residual was, it collapses as the commanded velocity drops below the limit.\n")
+print(f"  {'frac':>6}{'cmd qd pk':>11}{'actual pk':>11}{'saturated?':>12}"
+      f"{'RMS resid':>11}{'worst %lim':>12}{'verdict':>10}")
 
-print("\n" + "=" * 94)
-print("  2 — SAME TRAJECTORY, GAZ FRICTION IN THE PLANT   (model still frictionless)")
-print("=" * 94)
-fr = cfg.FRICTION_COULOMB_STATIC * cfg.PLANT_FRICTION_SCALE
-b = run(fr, f"friction = Gaz Coulomb x{cfg.PLANT_FRICTION_SCALE}")
-rms_r1, rms_f1 = report(*b)
-print(f"\n  friction applied (N*m): {np.round(fr, 3)}")
-print(f"  residual growth from friction alone: {np.round(rms_f1 - rms_f0, 4)}")
-print("  The model has no friction term, so this difference IS the friction signature —")
-print("  the thing O5 must detect a CHANGE in, not the thing itself.")
+results = []
+for frac in (0.20, 0.40, 0.60, 0.80, 1.00, 1.50):
+    AMP = amps_for(frac)
+    globals()["AMP"] = AMP
+    R_raw, R_filt, P, QD, lbl = run(np.zeros(N), f"frac={frac}", steps=4000, warm=600)
+    cmd_pk = float(np.max(frac * cfg.QD_MAX))
+    act_pk = float(np.max(np.abs(QD)))
+    # "Saturated" = any joint spent time within 1% of its own limit.
+    sat = bool(np.any(np.max(np.abs(QD), axis=0) > 0.99 * cfg.QD_MAX))
+    rms = np.sqrt(np.mean(R_filt ** 2, axis=0))
+    worst = float(np.max(100 * rms / cfg.TAU_MAX))
+    results.append((frac, cmd_pk, act_pk, sat, float(np.mean(rms)), worst))
+    print(f"  {frac:>6.2f}{cmd_pk:>11.2f}{act_pk:>11.2f}{('YES' if sat else 'no'):>12}"
+          f"{np.mean(rms):>11.4f}{worst:>11.2f}%{('PASS' if worst <= 5 else 'FAIL'):>10}")
 
-print("\n" + "=" * 94)
-print("  3 — RANDOM POSES AND VELOCITIES   (term sizes across the workspace)")
-print("=" * 94)
-set_friction(np.zeros(N))
-print(f"  {'trial':>6}{'c(q)':>9}{'|qd| max':>10}{'|M qdd|':>10}{'|C qd|':>10}"
-      f"{'|g|':>9}{'resid max':>11}")
-mats = []
-for trial in range(8):
-    lo = np.maximum(cfg.Q_MIN + 0.3, cfg.HOME_JOINTS - 1.0)
-    hi = np.minimum(cfg.Q_MAX - 0.3, cfg.HOME_JOINTS + 1.0)
-    qr = rng.uniform(lo, hi)
-    world.reset()
-    art.set_joint_positions(np.concatenate([qr, [0.04, 0.04]]))
-    for _ in range(200):
-        world.step(render=False)
-    # Drive hard toward a displaced target to build up real velocity, then sample.
-    tgt = np.clip(qr + rng.uniform(-0.6, 0.6, N), cfg.Q_MIN + 0.2, cfg.Q_MAX - 0.2)
-    art.set_joint_position_targets(np.concatenate([tgt, [0.04, 0.04]]))
-    qd_prev = np.zeros(N)
-    best = None
-    for k in range(260):
-        world.step(render=False)
-        q, qd, g, cor, M, tm = read()
-        qdd = (qd - qd_prev) / DT
-        qd_prev = qd.copy()
-        if k > 30 and (best is None or np.max(np.abs(qd)) > best[0]):
-            best = (np.max(np.abs(qd)), M @ qdd, cor.copy(), g.copy(), tm - (M @ qdd + cor + g))
-    J = np.asarray(art.get_jacobians())
-    Jl = J.reshape(J.shape[0], -1, J.shape[-2], J.shape[-1])[0, cfg.EE_JACOBIAN_ROW][:, :N]
-    sv = np.linalg.svd(Jl, compute_uv=False)
-    mats.append(np.linalg.cond(np.asarray(art.get_mass_matrices()).reshape(9, 9)[:N, :N]))
-    print(f"  {trial:>6}{sv.min()/sv.max():>9.4f}{best[0]:>10.2f}"
-          f"{np.mean(np.abs(best[1])):>10.3f}{np.mean(np.abs(best[2])):>10.3f}"
-          f"{np.mean(np.abs(best[3])):>9.3f}{np.max(np.abs(best[4])):>11.4f}")
-print(f"\n  mass-matrix condition number across these poses: "
-      f"min {min(mats):.1f}, max {max(mats):.1f}")
-print("  (M is pose-dependent by a factor of several — a stretched arm really is harder")
-print("   to swing than a folded one, which is the whole reason M(q) cannot be a constant)")
+print("\n  Per-joint detail at the largest frac that stays under the limits:")
+clean = [r for r in results if not r[3]]
+if clean:
+    frac = clean[-1][0]
+    globals()["AMP"] = amps_for(frac)
+    R_raw, R_filt, P, QD, lbl = run(np.zeros(N), f"frac={frac}", steps=6000, warm=800)
+    report(R_raw, R_filt, P, QD, f"frictionless, peak velocity = {frac:.0%} of limit")
+
+    print("\n  Now with Gaz friction in the plant, model still frictionless:")
+    fr = cfg.FRICTION_COULOMB_STATIC * cfg.PLANT_FRICTION_SCALE
+    b = run(fr, "with friction", steps=6000, warm=800)
+    rf = report(*b)
+else:
+    print("  every tested fraction saturated — lower the sweep range")
 
 simulation_app.close()

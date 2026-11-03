@@ -31,10 +31,29 @@ import numpy as np
 # fixed velocity quantisation, so the physics rate is the cheapest lever on residual
 # quality that exists.
 #
-# 1000 Hz matches both the real Franka control loop and the "target 1/1000 s" fixed
-# physics step agreed in WORK_SPLIT.md on the nithya branch. An earlier draft here used
-# 400 Hz as a GPU-headroom compromise; the work split settles it, and the dashboard
-# decimates for display anyway, so there is nothing to trade away.
+# 1000 Hz. Two measurements pull in opposite directions and the residual wins.
+#
+# THROUGHPUT wants a lower rate. A full telemetry frame costs ~1.29 ms to read regardless
+# of the physics rate — the readback dominates, not the solver — so throughput is flat at
+# about 780 steps/s:
+#       1000 Hz -> 0.76x real time      500 Hz -> 1.52x      400 Hz -> 1.94x
+#
+# RESIDUAL wants a higher rate, and much more strongly. Measured on a 100%-of-limit
+# excitation trajectory, worst joint as a fraction of its torque limit:
+#       200 Hz -> 50.91%    500 Hz -> 14.24%    1000 Hz -> 2.78%    2000 Hz -> 1.44%
+#
+# Fitting RMS residual against dt gives an exponent of 1.049 — first order in dt, which is
+# the signature of time discretization, not of a modelling error. Confirmed by two
+# controls: solver iteration count changes nothing (14.24% at 4 iterations and at 128),
+# and armature changes nothing (2.3692 vs 2.3892). Residual also rises with drive
+# stiffness (kp 80 -> 12.17%, kp 5000 -> 33.87%), which is the same effect seen from the
+# other side: a stiffer drive is a stiffer ODE and discretizes worse at a given dt.
+#
+# So dropping to 500 Hz to buy real-time telemetry would multiply the residual floor by
+# five, and the residual IS the measurement. The right trade is to keep 1000 Hz and
+# decimate the expensive readbacks instead: M (49 floats) and J (42) are 57% of the frame
+# and dominate its cost, while both change very little in one millisecond. The analysis
+# side has proposed encoding that as a held last value plus an `mj_fresh` flag.
 PHYSICS_HZ = 1000.0
 RENDER_HZ = 30.0                      # [CHOICE] rendering is for the human, not the math
 

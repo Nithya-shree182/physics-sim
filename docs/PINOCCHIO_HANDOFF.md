@@ -411,3 +411,71 @@ and verify **after** it; a readback taken immediately after the write proves not
 That last row is the important one. Until your Pinocchio model lands, this system can
 verify its own arithmetic but cannot attest to anything, because the thing being measured
 and the thing measuring it are the same simulator.
+
+
+---
+
+# Update — 2026-11-03
+
+## The residual has a floor, and your model cannot remove it
+
+The fast-motion residual we reported as an open failure is **time discretization of a
+stiff position drive**, not a modelling error on either side. Measured on a 100%-of-limit
+excitation trajectory, worst joint as a fraction of its torque limit:
+
+```
+200 Hz -> 50.91%     500 Hz -> 14.24%     1000 Hz -> 2.78%     2000 Hz -> 1.44%
+```
+
+Fitting RMS residual against `dt` gives an exponent of **1.049** — first order in `dt`.
+Two controls rule out the alternatives: solver iteration count changes nothing (14.24% at
+4 iterations and at 128), and armature changes nothing (2.3692 vs 2.3892), which also
+confirms armature *is* correctly inside the reported `M`. Residual rises with drive
+stiffness for the same reason — a stiffer drive is a stiffer ODE.
+
+Five hypotheses were eliminated by measurement before this one: timing misalignment,
+Coriolis sign or definition, finite-difference noise, velocity-limit saturation, and the
+mass-matrix slice.
+
+**What this means for you.** At 1000 Hz with `position_stiff` the floor is roughly 2.8% of
+a joint's torque limit on fast motion, and well under 1% on slow motion. Detection
+thresholds for O5 must sit above it, and it should be reported alongside any detection
+rate. It is a property of the plant's integration, so a perfect model still sees it.
+
+It is also why `PHYSICS_HZ` stays at 1000 even though a full telemetry frame costs ~1.29 ms
+and therefore cannot stream in real time at that rate. Decimating `M`/`J` is the trade.
+
+## Payload attachment — corrected, and our two numbers reconciled
+
+Our 4.896 N·m/kg figure was wrong. We attached the payload by raising `panda_hand`'s mass
+and wrote `hand_mass + 3.0` assuming the URDF's 0.730 kg hand, but the asset's hand was
+0.558 kg — so that line added **3.172 kg**, not 3.0. 13.89 / 3.172 = **4.631**, which
+matches our other figure. `INTEGRATION.md` has been corrected.
+
+**The attachment point has moved to match yours.** It was at the hand origin; the payload
+is now folded in as a point mass at **0.1034 m along `panda_hand`'s z axis** — combined
+mass, combined COM, and the payload's parallel-axis inertia contribution about that
+combined COM. Recorded in each run manifest under `payload_attachment`.
+
+## Telemetry: your schema adopted unchanged
+
+`schema/telemetry_v0.yaml` and `schema/validate.py` are on `dev` as-is. The writer is
+`workspace/pal_telemetry.py`, driven by `workspace/pal_capture.py`.
+
+Your four questions are answered in `docs/REPLY_TO_ANALYSIS.md` §3. In short: label
+columns accepted as written; `qdd_cmd_*` and `push_force_*` accepted and written; your
+`mj_fresh` decimation encoding adopted; and the timing convention is measured to be
+immaterial (pre-step / post-step / midpoint give 27.99 / 27.98 / 27.98 percent), with the
+row assembled after `world.step()` and that stated in the manifest.
+
+**One deviation, in delivery only:** the Isaac Sim container has neither pandas nor
+pyarrow, so the writer emits compressed `.npz` and `tools/npz_to_parquet.py` converts on
+the host. You still receive Parquet in your schema.
+
+## Corrections to section 9 of this document
+
+| claim | now |
+|---|---|
+| "Three-term identity closes under fast motion — FAILED at 5.98%" | **Explained.** Time discretization, first order in `dt`. ~2.8% at 1 kHz. Not a model error. |
+| "Friction reaches the plant — NO" | **Fixed.** `world.reset()` was wiping it. |
+| "An independent model exists — NO" | **Yours does.** Your gravity vector is now the reference, and the plant reproduces it to rounding. |
