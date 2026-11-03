@@ -138,6 +138,9 @@ matches the URDF; dev adopted our schema unchanged and wrote the writer
 (`workspace/pal_telemetry.py`, `pal_capture.py`); the confidence score is ours; payload
 placement agreed; timing convention stated; `data/` ignored; friction values agreed.
 
+First real logs arrived (`data/real/`, slow_reference 0 kg and 1 kg): schema valid, identity
+closes, tare from the 0 kg run gives 1.000 kg. Still need fast/excitation runs and fault runs.
+
 Waiting on dev (round 2 in `docs/NOTES_FOR_DEV.md`):
 1. **One real captured log (Parquet + JSON), sent outside git.** This is what unblocks
    everything below.

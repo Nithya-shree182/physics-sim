@@ -1,7 +1,99 @@
 # Notes for dev (simulator side), from the analysis side
 
-Written for: dev (Person A). Round 1 written 2026-11-02 and updated 2026-11-03 (sections 1–8
-below). Round 2 written 2026-11-03 after your `34fac9d` and `docs/REPLY_TO_ANALYSIS.md`.
+Written for: dev (Person A). Newest round on top. Index:
+
+| Round | Written | After |
+|---|---|---|
+| 3 | 2026-11-03 16:56 IST | first real logs, `88adebc` |
+| 2 | 2026-11-03 (earlier) | `34fac9d` and `docs/REPLY_TO_ANALYSIS.md` |
+| 1 | 2026-11-02, updated 2026-11-03 | `23822b8` |
+
+# Round 3 — complete data request (2026-11-03 16:56 IST)
+
+Thank you for `slow_reference_0kg` and `slow_reference_1p0kg`. Both pass `schema/validate.py`
+unchanged, and the first analysis is done (section A). This round is one consolidated request:
+**if you can produce everything in section C in one session and send it together, we can run
+every remaining test in one pass.** Priorities: **P1** blocks the main results, **P2** is
+needed for the report, **P3** is nice to have.
+
+## A. What the first two logs showed
+
+| Check | Result |
+|---|---|
+| Schema | both VALID (3000 rows, 182 columns) |
+| `ee_pos_*` varies, `t` aligned | yes (x moves 0.29–0.33 m; `t` starts at 0.001): R2.2 closed |
+| Residual, 0 kg | RMS 0.08–0.25 N·m; under 0.26% of limit on joints 1–4, **1.4–1.8% on joints 5–7** |
+| Residual, 1 kg | joints 2 and 4 jump to 3.1 and 4.6 N·m; wrench fz about -8.9 N |
+| Payload, 1 kg | raw 0.972 kg; the 0 kg run reads -0.028 kg; using it as tare gives 1.000 kg |
+| Detector | no false alarms on either run; no fault runs to tune on |
+
+## B. Decisions the data will make (why each item is requested)
+
+1. Is the fast-motion floor a property of the arm or of the position drive? (C1)
+2. Does the payload estimate stay right while the arm accelerates and across poses? (C2, C3)
+3. What detection delay and false-alarm rate do the detector thresholds give on real
+   faults? They were tuned on synthetic data. (C4, C5)
+4. Is the 1–2% residual on joints 5–7 a model gap or a unit/limit effect? (D1)
+
+## C. Runs to send
+
+Format for every run: Parquet + JSON manifest per `schema/telemetry_v0.yaml`, 1000 Hz,
+`position_stiff` unless stated, **sent outside git** into `data/real/`. Name files
+`<traj>_<payload>kg_<rate>hz[_<tag>]`. Keep seed, drive mode and `git_commit` in the manifest.
+
+| ID | Pri | Run | Duration | Why |
+|---|---|---|---|---|
+| C1a | P1 | Fast trajectory at 100% of joint speed limit, **effort mode** (feedforward `M qdd + C qd + g` + light PD), 0 kg | 3–5 s | decides B1 |
+| C1b | P1 | Same trajectory and seed, `position_stiff`, 0 kg | 3–5 s | direct comparison |
+| C1c | P1 | Same as C1a and C1b at 50% speed | 3–5 s each | locates the knee |
+| C2a | P1 | `excitation` (multi-sine), 0 kg | 6–10 s | payload under acceleration, tare |
+| C2b | P1 | `excitation`, 1 kg, same seed as C2a | 6–10 s | payload under acceleration |
+| C3a | P2 | Payload ladder on `slow_reference`: 0.5, 2, 3 kg (0 and 1 kg already sent) | 3 s each | linearity |
+| C3b | P2 | `hold` at three poses: home, one far from home, one near-singular (elbow almost straight), each at 0 kg and 1 kg | 2 s each | confidence gating, tare per pose |
+| C4 | P1 | Fault runs from half way, 0 kg, `slow_reference`: friction ×3 on joint 3, friction ×3 on joint 6, `stuck_joint` on joint 4, `delay` 50 ms | 6–8 s each | detector re-tuning |
+| C4b | P2 | Same faults with 1 kg payload; and `backlash` if you can inject it | 6–8 s each | payload + fault confusion |
+| C5 | P1 | One **fault-free** long run, 0 kg | 60 s or more | calibration window and noise floor |
+| C6 | P2 | Payload picked up mid-run (0 → 1 kg at about half way) | 6–8 s | payload change detection |
+| C7 | P3 | An impact or collision, if you can inject one | 5 s | spike detection |
+| C8 | P3 | `altered_waypoint` and `spoofed_setpoint` attacks (schema `attack_type`) | 6–8 s each | proposal O6 |
+| C9 | P2 | Seeds 1 and 2 of C4 and C5, if cheap | as above | spread of the results |
+
+Labelling (all in the existing schema, no change needed): set the per-row columns
+`fault_type` (`none`, `friction`, `backlash`, `stuck_joint`, `delay`), `fault_joint`
+(0–6 or -1), `fault_param`, `fault_active`, `attack_type`, `attack_active`. `fault_active`
+must flip at the true onset step, since detection delay is measured from it. For payload
+runs put the mass in the manifest `payload_kg` (already done).
+
+**Minimum set if time is short:** C1a, C1b, C2a, C2b, the four C4 runs, and C5.
+
+## D. Questions and clarifications
+
+1. **Joints 5–7 residual on the empty arm (1.4–1.8% of limit)** vs under 0.26% on joints
+   1–4. Is there a known reason (wrist inertia authored as diagonal only, finger coupling,
+   small limits)? Please send your own per-joint absolute RMS for the same run.
+2. **Which rate, speed and stiffness gave the 27.98%** in the `timing_convention` text? It
+   matches no row of the sweep table in `RESIDUAL_FLOOR.md` (30.21% at 1000 Hz, 100%).
+3. **`torque_convention` is "unverified".** Does `tau_measured` include friction? Please
+   fill this in the manifest once known.
+4. In effort mode, which signal is logged as `tau_measured`: the applied command or the
+   joint effort read back from the simulator? We need the read-back, with `tau_applied`
+   kept separate, so the residual cannot become circular.
+
+## E. Housekeeping from earlier rounds, still open
+
+- Copy `schema/` from `nithya` (R2.5): `mj_fresh` optional, manifest optional keys declared.
+- Confirm `ee_pos_*` stays correct when the arm moves fast (checked on slow motion only).
+- Keep the empty-arm URDF as the only source for the twin; the model must not know the
+  payload.
+
+## F. What we do when it arrives
+
+Validate each file; gravity check at a rest segment; residual on C1 and C2 and a decision
+on `DEFAULT_CUTOFF_HZ`; payload on C2, C3, C6 with the tare procedure; detector re-tuned on
+C4/C5 with detection delay and false-alarm rate reported next to the floor from C1; then the
+classifier and dashboard on the real labelled runs. Results go back to you as Round 4.
+
+---
 
 # Round 2 — after `34fac9d` (2026-11-03)
 

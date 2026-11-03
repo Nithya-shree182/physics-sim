@@ -2,6 +2,21 @@
 
 Newest first. Current status and next steps are in [context.md](context.md).
 
+## 2026-11-03 (evening) — first real Isaac Sim logs
+
+**Dev's `dev` branch (`88adebc`) and `data/real/`**
+- Two 3 s `slow_reference` logs at 1 kHz (0 kg and 1 kg), `position_stiff` drive, both pass
+  `schema/validate.py` unchanged (3000 rows, 182 columns).
+- Empty gripper: residual RMS 0.08–0.25 N·m on joints 1–4, 1–2% of limit on joints 5–7, so
+  the identity closes on slow motion. 1 kg: joints 2 and 4 jump to 3.1 and 4.6 N·m (as
+  predicted), wrench fz about -8.9 N.
+- Payload: 1 kg reads 0.972 kg raw; the 0 kg run reads -0.028 kg, and using that as the tare
+  gives 1.000 kg. The offset is a constant bias of the plant, so the tare must come from an
+  empty-gripper run on the same trajectory.
+- Detector: no false alarms on either run (no fault runs yet to re-tune on).
+- Tests: `tests/test_real_data.py` (schema, identity, payload, tare); skipped if `data/real/`
+  is absent. 35 pass.
+
 ## 2026-11-03 (later) â€” dev's reply reviewed, timing and schema aligned
 
 **Dev's commit `34fac9d` and `docs/REPLY_TO_ANALYSIS.md`, reviewed**
