@@ -2,6 +2,35 @@
 
 Newest first. Current status and next steps are in [context.md](context.md).
 
+## 2026-11-03 (22:27 IST) — physics and proposal test suites, dev's `44f835b` reviewed
+
+- New `tests/test_physics_model.py` (20 tests): mass matrix symmetric and positive definite,
+  `Mdot - 2C` skew-symmetric, Coriolis quadratic in velocity, torque linear in acceleration,
+  base rotation about the vertical changes nothing, gravity scaling, free-fall energy
+  conservation, work-energy theorem, friction only removes energy, forward and inverse
+  dynamics agree, Jacobian against finite-difference FK (linear and angular), a known push
+  recovered through `J^T` and the wrench conversion (proposal 7.7, maths only), the payload
+  torque at home (4.6306 N*m per kg on joint 4) from first principles, and the armature check
+  below.
+- New `tests/test_proposal_objectives.py` (15 tests), one per row of the proposal's
+  evaluation table: O1 no dropped frames (real and synthetic), O2 within 5% per joint (the
+  real 0 kg run is under 2%), O3 confidence bounds, gates and no alarm on gated rows, O4 known
+  masses 0.5 to 3 kg and the real 1 kg run, O5 detection and false-positive rate with and
+  without the gate (8 of 8 detected, 0 false alarms on 2 healthy runs, median delay 0.05 s;
+  `-s` prints the table). Full suite: 65 passed.
+- **Finding:** dev's logged mass matrix does not include armature. Its J7 diagonal matches
+  ours built without armature (difference 0.0000) and differs by exactly 0.0061 with it. The
+  residual is unaffected (the plant's dynamics do include it). Closes the lead in `setup.md`
+  section 6; raised with dev in round 5.
+- Dev's `44f835b` read: O5 injectors (`friction`, `stuck_joint`, `delay`) and a 14-run sweep
+  at 20% speed with the fault at 3 s. The runs are in `out/o5/` on dev's machine, not in git.
+  No sensor noise or backlash yet.
+- Dev's docs copied for reference into `docs/dev_reference/` (unedited copies).
+- `docs/NOTES_FOR_DEV.md`: round 5 added (tests listed, armature finding, prioritised
+  requests, questions on ETA).
+- Set up on this laptop (RTX 3050, CPU only): Miniconda, the `pal` env, real logs from `dev`,
+  and the synthetic set and confidence sweep regenerated locally (all outside git).
+
 ## 2026-11-03 (night) — setup file, dashboard plan in the repo, encoding repair
 
 - New `setup.md`: how to continue on another machine (no GPU needed; install, environment,

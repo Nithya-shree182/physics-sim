@@ -4,10 +4,107 @@ Written for: dev (Person A). Newest round on top. Index:
 
 | Round | Written | After |
 |---|---|---|
+| 5 | 2026-11-03 22:27 IST | your `44f835b` (O5 injectors) and our new test suite |
 | 4 | 2026-11-03 17:29 IST | your `docs/NOTES_FOR_NITHYA.md` (`cffda31`) |
 | 3 | 2026-11-03 16:56 IST | first real logs, `88adebc` |
 | 2 | 2026-11-03 (earlier) | `34fac9d` and `docs/REPLY_TO_ANALYSIS.md` |
 | 1 | 2026-11-02, updated 2026-11-03 | `23822b8` |
+
+# Round 5 — new test suite, one finding for you, and what we need next (2026-11-03 22:27 IST)
+
+Written for: dev (Person A). Read after your `44f835b` (O5 injectors and the 14-run sweep) and
+your `docs/NOTES_FOR_NITHYA.md`. Nothing here needs an answer before you continue your own
+list; section C is the part that does.
+
+## A. Tests we added today (35 new; the full suite is now 65 passed with `data/real/` present)
+
+All run with `python -m pytest` in the `pal` env. None needs the simulator. Files:
+`tests/test_physics_model.py` and `tests/test_proposal_objectives.py` on `nithya`.
+
+**A1. Physics of the Pinocchio model (20 tests).** Properties the equations must have whatever
+the parameters are, so a failure means a modelling bug, not a data problem.
+
+| Test | What it checks |
+|---|---|
+| mass matrix symmetric, positive definite | 20 random poses inside the joint limits |
+| `Mdot - 2C` skew-symmetric | `qd^T (Mdot - 2C) qd = 0`: C is a true Coriolis term (sign and missing-term check) |
+| Coriolis quadratic in velocity | `C(q, 3qd) = 9 C(q, qd)`, zero at rest |
+| torque linear in acceleration | the `M qdd` part only |
+| base rotation about vertical | `M` and `g` independent of q1, `g_1 = 0` |
+| gravity scaling | half gravity gives half `g`, zero gravity gives zero |
+| free fall conserves energy | no torque, no friction, RK4: `KE + PE` drift under 1e-4 |
+| work-energy theorem | energy gained equals the integral of `tau . qd dt` under an applied torque |
+| friction only removes energy | Gaz sigmoid power `tau_f . qd >= -5 mW` |
+| forward and inverse dynamics agree | `tau_model(q, qd, aba(q, qd, tau)) = tau` |
+| Jacobian against finite differences | linear rows against FK, angular rows against orientation (6 poses) |
+| known push recovered (proposal 7.7) | residual `J^T F` converted back gives `F`, at home, horizontal reach and folded, for 3 force types |
+| push recovery under torque noise | 0.05 N*m noise stays inside the 10 N per N*m gate |
+| payload torque, home | 4.6306 N*m per kg on joint 4, computed from first principles by finite differences of FK (matches your number) |
+| payload torque via Jacobian | `J_p^T (0, 0, m g)` equals the finite-difference torque at 4 random poses |
+| payload torque bounded | never above weight times reach |
+| simulator `M` has no armature | see section B (uses your real 0 kg log) |
+
+**A2. The proposal's evaluation table (15 tests).**
+
+| Objective | Pass condition | Test and result |
+|---|---|---|
+| O1 | no dropped frames | both of your real logs: row count equals the manifest, `dt` constant to 0.1%, no NaN in required columns; same on a synthetic log |
+| O2 | within 5% per joint, slow unloaded | your 0 kg run: every joint under 5% of its torque limit (it is under 2%); speed under 50% of the limit; synthetic matched plant under 0.5% |
+| O3 | suppressed near singular poses | `c` in [0, 1]; the elbow-singular pose fails both gates and home passes; the detector never alarms on a gated row |
+| O4 | error against known masses | 0.5, 1, 2, 3 kg recovered within max(5%, 30 g) after the empty-gripper tare (synthetic); your 1 kg run within 30 g after tare; the singular pose has the payload gate closed |
+| O5 | detection and false-positive rate | 4 faults (friction j3 and j6, stuck j4, 50 ms delay) x 2 seeds, plus a matched fault-free run per seed, each with and without the confidence gate. Result: 8 of 8 detected, 0 false alarms on 2 healthy runs, median delay 0.05 s. Delay is caught on the tracking channel only |
+| Validation 7.7 | applied against estimated force | in A1 (maths only; the torque-mode push in the simulator is still to do) |
+
+Caveats we state with these numbers: the synthetic plant is built from the same URDF as the
+twin, so O4 and O5 on synthetic data are optimistic; the gate made no difference on this
+fault set (the poses are well conditioned); the false-alarm sample is 2 healthy runs, far too
+few for a rate. Real numbers have to come from your logs.
+
+## B. One finding for you: your logged `M` does not include armature
+
+A lead from the first real-log look (`setup.md` section 6), now checked on `slow_reference_0kg`
+(6 sampled rows). Logged `M` diagonal minus ours:
+
+| ours built | J7 | J5 | J6 |
+|---|---|---|---|
+| **with** armature 0.0061 | -0.0061 | -0.0066 | -0.0057 |
+| **without** armature | 0.0000 | -0.0005 | +0.0004 |
+
+So `get_mass_matrices()` returns the mass matrix without the armature term. The plant's
+dynamics do include it (the torque identity only closes with `model.armature = 0.0061`), so
+**the residual is not affected**. It matters for anything that uses the logged `M`
+(`--jacobian logged`, a live `M` display, effort-mode feedforward `M qdd`). Two questions: is
+that what you expect from this API, and does the feedforward in `pal_effort_test.py` use that
+`M`? If it does, it is short by 0.0061 on every diagonal term, which could be part of the
+above-knee artifact you could not explain. The remaining difference (up to 0.009, off-diagonal)
+is consistent with authoring only the inertia diagonal (round 1, item 2b).
+
+## C. What we need from you, in order
+
+We read `44f835b`. Your next list (sensor noise, backlash, mass scaling, larger friction
+multipliers) matches what we need. Please tell us what you are doing and when.
+
+| # | Item | Why we need it | Pri |
+|---|---|---|---|
+| 1 | Your 14 O5 runs from `out/o5/` as Parquet + JSON, **outside git** (about 4 MB each), or on `dev` if you prefer | first real fault runs; we run our detector on them the day they land. Pinocchio is on our side, so there is nothing for you to run | P1 |
+| 2 | **Sensor noise** in the plant (encoder q and qd, torque), levels written to the manifest | without it repeated healthy runs are identical and no false-alarm rate exists | P1 |
+| 3 | Round 4 section C run list, still open: C2a/C2b excitation at 0 and 1 kg, C5 a 60 s fault-free run | payload in motion, calibration window | P1 |
+| 4 | `speed_fraction` in the manifest (your O5 runs are 20%) | the dashboard's 50% band is applied from it | P1 |
+| 5 | Answer to section B | closes the armature lead | P2 |
+| 6 | Friction at x8 or more on joints 6 and 3 | your table says joint 6 shows nothing in tracking; our residual channel may still see it | P2 |
+| 7 | Backlash if cheap; mass scaling as the model-mismatch layer | schema list, proposal 7.5 | P3 |
+| 8 | Live feed shape (rate, fields, frame time) and the control channel (payload, per-joint speed, fault on/off) | dashboard; round 4 section D | when ready |
+
+**What we send you:** this note, the two test files on `nithya`, and the finding in section B.
+We will run the detector on your runs and report delay and false-alarm numbers next to the
+floor.
+
+**Questions for you:** (1) What is your ETA for items 1 and 2? (2) Is anything in your O5 run
+list missing from the table above that we should plan for? (3) Do you need anything from us
+to unblock sensor noise? Our synthetic levels are q 2e-5 rad, qd 2e-3 rad/s, tau 0.05 N*m;
+you may reuse them.
+
+---
 
 # Round 4 — answers to your four questions, and what changes in the Round 3 list (2026-11-03 17:29 IST)
 
