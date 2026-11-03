@@ -4,9 +4,107 @@ Written for: dev (Person A). Newest round on top. Index:
 
 | Round | Written | After |
 |---|---|---|
+| 4 | 2026-11-03 17:29 IST | your `docs/NOTES_FOR_NITHYA.md` (`cffda31`) |
 | 3 | 2026-11-03 16:56 IST | first real logs, `88adebc` |
 | 2 | 2026-11-03 (earlier) | `34fac9d` and `docs/REPLY_TO_ANALYSIS.md` |
 | 1 | 2026-11-02, updated 2026-11-03 | `23822b8` |
+
+# Round 4 — answers to your four questions, and what changes in the Round 3 list (2026-11-03 17:29 IST)
+
+Thank you for the effort-mode test and for the correction in your section 1. Read before
+answering: we checked `data/` on `dev` and it holds the same two `slow_reference` logs we
+already analysed (0 kg and 1 kg); the Round 3 runs (section C below) are still open.
+
+## A. Answers to your section 6 questions
+
+**A1. Do the detector thresholds assume the old ~2.8% fast floor? No.** They were never
+derived from it. The detector (`observers/detector.py`) calibrates on a 3 s fault-free window
+at the start of each run and alarms when |z| > 8 for 50 consecutive steps, gated by pose.
+All constants were set on our synthetic logs, so they must be re-tuned on real fault runs;
+that is why we need your labelled runs. We discount the old 2.8% figure everywhere as you
+ask. What does follow from your corrected table: the detector's alarm band has to sit above
+the measured floor at the speed used for the run (about 0.4% of a limit at 10%, about 2% at
+50%), so we will set the band per speed, not as one number.
+
+**A2. Fault-free baselines: record them in the same sweep as the injected runs.** For every
+(trajectory, speed, payload, seed) combination that has an injected run, please also record
+the same combination with `fault_type = none`, same seed. The detector needs the matching
+healthy run for its false-alarm rate and for the calibration window; a baseline recorded
+under different conditions is not comparable. One long fault-free run (60 s or more) is still
+wanted on top, as C5.
+
+**A3. Tampered Cartesian goals (your A2): scope them out of the residual detector.** A
+spoofed or altered goal that the controller then follows faithfully produces no residual by
+construction, so no threshold can find it. We will handle it as a separate geometric check
+(commanded end-effector pose against the allowed workspace and the planned task), not in
+`detector.py`, and report it as its own result. For this we only need `ee_pos_*`,
+`q_cmd`, and the `attack_type` / `attack_active` labels you already log, with the true onset
+step. Please keep the attack runs (C8) at low priority.
+
+**A4. Speed regime: confirmed.** O2, O4 and O5 data at or below 50% of the velocity limit,
+in position mode (`asset_stock` drive), as you propose. O6 may run faster but is reported
+separately and never mixed into the detection or payload numbers. The dashboard design
+already treats 50% as the trusted band: above it, residual alarms and the load estimate are
+held and an over-speed notice is shown instead. Please record each run's speed fraction in
+the manifest (`speed_fraction`, or per joint if they differ) so we can apply the band
+automatically.
+
+## B. Reading of your effort-mode result
+
+- We take it as: `tau_measured` is the real applied torque (0.05-0.4% of a limit), so the
+  torque channel is trustworthy, and the above-knee artifact is not caused by the position
+  drive alone. Thank you; we will not ask for effort-mode datasets.
+- Your two suspects (model terms evaluated at the end-of-step state, and the
+  finite-difference `qdd`) are testable on our side with the logs we already have. We will
+  do it, so you do not need to spend time on it. If you can, log the analytic `qdd` the
+  trajectory generator used, as an optional column, so we can compare it with our finite
+  difference.
+- `torque_convention`: leave as "unverified" for now; we do not need it set to `link_side`
+  until you are sure.
+
+## C. Revised run list (replaces the priorities in Round 3 section C)
+
+Everything at or below 50% speed in `position_stiff` unless stated. Same file format and
+naming as before; `data/` on `dev` is fine as the delivery route (short runs only), larger
+files outside git.
+
+| ID | Pri | Run | Why |
+|---|---|---|---|
+| C2a/C2b | P1 | `excitation` at 0 kg and 1 kg, same seed, 6-10 s, speeds up to 50% | payload while the arm accelerates |
+| C4 | P1 | Faults from half way, 0 kg, `slow_reference`: friction x3 on joint 3, friction x3 on joint 6, **stuck joint on joint 4**, actuation delay 50 ms; each with its matching `fault_type = none` baseline (A2) | detector re-tuning |
+| C5 | P1 | One fault-free run, 60 s or more | calibration window, noise floor |
+| C3a | P2 | Payload ladder 0.5, 2, 3 kg on `slow_reference` | linearity (you verified 0.04% at rest; we want it in motion) |
+| C3b | P2 | `hold` at home, a far pose and a near-singular pose, 0 kg and 1 kg | confidence gating, tare per pose |
+| C6 | P2 | Payload picked up mid-run (0 to 1 kg) | change detection |
+| C4b | P2 | C4 faults with 1 kg held | payload and fault confusion |
+| C9 | P2 | Seeds 1 and 2 of C4 and C5 | spread |
+| C7, C8 | P3 | Impact; altered-waypoint and spoofed-setpoint attacks | spike detection; geometric check (A3) |
+| C1 | dropped | fast (>50%) trajectories in effort mode | your result answers it |
+
+Notes on your injector list: it covers link-mass scaling, actuation delay, sensor noise and
+payload variation. Please add **stuck joint** (a joint held at its current position while the
+command continues) and, if cheap, **backlash**; both are in our schema's `fault_type` list.
+Friction scaling you already have. `fault_active` must flip on the true onset step.
+
+## D. Heads-up for the dashboard (not urgent, after your feed exists)
+
+The dashboard is being designed for the live Isaac Sim feed, with a mock-load control and a
+speed control per joint that the user changes while the simulation runs. When your HTTP feed
+exists we will need a small way back: a command to set the payload mass on `panda_hand`
+(0 to 3 kg), to set a per-joint speed fraction (5-100%, we will cap it at the trusted band
+unless the user overrides), and to switch a fault injector on or off. No work needed now;
+please keep your injectors parameterised so this can be wired later, and tell us what shape
+the feed will take (rate, fields, frame time) when you know.
+
+## E. What we do next on our side
+
+1. Re-run the residual and payload analysis on any new log the day it lands.
+2. Test your two suspects for the above-knee artifact on the existing logs.
+3. Re-tune the detector per speed once the C4/C5 runs exist, and report detection delay and
+   false-alarm rate next to the floor.
+4. Build the geometric check for tampered goals (A3).
+
+---
 
 # Round 3 — complete data request (2026-11-03 16:56 IST)
 
