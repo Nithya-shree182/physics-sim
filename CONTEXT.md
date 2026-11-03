@@ -70,6 +70,8 @@ The probe scripts are kept deliberately — each one is the evidence for a claim
 | `pal_residual_diag.py` | ablation: iterations, rate, armature, stiffness |
 | `pal_selftest.py` | plant self-test: friction in N*m, identity, mid-run inertials, push recovery |
 | `pal_capture.py` | reference captures for model calibration (effort mode, matched, no noise) |
+| `pal_extra_runs.py`, `pal_o5_clean.py` | the analysis side's requested run list; noise-free twins of the key faults |
+| `pal_inertia_convention.py` | which convention `set_body_inertias` uses (full 3x3 in the link frame; evidence for the fix) |
 | `pal_validation_push.py`, `pal_o4_payload.py`, `pal_o6_benchmark.py` | validation push, payload data, trajectory benchmark |
 | `pal_o5_sweep.py` / `pal_faults.py` | O5 fault injectors and the 14-scenario sweep |
 | `pal_friction_visibility.py` | is injected friction visible in `tau_measured`? in `tau_applied`? (only the latter) |

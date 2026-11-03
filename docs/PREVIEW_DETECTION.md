@@ -1,4 +1,8 @@
-# Preview: can the injected faults be detected? (a stand-in, not the analysis side's result)
+# Preview: can the injected faults be detected? (SUPERSEDED)
+
+> **Superseded 2026-11-04 by `docs/DETECTION_RESULTS.md`, which uses the analysis side's real code and Pinocchio.** This stand-in
+> was optimistic (it caught friction x8 on all four joints; their pipeline catches none of them with the same signal), because
+> it smoothed the acceleration differently. Kept as a record and for `tools/preview_detect.py`, which still runs without Pinocchio.
 
 Written for: both people, and anyone who wants to know whether the O5 dataset is fit for purpose before the
 analysis side runs its own code.

@@ -23,3 +23,4 @@ data/*.npz
 
 # bulk run bundles for hand-over (tools/package_handover.sh); never in git
 handover/
+.venv-pal/

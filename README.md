@@ -21,7 +21,8 @@ tools/run_sim.sh pal_selftest.py                    # plant self-test; run after
 tools/pal_pipeline.sh pal_extra_runs.py out/extra   # the analysis side's requested run list       (~15 min)
 tools/check_all.sh                                  # every host-side check on existing outputs, no sim
 tools/package_handover.sh                           # one tarball of every run for the analysis side (outside git)
-.venv-tools/bin/python tools/preview_detect.py out/o5/*.parquet   # stand-in detectability preview
+git worktree add --detach /tmp/nithya origin/nithya   # then, in the Pinocchio env (see below):
+.venv-pal/bin/python tools/run_analysis_side.py --nithya /tmp/nithya --torque applied out/o5/*.parquet   # their real detector
 python3 -m unittest discover tests                  # 30 unit tests
 ```
 
@@ -54,7 +55,7 @@ All runs are **effort mode**: the arm is driven by explicit torques and `tau_app
 | `workspace/pal_kinematics.py` | independent URDF kinematics and gravity (numpy), used by the checks |
 | `workspace/pal_telemetry.py` | O1 telemetry writer in `schema/telemetry_v0.yaml` format |
 | `workspace/pal_*_test.py` and similar | one-off probes; each is the evidence for one claim in the docs |
-| `tools/` | pipeline, run watchdog, Parquet converter, `check_run.py`, `check_payload.py`, `check_push.py`, `check_all.sh`, `package_handover.sh`, `preview_detect.py` |
+| `tools/` | pipeline, run watchdog, Parquet converter, `check_run.py`, `check_payload.py`, `check_push.py`, `check_all.sh`, `package_handover.sh`, `run_analysis_side.py` (their real code on our runs), `preview_detect.py` (superseded stand-in) |
 | `tests/` | unit tests (no simulator) |
 | `data/` | short reference runs, tracked on purpose |
 | `out/` | regenerated output, git-ignored |
@@ -63,12 +64,18 @@ All runs are **effort mode**: the arm is driven by explicit torques and `tau_app
 
 1. `docs/REVIEW.md`: where the project stands against the proposal, what is proven and what is not. Start here.
    Then `docs/PROPOSAL_AMENDMENTS.md` (what the project now claims), `docs/VALIDATION.md` (the push test) and
-   `docs/PREVIEW_DETECTION.md` (can the faults be found).
+   `docs/DETECTION_RESULTS.md` (can the faults be found, with the analysis side's real code).
 2. `CONTEXT.md`: state, decisions already made, traps (read before touching the sim).
 3. `docs/RESIDUAL_FLOOR.md`: where the residual can and cannot be trusted (<= 50% of velocity limit).
 4. `docs/O5_INJECTORS.md`: the fault sweep.
 5. `docs/NOTES_FOR_NITHYA.md`: what the analysis side needs from us.
 6. `docs/OPEN_PROBLEMS.md`: history of findings; later corrections are marked at the top of an item.
+
+## Environments
+
+- `.venv-tools` (host Python): pandas, pyarrow, pyyaml. Runs the checks.
+- `.venv-pal` (Python 3.12 with Pinocchio): `uv venv --python 3.12 .venv-pal && uv pip install --python .venv-pal/bin/python pin numpy scipy pandas pyarrow pyyaml pytest`.
+  Runs the analysis side's code. Both are git-ignored.
 
 ## Three traps
 

@@ -11,9 +11,10 @@ first review found two serious defects (the plant's friction was wrong and `tau_
 not see faults); both are fixed and the fixes are verified. The repeated pattern in this project
 is that a passing check hid a problem, so this page lists what each result does and does not show.
 
-**Not done, and cannot be from this side:** running the analysis side's detector, estimator and
-Pinocchio model on this data (Pinocchio does not install on this machine), the dashboard, and the
-websocket stream and in-simulator panel.
+**Not done:** the dashboard (the analysis side's), and our websocket stream and in-simulator panel.
+**Done 2026-11-04:** Pinocchio installs here (uv, Python 3.12) and the analysis side's real detector has been run on
+our data (`docs/DETECTION_RESULTS.md`): it finds the locked joint and the 50 ms delay but not friction, because sensor
+noise amplified by the acceleration estimate sets a 1-3 N*m floor (their own synthetic data shows the same).
 
 ## Findings and their status
 
@@ -96,7 +97,7 @@ under any realistic sensor noise; the criterion should be stated against the tor
 - `tools/run_sim.sh` expects the Isaac cache in a sibling directory (`../Physyk_AI-master/.isaac-cache`).
 - The robot USD comes from Isaac's asset server, not from the repo.
 - The image needs an NVIDIA GPU and an NGC login.
-- `pip install pin` does not complete on this machine, so the analysis side's code has not been run here.
+- Pinocchio needs its own environment: `uv venv --python 3.12 .venv-pal` (the system Python 3.14 stalls pip on `pin`).
 
 ## Objective by objective, against the proposal
 
@@ -106,7 +107,7 @@ under any realistic sensor noise; the criterion should be stated against the tor
 | O2 residual | model within 5% on a slow unloaded run | simulator terms: 0.01% of limit, 0.58% of own torque (clean); URDF gravity matches independently | needs the analysis side's Pinocchio model run on `data/ref_matched_*`; fails above ~50% speed (artifact) |
 | O3 confidence | 0-1 score gating O4 and O5 | analysis side's | their rescaled score differs from the proposal's raw ratio, deliberately |
 | O4 payload | estimate converges, within a stated tolerance | known-mass data, 0.5-3 kg: 12 held runs at three poses verified to 0.02%; 4 moving runs recorded but not scored here | payload is a rigid point mass at the TCP, not a grasped object; the estimator itself is theirs |
-| O5 detection | detection and false-positive rate over a defined fault set, with and without the gate | injectors, 26 labelled runs (20 faulty, 6 healthy seeds), matched baselines, the analysis side's C-list in `out/extra` | rates need their detector run on these files (F10 limits what is findable); our stand-in preview (`PREVIEW_DETECTION.md`) catches 6 of 20 faulty runs, 0 false alarms |
+| O5 detection | detection and false-positive rate over a defined fault set, with and without the gate | injectors, 26 labelled runs, matched baselines, the C-list in `out/extra`, noise-free twins in `out/clean`; **their real detector finds 8 of 32 faulty runs (10 with the commanded acceleration), 0 false alarms in 9** | the gate was on and never fired; with-and-without-gate rates are identical here; friction is not found at x4 or below (`DETECTION_RESULTS.md`) |
 | O6 benchmark | cycle time, peak torque, energy for three styles | built and run: 26 runs, table below | single waypoint pair, two payloads; no pick-and-place with a gripper |
 | O7 presentation | streamed dashboard and in-sim panel | not built here | dashboard is theirs; stream and in-sim panel are ours and not done |
 | Validation | known force against estimate | built and run: 24 runs | strict pre-set criterion failed by 0.7 points on one run (`VALIDATION.md`) |
@@ -148,7 +149,8 @@ They also found F11 (the armature lead, and the off-diagonal inertia).
 
 ## Remaining work
 
-1. **Analysis side** (needs Pinocchio): switch the detector to `torque="applied"` and run `observers/` on `data/ref_matched_*`, `out/o5`, `out/extra`, `out/o4`; report
+1. **Analysis side:** switch the detector to `torque="applied"` and improve the acceleration estimate (the noise floor is
+   in `docs/DETECTION_RESULTS.md`); run `observers/` on the payload data `out/o4` (not yet run by anyone); report
    detection and false-positive rates with and without the gate; run the payload estimator on `out/o4`.
 2. **Ours, not done:** websocket stream of telemetry and the in-simulator panel (O7); a grasped payload
    with gripper actuation; backlash with impact dynamics; faster-motion fault sets.

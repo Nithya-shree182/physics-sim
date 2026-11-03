@@ -76,7 +76,7 @@
 > | C6 | payload picked up mid-run, 0 to 1 kg at 3 s (`payload_kg` per row flips; `payload_schedule` in the manifest) | `out/extra/c6_pickup_0to1kg` |
 > | C9 | seeds 2001 and 2002 of C4, each with its twin | `out/extra/c4_*_s2001`, `*_s2002` |
 > | C3a / C3b | payload ladder 0.5-3 kg; holds at home, horizontal reach, folded (near-singular is not included), each with a 0 kg tare | `out/o4/` |
-> | beyond your list | 26-run fault sweep (friction x2/x4/x8 on joints 2, 3, 4, 6; locked joint; backlash; delay; six healthy seeds), validation push (24 runs), O6 trajectory benchmark | `out/o5`, `out/push`, `out/o6` |
+> | beyond your list | noise-free twins of the key faults (`out/clean`, 9 runs); 26-run fault sweep (friction x2/x4/x8 on joints 2, 3, 4, 6; locked joint; backlash; delay; six healthy seeds), validation push (24 runs), O6 trajectory benchmark | `out/o5`, `out/push`, `out/o6` |
 > | not built | C7 impact (no injector); C8 attacks (out of scope by decision, see 7) | |
 >
 > Calibration data for your model: `data/ref_matched_{0kg,1kg}_1000hz.*` (tracked in git): no mass mismatch, no
@@ -89,8 +89,14 @@
 >
 > Backlash (0.02-0.12 rad) and delays up to 30 ms leave no signature in either channel at 20% speed; they are in
 > the set on purpose, so report your rate including them. A 50 ms delay makes the loop oscillate and is visible.
-> A quick numpy preview with an independent model and a copy of your detector rule is in
-> `docs/PREVIEW_DETECTION.md`; it is a stand-in, not your result.
+> **We installed Pinocchio here (uv, Python 3.12) and ran your real code, unmodified, on these runs:
+> `docs/DETECTION_RESULTS.md`** (reproduce with `tools/run_analysis_side.py`). Headline: your test suite passes and your
+> synthetic result reproduces; on our runs the detector finds the locked joint and the 50 ms delay but **not friction**, and
+> the cause is not the detector's rule but the acceleration estimate: **white noise on `qd` is differentiated into `qdd` and
+> multiplied by `M`, giving a 1-3 N*m healthy residual on joints 1-4. Your own synthetic healthy run shows the same floor
+> ([1.9, 3.9, 2.4, 3.1] N*m with your default noise).** Friction x2-x4 is 0.4-1.1 N*m and sits inside it.
+> Without sensor noise your pipeline finds friction down to x4 on the loaded joint; with our noise and `tau_applied` it finds
+> none, and with our logged `qdd_cmd` instead of a differenced `qd` it finds x8 on joints 4 and 6.
 >
 > ### 7. Attacks are out of scope
 >
@@ -99,7 +105,8 @@
 >
 > ### 8. What we still need from you
 >
-> 1. Change the detector to use `torque="applied"` on `drive_mode == "torque"` logs, and re-run on the data above.
+> 1. Change the detector to use `torque="applied"` on `drive_mode == "torque"` logs, and look at the acceleration estimate
+>    (see the finding above); then re-run on the data above. A noise-free set is in `out/clean`.
 > 2. Run `observers/` on `data/ref_matched_*` and report the residual per joint (your D1 question).
 > 3. Replace `data/real/` in the dashboard with the new reference runs.
 > 4. Tell us which noise levels you want, and the shape of the live feed you need (we have not built one; our runner

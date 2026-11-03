@@ -16,7 +16,7 @@ rc=0
 echo "== unit tests"
 "$PY" -m unittest discover tests 2>&1 | tail -3 || rc=1
 
-for d in data out/o5 out/o4 out/extra out/o6 out/push; do
+for d in data out/o5 out/o4 out/extra out/clean out/o6 out/push; do
   n=0; bad=0
   for f in "$d"/*.parquet; do
     [ -e "$f" ] || continue

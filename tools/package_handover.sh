@@ -13,7 +13,7 @@ COMMIT="$(git rev-parse --short HEAD)"
 OUT="handover"; mkdir -p "$OUT"
 STAGE="$(mktemp -d)"; trap 'rm -rf "$STAGE"' EXIT
 mkdir -p "$STAGE/pal_runs"
-for d in data out/o5 out/o4 out/extra out/push out/o6; do
+for d in data out/o5 out/o4 out/extra out/clean out/push out/o6; do
   [ -d "$d" ] || continue
   mkdir -p "$STAGE/pal_runs/$d"
   cp "$d"/*.parquet "$d"/*.json "$STAGE/pal_runs/$d/" 2>/dev/null || true
