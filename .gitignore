@@ -24,3 +24,9 @@ data/*.npz
 # bulk run bundles for hand-over (tools/package_handover.sh); never in git
 handover/
 .venv-pal/
+
+# Analysis side (merged from the nithya branch): synthetic logs alone are ~250 MB, and data/real was their local
+# copy of our old logs. Our own short reference runs in data/ stay tracked.
+data/synthetic/
+data/real/
+.pytest_cache/

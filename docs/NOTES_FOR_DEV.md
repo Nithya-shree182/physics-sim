@@ -1,0 +1,494 @@
+# Notes for dev (simulator side), from the analysis side
+
+Written for: dev (Person A). Newest round on top. Index:
+
+| Round | Written | After |
+|---|---|---|
+| 5 | 2026-11-03 22:27 IST | your `44f835b` (O5 injectors) and our new test suite |
+| 4 | 2026-11-03 17:29 IST | your `docs/NOTES_FOR_NITHYA.md` (`cffda31`) |
+| 3 | 2026-11-03 16:56 IST | first real logs, `88adebc` |
+| 2 | 2026-11-03 (earlier) | `34fac9d` and `docs/REPLY_TO_ANALYSIS.md` |
+| 1 | 2026-11-02, updated 2026-11-03 | `23822b8` |
+
+# Round 5 — new test suite, one finding for you, and what we need next (2026-11-03 22:27 IST)
+
+Written for: dev (Person A). Read after your `44f835b` (O5 injectors and the 14-run sweep) and
+your `docs/NOTES_FOR_NITHYA.md`. Nothing here needs an answer before you continue your own
+list; section C is the part that does.
+
+## A. Tests we added today (35 new; the full suite is now 65 passed with `data/real/` present)
+
+All run with `python -m pytest` in the `pal` env. None needs the simulator. Files:
+`tests/test_physics_model.py` and `tests/test_proposal_objectives.py` on `nithya`.
+
+**A1. Physics of the Pinocchio model (20 tests).** Properties the equations must have whatever
+the parameters are, so a failure means a modelling bug, not a data problem.
+
+| Test | What it checks |
+|---|---|
+| mass matrix symmetric, positive definite | 20 random poses inside the joint limits |
+| `Mdot - 2C` skew-symmetric | `qd^T (Mdot - 2C) qd = 0`: C is a true Coriolis term (sign and missing-term check) |
+| Coriolis quadratic in velocity | `C(q, 3qd) = 9 C(q, qd)`, zero at rest |
+| torque linear in acceleration | the `M qdd` part only |
+| base rotation about vertical | `M` and `g` independent of q1, `g_1 = 0` |
+| gravity scaling | half gravity gives half `g`, zero gravity gives zero |
+| free fall conserves energy | no torque, no friction, RK4: `KE + PE` drift under 1e-4 |
+| work-energy theorem | energy gained equals the integral of `tau . qd dt` under an applied torque |
+| friction only removes energy | Gaz sigmoid power `tau_f . qd >= -5 mW` |
+| forward and inverse dynamics agree | `tau_model(q, qd, aba(q, qd, tau)) = tau` |
+| Jacobian against finite differences | linear rows against FK, angular rows against orientation (6 poses) |
+| known push recovered (proposal 7.7) | residual `J^T F` converted back gives `F`, at home, horizontal reach and folded, for 3 force types |
+| push recovery under torque noise | 0.05 N*m noise stays inside the 10 N per N*m gate |
+| payload torque, home | 4.6306 N*m per kg on joint 4, computed from first principles by finite differences of FK (matches your number) |
+| payload torque via Jacobian | `J_p^T (0, 0, m g)` equals the finite-difference torque at 4 random poses |
+| payload torque bounded | never above weight times reach |
+| simulator `M` has no armature | see section B (uses your real 0 kg log) |
+
+**A2. The proposal's evaluation table (15 tests).**
+
+| Objective | Pass condition | Test and result |
+|---|---|---|
+| O1 | no dropped frames | both of your real logs: row count equals the manifest, `dt` constant to 0.1%, no NaN in required columns; same on a synthetic log |
+| O2 | within 5% per joint, slow unloaded | your 0 kg run: every joint under 5% of its torque limit (it is under 2%); speed under 50% of the limit; synthetic matched plant under 0.5% |
+| O3 | suppressed near singular poses | `c` in [0, 1]; the elbow-singular pose fails both gates and home passes; the detector never alarms on a gated row |
+| O4 | error against known masses | 0.5, 1, 2, 3 kg recovered within max(5%, 30 g) after the empty-gripper tare (synthetic); your 1 kg run within 30 g after tare; the singular pose has the payload gate closed |
+| O5 | detection and false-positive rate | 4 faults (friction j3 and j6, stuck j4, 50 ms delay) x 2 seeds, plus a matched fault-free run per seed, each with and without the confidence gate. Result: 8 of 8 detected, 0 false alarms on 2 healthy runs, median delay 0.05 s. Delay is caught on the tracking channel only |
+| Validation 7.7 | applied against estimated force | in A1 (maths only; the torque-mode push in the simulator is still to do) |
+
+Caveats we state with these numbers: the synthetic plant is built from the same URDF as the
+twin, so O4 and O5 on synthetic data are optimistic; the gate made no difference on this
+fault set (the poses are well conditioned); the false-alarm sample is 2 healthy runs, far too
+few for a rate. Real numbers have to come from your logs.
+
+## B. One finding for you: your logged `M` does not include armature
+
+A lead from the first real-log look (`setup.md` section 6), now checked on `slow_reference_0kg`
+(6 sampled rows). Logged `M` diagonal minus ours:
+
+| ours built | J7 | J5 | J6 |
+|---|---|---|---|
+| **with** armature 0.0061 | -0.0061 | -0.0066 | -0.0057 |
+| **without** armature | 0.0000 | -0.0005 | +0.0004 |
+
+So `get_mass_matrices()` returns the mass matrix without the armature term. The plant's
+dynamics do include it (the torque identity only closes with `model.armature = 0.0061`), so
+**the residual is not affected**. It matters for anything that uses the logged `M`
+(`--jacobian logged`, a live `M` display, effort-mode feedforward `M qdd`). Two questions: is
+that what you expect from this API, and does the feedforward in `pal_effort_test.py` use that
+`M`? If it does, it is short by 0.0061 on every diagonal term, which could be part of the
+above-knee artifact you could not explain. The remaining difference (up to 0.009, off-diagonal)
+is consistent with authoring only the inertia diagonal (round 1, item 2b).
+
+## C. What we need from you, in order
+
+We read `44f835b`. Your next list (sensor noise, backlash, mass scaling, larger friction
+multipliers) matches what we need. Please tell us what you are doing and when.
+
+| # | Item | Why we need it | Pri |
+|---|---|---|---|
+| 1 | Your 14 O5 runs from `out/o5/` as Parquet + JSON, **outside git** (about 4 MB each), or on `dev` if you prefer | first real fault runs; we run our detector on them the day they land. Pinocchio is on our side, so there is nothing for you to run | P1 |
+| 2 | **Sensor noise** in the plant (encoder q and qd, torque), levels written to the manifest | without it repeated healthy runs are identical and no false-alarm rate exists | P1 |
+| 3 | Round 4 section C run list, still open: C2a/C2b excitation at 0 and 1 kg, C5 a 60 s fault-free run | payload in motion, calibration window | P1 |
+| 4 | `speed_fraction` in the manifest (your O5 runs are 20%) | the dashboard's 50% band is applied from it | P1 |
+| 5 | Answer to section B | closes the armature lead | P2 |
+| 6 | Friction at x8 or more on joints 6 and 3 | your table says joint 6 shows nothing in tracking; our residual channel may still see it | P2 |
+| 7 | Backlash if cheap; mass scaling as the model-mismatch layer | schema list, proposal 7.5 | P3 |
+| 8 | Live feed shape (rate, fields, frame time) and the control channel (payload, per-joint speed, fault on/off) | dashboard; round 4 section D | when ready |
+
+**What we send you:** this note, the two test files on `nithya`, and the finding in section B.
+We will run the detector on your runs and report delay and false-alarm numbers next to the
+floor.
+
+**Questions for you:** (1) What is your ETA for items 1 and 2? (2) Is anything in your O5 run
+list missing from the table above that we should plan for? (3) Do you need anything from us
+to unblock sensor noise? Our synthetic levels are q 2e-5 rad, qd 2e-3 rad/s, tau 0.05 N*m;
+you may reuse them.
+
+---
+
+# Round 4 — answers to your four questions, and what changes in the Round 3 list (2026-11-03 17:29 IST)
+
+Thank you for the effort-mode test and for the correction in your section 1. Read before
+answering: we checked `data/` on `dev` and it holds the same two `slow_reference` logs we
+already analysed (0 kg and 1 kg); the Round 3 runs (section C below) are still open.
+
+## A. Answers to your section 6 questions
+
+**A1. Do the detector thresholds assume the old ~2.8% fast floor? No.** They were never
+derived from it. The detector (`observers/detector.py`) calibrates on a 3 s fault-free window
+at the start of each run and alarms when |z| > 8 for 50 consecutive steps, gated by pose.
+All constants were set on our synthetic logs, so they must be re-tuned on real fault runs;
+that is why we need your labelled runs. We discount the old 2.8% figure everywhere as you
+ask. What does follow from your corrected table: the detector's alarm band has to sit above
+the measured floor at the speed used for the run (about 0.4% of a limit at 10%, about 2% at
+50%), so we will set the band per speed, not as one number.
+
+**A2. Fault-free baselines: record them in the same sweep as the injected runs.** For every
+(trajectory, speed, payload, seed) combination that has an injected run, please also record
+the same combination with `fault_type = none`, same seed. The detector needs the matching
+healthy run for its false-alarm rate and for the calibration window; a baseline recorded
+under different conditions is not comparable. One long fault-free run (60 s or more) is still
+wanted on top, as C5.
+
+**A3. Tampered Cartesian goals (your A2): scope them out of the residual detector.** A
+spoofed or altered goal that the controller then follows faithfully produces no residual by
+construction, so no threshold can find it. We will handle it as a separate geometric check
+(commanded end-effector pose against the allowed workspace and the planned task), not in
+`detector.py`, and report it as its own result. For this we only need `ee_pos_*`,
+`q_cmd`, and the `attack_type` / `attack_active` labels you already log, with the true onset
+step. Please keep the attack runs (C8) at low priority.
+
+**A4. Speed regime: confirmed.** O2, O4 and O5 data at or below 50% of the velocity limit,
+in position mode (`asset_stock` drive), as you propose. O6 may run faster but is reported
+separately and never mixed into the detection or payload numbers. The dashboard design
+already treats 50% as the trusted band: above it, residual alarms and the load estimate are
+held and an over-speed notice is shown instead. Please record each run's speed fraction in
+the manifest (`speed_fraction`, or per joint if they differ) so we can apply the band
+automatically.
+
+## B. Reading of your effort-mode result
+
+- We take it as: `tau_measured` is the real applied torque (0.05-0.4% of a limit), so the
+  torque channel is trustworthy, and the above-knee artifact is not caused by the position
+  drive alone. Thank you; we will not ask for effort-mode datasets.
+- Your two suspects (model terms evaluated at the end-of-step state, and the
+  finite-difference `qdd`) are testable on our side with the logs we already have. We will
+  do it, so you do not need to spend time on it. If you can, log the analytic `qdd` the
+  trajectory generator used, as an optional column, so we can compare it with our finite
+  difference.
+- `torque_convention`: leave as "unverified" for now; we do not need it set to `link_side`
+  until you are sure.
+
+## C. Revised run list (replaces the priorities in Round 3 section C)
+
+Everything at or below 50% speed in `position_stiff` unless stated. Same file format and
+naming as before; `data/` on `dev` is fine as the delivery route (short runs only), larger
+files outside git.
+
+| ID | Pri | Run | Why |
+|---|---|---|---|
+| C2a/C2b | P1 | `excitation` at 0 kg and 1 kg, same seed, 6-10 s, speeds up to 50% | payload while the arm accelerates |
+| C4 | P1 | Faults from half way, 0 kg, `slow_reference`: friction x3 on joint 3, friction x3 on joint 6, **stuck joint on joint 4**, actuation delay 50 ms; each with its matching `fault_type = none` baseline (A2) | detector re-tuning |
+| C5 | P1 | One fault-free run, 60 s or more | calibration window, noise floor |
+| C3a | P2 | Payload ladder 0.5, 2, 3 kg on `slow_reference` | linearity (you verified 0.04% at rest; we want it in motion) |
+| C3b | P2 | `hold` at home, a far pose and a near-singular pose, 0 kg and 1 kg | confidence gating, tare per pose |
+| C6 | P2 | Payload picked up mid-run (0 to 1 kg) | change detection |
+| C4b | P2 | C4 faults with 1 kg held | payload and fault confusion |
+| C9 | P2 | Seeds 1 and 2 of C4 and C5 | spread |
+| C7, C8 | P3 | Impact; altered-waypoint and spoofed-setpoint attacks | spike detection; geometric check (A3) |
+| C1 | dropped | fast (>50%) trajectories in effort mode | your result answers it |
+
+Notes on your injector list: it covers link-mass scaling, actuation delay, sensor noise and
+payload variation. Please add **stuck joint** (a joint held at its current position while the
+command continues) and, if cheap, **backlash**; both are in our schema's `fault_type` list.
+Friction scaling you already have. `fault_active` must flip on the true onset step.
+
+## D. Heads-up for the dashboard (not urgent, after your feed exists)
+
+The dashboard is being designed for the live Isaac Sim feed, with a mock-load control and a
+speed control per joint that the user changes while the simulation runs. When your HTTP feed
+exists we will need a small way back: a command to set the payload mass on `panda_hand`
+(0 to 3 kg), to set a per-joint speed fraction (5-100%, we will cap it at the trusted band
+unless the user overrides), and to switch a fault injector on or off. No work needed now;
+please keep your injectors parameterised so this can be wired later, and tell us what shape
+the feed will take (rate, fields, frame time) when you know.
+
+## E. What we do next on our side
+
+1. Re-run the residual and payload analysis on any new log the day it lands.
+2. Test your two suspects for the above-knee artifact on the existing logs.
+3. Re-tune the detector per speed once the C4/C5 runs exist, and report detection delay and
+   false-alarm rate next to the floor.
+4. Build the geometric check for tampered goals (A3).
+
+---
+
+# Round 3 — complete data request (2026-11-03 16:56 IST)
+
+Thank you for `slow_reference_0kg` and `slow_reference_1p0kg`. Both pass `schema/validate.py`
+unchanged, and the first analysis is done (section A). This round is one consolidated request:
+**if you can produce everything in section C in one session and send it together, we can run
+every remaining test in one pass.** Priorities: **P1** blocks the main results, **P2** is
+needed for the report, **P3** is nice to have.
+
+## A. What the first two logs showed
+
+| Check | Result |
+|---|---|
+| Schema | both VALID (3000 rows, 182 columns) |
+| `ee_pos_*` varies, `t` aligned | yes (x moves 0.29–0.33 m; `t` starts at 0.001): R2.2 closed |
+| Residual, 0 kg | RMS 0.08–0.25 N·m; under 0.26% of limit on joints 1–4, **1.4–1.8% on joints 5–7** |
+| Residual, 1 kg | joints 2 and 4 jump to 3.1 and 4.6 N·m; wrench fz about -8.9 N |
+| Payload, 1 kg | raw 0.972 kg; the 0 kg run reads -0.028 kg; using it as tare gives 1.000 kg |
+| Detector | no false alarms on either run; no fault runs to tune on |
+
+## B. Decisions the data will make (why each item is requested)
+
+1. Is the fast-motion floor a property of the arm or of the position drive? (C1)
+2. Does the payload estimate stay right while the arm accelerates and across poses? (C2, C3)
+3. What detection delay and false-alarm rate do the detector thresholds give on real
+   faults? They were tuned on synthetic data. (C4, C5)
+4. Is the 1–2% residual on joints 5–7 a model gap or a unit/limit effect? (D1)
+
+## C. Runs to send
+
+Format for every run: Parquet + JSON manifest per `schema/telemetry_v0.yaml`, 1000 Hz,
+`position_stiff` unless stated, **sent outside git** into `data/real/`. Name files
+`<traj>_<payload>kg_<rate>hz[_<tag>]`. Keep seed, drive mode and `git_commit` in the manifest.
+
+| ID | Pri | Run | Duration | Why |
+|---|---|---|---|---|
+| C1a | P1 | Fast trajectory at 100% of joint speed limit, **effort mode** (feedforward `M qdd + C qd + g` + light PD), 0 kg | 3–5 s | decides B1 |
+| C1b | P1 | Same trajectory and seed, `position_stiff`, 0 kg | 3–5 s | direct comparison |
+| C1c | P1 | Same as C1a and C1b at 50% speed | 3–5 s each | locates the knee |
+| C2a | P1 | `excitation` (multi-sine), 0 kg | 6–10 s | payload under acceleration, tare |
+| C2b | P1 | `excitation`, 1 kg, same seed as C2a | 6–10 s | payload under acceleration |
+| C3a | P2 | Payload ladder on `slow_reference`: 0.5, 2, 3 kg (0 and 1 kg already sent) | 3 s each | linearity |
+| C3b | P2 | `hold` at three poses: home, one far from home, one near-singular (elbow almost straight), each at 0 kg and 1 kg | 2 s each | confidence gating, tare per pose |
+| C4 | P1 | Fault runs from half way, 0 kg, `slow_reference`: friction ×3 on joint 3, friction ×3 on joint 6, `stuck_joint` on joint 4, `delay` 50 ms | 6–8 s each | detector re-tuning |
+| C4b | P2 | Same faults with 1 kg payload; and `backlash` if you can inject it | 6–8 s each | payload + fault confusion |
+| C5 | P1 | One **fault-free** long run, 0 kg | 60 s or more | calibration window and noise floor |
+| C6 | P2 | Payload picked up mid-run (0 → 1 kg at about half way) | 6–8 s | payload change detection |
+| C7 | P3 | An impact or collision, if you can inject one | 5 s | spike detection |
+| C8 | P3 | `altered_waypoint` and `spoofed_setpoint` attacks (schema `attack_type`) | 6–8 s each | proposal O6 |
+| C9 | P2 | Seeds 1 and 2 of C4 and C5, if cheap | as above | spread of the results |
+
+Labelling (all in the existing schema, no change needed): set the per-row columns
+`fault_type` (`none`, `friction`, `backlash`, `stuck_joint`, `delay`), `fault_joint`
+(0–6 or -1), `fault_param`, `fault_active`, `attack_type`, `attack_active`. `fault_active`
+must flip at the true onset step, since detection delay is measured from it. For payload
+runs put the mass in the manifest `payload_kg` (already done).
+
+**Minimum set if time is short:** C1a, C1b, C2a, C2b, the four C4 runs, and C5.
+
+## D. Questions and clarifications
+
+1. **Joints 5–7 residual on the empty arm (1.4–1.8% of limit)** vs under 0.26% on joints
+   1–4. Is there a known reason (wrist inertia authored as diagonal only, finger coupling,
+   small limits)? Please send your own per-joint absolute RMS for the same run.
+2. **Which rate, speed and stiffness gave the 27.98%** in the `timing_convention` text? It
+   matches no row of the sweep table in `RESIDUAL_FLOOR.md` (30.21% at 1000 Hz, 100%).
+3. **`torque_convention` is "unverified".** Does `tau_measured` include friction? Please
+   fill this in the manifest once known.
+4. In effort mode, which signal is logged as `tau_measured`: the applied command or the
+   joint effort read back from the simulator? We need the read-back, with `tau_applied`
+   kept separate, so the residual cannot become circular.
+
+## E. Housekeeping from earlier rounds, still open
+
+- Copy `schema/` from `nithya` (R2.5): `mj_fresh` optional, manifest optional keys declared.
+- Confirm `ee_pos_*` stays correct when the arm moves fast (checked on slow motion only).
+- Keep the empty-arm URDF as the only source for the twin; the model must not know the
+  payload.
+
+## F. What we do when it arrives
+
+Validate each file; gravity check at a rest segment; residual on C1 and C2 and a decision
+on `DEFAULT_CUTOFF_HZ`; payload on C2, C3, C6 with the tare procedure; detector re-tuned on
+C4/C5 with detection delay and false-alarm rate reported next to the floor from C1; then the
+classifier and dashboard on the real labelled runs. Results go back to you as Round 4.
+
+---
+
+# Round 2 — after `34fac9d` (2026-11-03)
+
+Thank you for the reply; every round-1 item is now answered. Status:
+
+| # | Round-1 item | Status |
+|---|---|---|
+| 1 | Gaz friction values | Closed |
+| 2 | Arm vs URDF inertials | Closed (authored). 2a/2b follow-ups below are optional |
+| 3 | Schema + writer | Writer done on your side; **end-to-end check waiting on a real log (R2.1)** |
+| 4 | Residual sign | Closed |
+| 5 | Confidence score ownership | Closed: analysis side |
+| 6 | Payload placement | Closed: 4.6306 N·m/kg, point mass 0.1034 m along `panda_hand` z on both sides |
+| 7 | Analysis pipeline | Ready (section 7), and now reads your timing convention (R2.4) |
+| 8 | `data/` ignored | Closed |
+
+New items:
+
+**R2.1 Please send one captured run (Parquet + JSON) outside git.** `data/` is ignored on
+both branches now, so a log cannot come through the repo. A short one is enough (e.g. 2–4 s
+of `slow_reference`, and the same with a 1 kg payload). It closes your own next step 1 and
+lets the whole analysis chain run on real data for the first time.
+
+**R2.2 Two possible writer issues, from reading `pal_telemetry.py` (not from a run):**
+- `_ee_pose()` reads the hand pose from USD with `ComputeLocalToWorldTransform(0)`. While
+  physics drives the articulation through the tensor API, the USD transform may not be
+  updated every step, so `ee_pos` could stay frozen at its first value. And if the read
+  throws, it writes NaN, which `validate.py` rejects (non-nullable). Please check that
+  `ee_pos_*` changes during a moving run; if not, read the body pose from the articulation
+  instead.
+- `pal_capture.py` passes `t = k * DT` before `world.step()`, but the row holds post-step
+  values, so `t` lags the data by one step. `t = (k + 1) * DT` matches your timing note.
+
+**R2.3 Before treating the ~2.8% fast-motion floor as fundamental, one cheap test.** Your
+evidence (first order in `dt`, unaffected by solver iterations, **rising with drive
+stiffness**) fits discretization, but it also fits a narrower cause: in position mode the
+reported `tau_measured` of a stiff implicit drive may not be exactly the torque that moved
+the arm during the step. Your F8 (a 0.14 rad tracking error giving ~10 N·m against a
+400 N·m/rad drive) points the same way. The deciding run: the same 100%-of-limit trajectory
+in **effort mode**, with torques from your own `M qdd + C qd + g` as feedforward plus a light
+PD. If the floor collapses, it comes from the position drive, and O2 calibration and the O5
+datasets should be recorded in effort mode; if it stays, your conclusion stands. Also, the
+timing test's 27.98% does not match any rate in your sweep (2.78% at 1000 Hz): which rate
+and stiffness was it run at?
+
+**R2.4 The analysis side now reads your `timing_convention`.** Rows assembled after the step
+pair `tau[k]` with `(qd[k] - qd[k-1]) / dt` (backward difference); synthetic logs keep the
+forward one. We also confirmed your finding: on smooth motion a one-step pairing error is as
+small as the right pairing (both under 0.1% of a limit), so it matters only where torque
+jumps within a step (contact, fault onset).
+
+**R2.5 Small additive schema change, please copy `schema/` from `nithya`.** Still v0, nothing
+existing breaks:
+- `mj_fresh` is now a declared optional column, so it no longer triggers a warning.
+- Manifest optional keys declared: `timing_convention`, `timing`, `mj_every`,
+  `payload_attachment`, `rows`.
+- `validate.py` now errors if the manifest states no timing convention, if `mj_every > 1`
+  without an `mj_fresh` column, or if `rows` does not match the file. Your writer already
+  satisfies all three.
+
+---
+
+# Round 1 (2026-11-02, updated 2026-11-03)
+
+## At a glance (as of round 1)
+
+| # | Item | Status |
+|---|---|---|
+| 1 | Gaz friction values | **Closed.** Yours are right; our earlier "shifted" claim was wrong |
+| 2 | Simulated arm vs URDF inertials | **Resolved** by your inertial authoring. Two small follow-ups in section 2 |
+| 3 | Telemetry schema exists on `nithya`; please write the Parquet writer against it | Answered in round 2 |
+| 4 | Residual sign `tau_measured - tau_model` | **Agreed** |
+| 5 | Confidence score: analysis side owns it | Answered in round 2 |
+| 6 | Where is the payload attached? Your two docs disagree | Answered in round 2 |
+| 7 | What the analysis side has ready to wire to real logs | For your information (section 7) |
+| 8 | Add `data/` to `.gitignore` | Answered in round 2 |
+
+---
+
+## 1. Closed: your Gaz friction values are right
+
+An earlier review from our side said the Gaz arrays in `pal_config.py` were shifted by one
+joint. That was wrong. It came from `pdftotext -layout`, which misaligns Table III's row
+labels by one row; `-raw` and `-table` give exactly your values. `docs/SOURCES.md` records
+the verified table and the pitfall.
+
+## 2. Resolved: the plant is now authored from the URDF
+
+Thank you. With `AUTHOR_INERTIAL_FROM_URDF` the two engines agree at home:
+
+```
+Pinocchio (URDF)     : [0, -4.584, -0.636, 22.881, 0.623, 2.497, 0]
+Isaac Sim (authored) : [0, -4.663, -0.636, 22.954, 0.623, 2.441, 0.001]
+```
+
+Two small follow-ups, neither blocking:
+
+**2a. The remaining gap is the arm sagging, not a model difference.** In position mode the
+drive holds gravity with finite stiffness, so the arm settles slightly below home. Every
+loaded joint moves the way sag predicts:
+
+| at home | j2 | j4 | j6 | j7 |
+|---|---|---|---|---|
+| Pinocchio, exact home | -4.584 | 22.881 | 2.497 | 0 |
+| Isaac Sim (yours) | -4.663 | 22.954 | 2.441 | 0.001 |
+| Pinocchio, fully sagged at 400 N·m/rad | -5.143 | 23.069 | 2.334 | 0.004 |
+
+So compare `g(q)` at the **logged** joint angles, not at the commanded home pose. The schema
+already carries `q`; the analysis side always evaluates the model at the logged `q`.
+
+**2b. Only the inertia diagonal is authored.** `pal_scene.py` 11b passes `ixx, iyy, izz` and
+drops `ixy, ixz, iyz` (e.g. `ixz = 0.0103` on link2). We measured the effect: at most
+0.05 N·m (0.11% of a torque limit) on a fast multi-sine trajectory. So it is **not** the
+cause of P1, but it is a free accuracy gain: diagonalise each URDF tensor (eigenvectors give
+the principal-axes quaternion for `set_body_coms`, eigenvalues go to `set_body_inertias`), or
+use the 9-element form if this build accepts it.
+
+## 3. Waiting: the schema exists; please write the writer against it
+
+Your next-steps list (CONTEXT.md item 2, OPEN_PROBLEMS item 4) says to write
+`schema/telemetry_v0.yaml` and that the analysis side is blocked on it. It already exists on
+`nithya`, with `schema/validate.py`, and the whole analysis pipeline reads it. Please
+implement the Parquet writer against it rather than drafting a second one.
+
+It already encodes your findings: 1000 Hz; arm columns are `[:7]` of the 9-DOF arrays;
+Jacobian `get_jacobians()[0, 7, :, :7]` (`panda_hand`); `drive_mode` per row and in the
+manifest; residual sign `tau_measured - tau_model`.
+
+**Please confirm or change:**
+- the label columns and their allowed values (`traj_type`, `drive_mode`, `fault_type`,
+  `attack_type`)
+- our extra columns `qdd_cmd_*` (commanded acceleration) and `push_force_*` (known force for
+  the validation push)
+- how decimated `M`/`J` should be encoded if you decimate them for P4 (suggestion for v1:
+  hold the last value and add an `mj_fresh` boolean)
+- the **row timing**: which step's torque goes with which state. Synthetic logs declare
+  "tau at row k moves qd[k] to qd[k+1]" in the manifest; the residual code reads it. Stating
+  the real convention would also settle your P1 half-step hypothesis.
+
+Test any writer with `python schema/validate.py <file>.parquet`.
+
+## 4. Agreed: residual sign
+
+`r = tau_measured - tau_model`, as in the proposal (section 6) and your code.
+
+## 5. Waiting: please confirm the analysis side owns the confidence score
+
+It is built (`observers/confidence.py`), using your 0.472 m lever arm and your F6 idea:
+
+- **Scaled score** `c(q)` on `J_s = diag(1,1,1,L,L,L) J`. Raw home `c` = 0.1242 against your
+  0.1245, so the Jacobians agree. Even scaled, `c` tops out near 0.22 (99th percentile of
+  5000 random poses), so "near 1 means healthy" never happens on a 7-DOF arm; a normalised
+  display score divides by that reference.
+- **Vertical score** `c_vertical` for the payload estimate, as you proposed.
+- **Gates are physical, not percentiles:** at most 10 N of force error per N·m of torque error
+  (detector, `1/sigma_min`) and 10 N of vertical force error per N·m (payload). A workspace
+  percentile was tried first and rejected: random poses are mostly awkward, so its 5th
+  percentile let the elbow-singular probe pose through.
+
+| pose | c_norm | force gain | detector | payload |
+|---|---|---|---|---|
+| home | 0.96 | 4.8 | ok | ok |
+| near_singular_wrist | 0.88 | 6.0 | ok | ok |
+| horizontal_reach | 0.58 | 7.2 | ok | ok |
+| near_singular_extended | 0.15 | 26.7 | gated | gated |
+
+So you can drop "rescale the Jacobian, sweep the workspace" from your list.
+
+## 6. Waiting: where is the payload attached?
+
+- `PINOCCHIO_HANDOFF.md` section 7: **4.6306 N·m per kg** on joint 4.
+- `INTEGRATION.md` section 1, change for +3 kg: `[0, -9.573, 0, 14.688, 0, 2.730, 0]`, that
+  is **4.896 N·m per kg** on joint 4.
+- Synthetic plant, payload sphere 0.1034 m along `panda_hand` z (the Franka TCP):
+  `[0, -3.00, 0, 4.60, 0, 0.83, 0]` N·m per kg.
+
+Which body is it attached to, at what offset, and which of your two numbers is current? The
+mass estimate at rest does not depend on it, but the estimate during motion does
+(`PAYLOAD_OFFSET_M` in `observers/payload.py`).
+
+## 7. For your information: ready to wire to real logs
+
+All of this runs today on synthetic logs and needs only a schema-valid log from you:
+
+| file | does | synthetic result |
+|---|---|---|
+| `observers/residual.py` | `r = tau_measured - tau_model`, qdd from the manifest's timing, 20 Hz zero-phase filter, external wrench `W = -(J^T)^+ r` at `panda_hand`; refuses `tau_applied` on a position-mode log | clean plant: r = 0; 1 kg held: fz = -9.810 N |
+| `observers/confidence.py` | section 5 | |
+| `observers/payload.py` | mass from the vertical force, corrected for acceleration, held while gated, optional tare | 1 kg held, tared: 1.0012 kg |
+| `observers/detector.py` | threshold baseline on two channels: residual, and tracking error `q_cmd - q` | friction (stiction / bearing wear) on j3, stuck j4, 50 ms command delay: all detected, right joint, no false alarms on 6 fault-free runs |
+
+The command-delay case shows your A2 in practice: the residual stays quiet because the
+physics is consistent; only the tracking channel catches it.
+
+**What the analysis side needs in a real log to use all of it:** `tau_measured`, `q`, `qd`,
+`q_cmd` (the scheduled command, for the tracking channel), `drive_mode`, the row timing in the
+manifest, and, for the validation push, effort mode plus `push_force_*`.
+
+## 8. Waiting: ignore `data/`
+
+Logs go in `data/` (the synthetic set alone is about 250 MB). Your `.gitignore` covers
+`out/`, `logs/` and `__pycache__/` but not `data/`. Please add `data/`; we have not added a
+`.gitignore` on `nithya` to avoid a merge conflict with yours.

@@ -1,0 +1,16 @@
+name: pal
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pinocchio
+  - numpy
+  - scipy
+  - pandas
+  - pyarrow
+  - matplotlib
+  - plotly
+  - dash
+  - websockets
+  - pyyaml
+  - pytest
