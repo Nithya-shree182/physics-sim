@@ -129,6 +129,8 @@ fails at the *end* of a run after all the compute. `chmod 777 data out` before c
 | **Physics rate** | 1000 Hz, matching `WORK_SPLIT.md` and the real Franka loop. |
 | **Camera** | Isometric overview only. Wrist camera deliberately removed. |
 | **Inertial params** | Authored from the URDF, not inherited from the asset. |
+| **Speed regime** (decided 2026-11-03) | O2/O4/O5 record at **<= 50% of velocity limit**, where the floor is physical (< ~2% of a limit). O6 may run faster but is reported separately. |
+| **O5 scope** (decided 2026-11-03) | **Faults, not attackers.** Nobody tampers with goals or object positions. Injected: friction / wear changes, mass or payload change, actuation delay, sensor noise. Tampered-goal attacks are out of scope (A2 stays a stated limit). O5 also records how the arm copes: tracking error and motion under each fault. |
 
 Dropped from the open list at the user's direction: config format, licensing, report
 ownership.
