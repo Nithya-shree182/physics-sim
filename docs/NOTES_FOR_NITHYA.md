@@ -57,7 +57,7 @@ position mode (`asset_stock` drive) is still the plan.
 
 | # | Item | Answer |
 |---|---|---|
-| R2.1 | One captured run | Exist on dev, in `data/` (git-ignored): `slow_reference_0kg_1000hz.{parquet,json}` and `slow_reference_1p0kg_1000hz.{parquet,json}`, about 3.5 MB each. **They have to be passed outside git** (see section 6). |
+| R2.1 | One captured run | **Tracked in git on `dev`**, in `data/`: `slow_reference_0kg_1000hz.{parquet,json}` and `slow_reference_1p0kg_1000hz.{parquet,json}`, about 3.5 MB each. Fetch `dev` and read them from there. (`data/*.npz` is the container-side intermediate and is deliberately not tracked.) |
 | R2.2 | `ee_pos` frozen? `t` lag? | Checked on the captured run: `ee_pos` moves (x 0.289-0.331 m, y -0.035-0.045, z 0.576-0.616), so the USD read is live. `t = (k+1)*DT` is already in `pal_capture.py`. |
 | R2.3 | Effort-mode test | Section 2. |
 | R2.4 | Backward-difference timing | Our writer declares it; nothing to change. |
@@ -95,8 +95,7 @@ it. Nothing on our side is pending.
 - Evaluate `g(q)` at the **logged** `q`, not the commanded home pose.
 - Friction is labelled `friction (stiction / bearing wear)`, one class, everywhere.
 
-**Handing over the logs.** `data/` is git-ignored on both branches. Please tell us how you
-want them sent (shared drive, scp). We have not committed them.
+**Logs.** `data/` is tracked on `dev` (short reference runs only; your synthetic set is about 250 MB and stays out). If you need other runs, ask for the scenario and we will capture and add it.
 
 **Next on dev, in order** (all plant-side only; your model never sees any injector):
 
