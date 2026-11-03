@@ -144,6 +144,21 @@ class PandaModel:
     def ee_position(self, q, frame: str | None = None) -> np.ndarray:
         return self.ee_pose(q, frame)[0]
 
+    def point_acceleration(self, q, qd, qdd, offset_local=(0.0, 0.0, 0.0),
+                           frame: str | None = None) -> np.ndarray:
+        """World linear acceleration (m/s^2) of a point fixed in `frame` at `offset_local` (m),
+        e.g. a payload held at the TCP. Gravity is not included."""
+        fid = self.model.getFrameId(frame or self.ee_frame)
+        pin.forwardKinematics(self.model, self.data, self._q(q), self._q(qd), self._q(qdd))
+        pin.updateFramePlacements(self.model, self.data)
+        R = self.data.oMf[fid].rotation
+        p = R @ np.asarray(offset_local, dtype=float)
+        lwa = pin.ReferenceFrame.LOCAL_WORLD_ALIGNED
+        v = pin.getFrameVelocity(self.model, self.data, fid, lwa)
+        a = pin.getFrameClassicalAcceleration(self.model, self.data, fid, lwa)
+        w = v.angular
+        return a.linear + np.cross(a.angular, p) + np.cross(w, np.cross(w, p))
+
     def potential_energy(self, q) -> float:
         return float(pin.computePotentialEnergy(self.model, self.data, self._q(q)))
 

@@ -2,6 +2,93 @@
 
 Newest first. Current status and next steps are in [context.md](context.md).
 
+## 2026-11-03 (later) — dev's reply reviewed, timing and schema aligned
+
+**Dev's commit `34fac9d` and `docs/REPLY_TO_ANALYSIS.md`, reviewed**
+- Every round-1 note answered: schema and validator adopted byte-identical and a writer built
+  (`pal_telemetry.py`, `.npz` in the container, converted to Parquet on the host); the
+  manifest it writes covers all 21 required fields; confidence score confirmed ours; payload
+  placement agreed (4.6306 N·m/kg, point mass 0.1034 m along `panda_hand` z); `data/` added
+  to `.gitignore`.
+- Dev's conclusion that the fast-motion residual (~2.8% at 1 kHz) is time discretization is
+  plausible, but its stiffness dependence also fits a position-drive reporting effect; asked
+  for one effort-mode run to decide (round 2, R2.3).
+- Two possible writer issues found by reading the code: the end-effector pose read from USD
+  may be stale during physics (and its NaN fallback is invalid in the schema), and `t` lags
+  the post-step row by one step (R2.2).
+- No real log has arrived yet; asked for one outside git (R2.1).
+
+**Code**
+- `observers/residual.py`: new `backward` timing (qdd = (qd[k] - qd[k-1]) / dt) for dev's logs,
+  chosen automatically from the manifest's `timing_convention`; an unknown convention warns
+  and falls back to a central difference. Checked: on smooth motion the one-step pairing
+  barely matters (both under 0.1% of a limit), consistent with dev's measurement.
+- `schema/telemetry_v0.yaml` (still v0, additive): `mj_fresh` declared as an optional column;
+  manifest optional keys declared (`timing_convention`, `timing`, `mj_every`,
+  `payload_attachment`, `rows`).
+- `schema/validate.py`: errors when the manifest states no timing convention, when
+  `mj_every > 1` without `mj_fresh`, or when `rows` does not match the file.
+- Tests: 30 pass (new: dev timing layout, unknown-timing fallback, three schema tests).
+
+**Docs**
+- `docs/NOTES_FOR_DEV.md`: round 2 added on top (status table and items R2.1–R2.5).
+- `context.md`: conventions (row timing, payload placement, log delivery), open items, next steps.
+
+## 2026-11-03 — observers ready to wire to real logs
+
+**Dev's commit `23822b8`, reviewed**
+- The shipped `franka.usd` was dynamically a stick figure (every COM at the link origin,
+  inertia ~1e-6 kg·m², masses off by up to 4.5×). Dev now authors mass, COM and inertia from
+  `panda_arm_hand.urdf`, and the simulator's home-pose `g(q)` matches our model to a few
+  hundredths of a N·m. Our model needed no change. Dev's URDFs are identical to ours.
+- Findings sent back (`docs/NOTES_FOR_DEV.md` section 2): the small remaining gap is the arm
+  sagging in position mode (every loaded joint moves in the predicted direction), so compare
+  at the logged pose; and dev authors only the inertia diagonal, which we measured at
+  ≤ 0.05 N·m (0.11% of a limit), so it is not the cause of dev's P1.
+- Dev committed two minutes after our notes were pushed, so the schema, payload placement,
+  confidence ownership, row timing and `.gitignore` requests are still open.
+
+**New: `observers/`**
+- `residual.py`: `load_run` / `run_from_frame`, `compute_residual` with
+  `r = tau_measured - tau_model`, qdd by the manifest's timing, 20 Hz zero-phase filter
+  (`DEFAULT_CUTOFF_HZ`), external wrench `W = -(J^T)^+ r` at `panda_hand`, model or logged
+  Jacobian, and a guard refusing `tau_applied` on position-mode logs. CLI prints per-joint
+  RMS and the wrench.
+- `confidence.py`: rotational Jacobian rows scaled by 0.472 m; `c`, normalised `c_norm`,
+  vertical score `c_vertical` (dev's F6 idea), noise gains, physical gates (≤ 10 N per N·m),
+  workspace sweep. A percentile-based gate was tried first and rejected because it let the
+  elbow-singular pose through.
+- `payload.py`: mass from the residual force, corrected for the payload's acceleration, held
+  while gated, running mean with an uncertainty band, optional tare.
+- `detector.py`: threshold baseline on two channels (residual, and tracking error
+  `q_cmd - q`), gated by pose, with evaluation against the run labels.
+
+**Model**
+- `model/pinocchio_model.py`: new `point_acceleration` (world acceleration of a point fixed to
+  the hand), used by the payload estimator.
+
+**Tests**
+- New `tests/` (pytest, 25 tests) and `pytest.ini`. Two bugs found by them and fixed: the
+  logged-Jacobian option read nonexistent columns `J_0..J_41` instead of `J_<row>_<col>`; the
+  payload estimate started 3.5% low because the zero-phase filter distorts the first
+  samples and the running mean was seeded with them. Fix: the residual drops the first and
+  last 3 filter time constants, and the running mean starts as a plain average.
+
+**Results on the synthetic set**
+- Residual: exactly 0 on a clean plant; a 1 kg payload reads fz = -9.810 N.
+- Confidence: home 0.96, elbow-singular 0.15 (gated); raw home `c` 0.1242 vs dev's 0.1245.
+- Payload: exact without mismatch; with the ±3% mass mismatch, a tared 1 kg hold reads
+  1.0012 kg, a 1 kg fast trajectory 0.965 kg (motion-dependent mismatch a static tare cannot
+  remove).
+- Detector: friction (stiction / bearing wear) on joint 3 detected in 0.64 s, stuck joint 4 in
+  0.025 s, both on the right joint; a 50 ms command delay detected in 0.054 s on the tracking
+  channel only (the residual cannot see it, dev's A2); no false alarms on 6 fault-free runs.
+  Thresholds were set on this same data and must be re-tuned on real logs.
+
+**Docs**
+- `docs/NOTES_FOR_DEV.md` rewritten with an at-a-glance status table.
+- `context.md` updated: conventions, how to run, key numbers, open items, next steps.
+
 ## 2026-11-02 — friction, synthetic logs, review of dev's update
 
 **Model**
