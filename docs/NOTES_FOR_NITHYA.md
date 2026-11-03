@@ -104,22 +104,47 @@ it. Nothing on our side is pending.
 2. A sweep harness that runs every injector and writes a results table.
 3. O4 payload estimator hand-off: the chain is verified to 0.04% at rest across 0.1-3.0 kg.
 
-**Questions for you:**
+**Our four questions, answered by reading `observers/detector.py` and `WORK_SPLIT.md` on
+`nithya` (2026-11-03). Please correct anything we misread.**
 
-1. Do the detector thresholds in `observers/detector.py` assume the old ~2.8% fast floor? If
-   so they need re-deriving from the <= 50%-speed floor.
-2. Do you want fault-free baselines recorded in the same sweep as the injected runs (our
-   plan), or separately?
-3. Tampered Cartesian goals produce no residual (A2): scope them out, or add a geometric
-   check on your side?
-4. Confirm the speed regime: O2/O4/O5 at or below 50% of velocity limit, O6 allowed to go
-   faster but reported separately.
+1. *Do the detector thresholds assume the old ~2.8% fast floor?* **No.** Thresholds are
+   per-run and relative: each channel is standardised against the run's own first
+   `CALIBRATION_S = 3.0` s (z > 8, 50 consecutive steps, noise floors 0.02 N*m and 2e-4 rad).
+   Nothing in it depends on the old figure, so no re-derivation is needed. What it does need:
+   the first 3 s of every run must be fault-free and at the same speed as the rest. Our O5
+   runs are built that way (fault at 3.0 s, 20% of velocity limit). The 0.02 N*m floor is
+   the one number that could matter; it is untested against our smaller faults (section 7).
+2. *Fault-free baselines in the same sweep, or separate?* Both are covered: every run carries
+   its own healthy first 3 s for calibration, and the sweep also includes a fully healthy
+   run. One catch: our simulation is deterministic, so repeated healthy runs are identical
+   and cannot give a false-alarm *rate*. That needs sensor noise, which we have not built
+   yet (it is in `WORK_SPLIT.md` as one of our realism layers).
+3. *Tampered Cartesian goals?* **Out of scope, decided.** This project is arm faults, not an
+   attacker. `attack_type` stays `none` in our runs. Your tracking channel is still useful
+   for `delay`, which is a fault. `WORK_SPLIT.md` section 8 already lists cutting
+   command-attack scenarios as the third cut, so nothing else changes.
+4. *Speed regime?* **Confirmed: O2/O4/O5 at <= 50% of velocity limit** (our O5 runs use 20%).
+   O6 may go faster and is reported separately. Nothing in `detector.py` assumes a speed.
 
-## 7. Where to look
+Fault types: you list `backlash` in `FAULT_LABELS` and `WORK_SPLIT.md`. We have built
+`friction`, `stuck_joint` and `delay` (all in `docs/O5_INJECTORS.md`); `backlash` is not
+built yet.
+
+## 7. O5 injectors are built (first sweep)
+
+14 runs (healthy, friction x2/x4/x8 on joints 2, 4 and 6, a locked joint 4, command delay of
+10/25/50 ms), 6 s each, fault at 3 s, 20% of velocity limit. Details and the plant-response
+table are in `docs/O5_INJECTORS.md`. Short version: the injectors work, but friction at x2-x4
+barely disturbs the arm and wrist joint 6 shows nothing even at x8, so those cases rest
+entirely on your residual channel. Runs are in `out/o5/` (git-ignored, ~4 MB each); we have
+not run your detector on them because Pinocchio is not installed on our host.
+
+## 8. Where to look
 
 | | |
 |---|---|
 | corrected floor and effort-mode table | `docs/RESIDUAL_FLOOR.md` |
 | correction to the old P1 claim | `docs/OPEN_PROBLEMS.md` (P1) |
 | effort-mode test | `workspace/pal_effort_test.py`, `logs/pal_effort_test_{500,1000,2000}.log` |
+| O5 injectors and first sweep | `docs/O5_INJECTORS.md`, `workspace/pal_faults.py`, `workspace/pal_o5_sweep.py` |
 | decoupled controller rate test (no effect) | `workspace/pal_rate_decouple.py` |

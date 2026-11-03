@@ -1,0 +1,19 @@
+  14 scenarios | 6s each, fault at 3s | 1000 Hz | mj_every 10
+  scenario                    track err pre  track err post  tau rms change  joint
+  healthy                           0.0646          0.0647          +0.322  j1
+  friction_j1_2                     0.0646          0.0650          +0.323  j1
+  friction_j3_2                     0.0631          0.0634          +0.168  j3
+  friction_j5_2                     0.0623          0.0623          -0.013  j5
+  friction_j1_4                     0.0646          0.0655          +0.326  j1
+  friction_j3_4                     0.0631          0.0639          +0.164  j3
+  friction_j5_4                     0.0623          0.0623          -0.013  j5
+  friction_j1_8                     0.0646          0.1205          +1.394  j1
+  friction_j3_8                     0.0631          0.1337          +0.193  j3
+  friction_j5_8                     0.0623          0.0624          -0.013  j5
+  stuck_joint_j3_200                0.0631          0.1052          -0.103  j3
+  delay_all_10                      0.0646          0.0679          +0.324  j1
+  delay_all_25                      0.0646          0.0727          +0.327  j1
+  delay_all_50                      0.0646          0.0807          +0.333  j1
+
+  written: out/o5/summary.json and 14 runs
+[274.263s] Simulation App Shutting Down

@@ -59,6 +59,9 @@ The probe scripts are kept deliberately — each one is the evidence for a claim
 | `pal_drive_test.py` | what does tau_measured actually represent? |
 | `pal_residual_diag.py` | ablation: iterations, rate, armature, stiffness |
 | `pal_capture.py` | writes a telemetry run in the agreed schema |
+| `pal_o5_sweep.py` / `pal_faults.py` | O5 fault injectors and the 14-scenario sweep |
+| `pal_effort_test.py` | does the residual artifact survive in effort mode? (yes) |
+| `pal_rate_decouple.py` | does controller rate matter? (no) |
 | `pal_inertia_dump.py` | per-body mass / COM / inertia across all three sources |
 | `pal_author_plant.py` | authoring the plant from the URDF |
 
@@ -145,7 +148,7 @@ ownership.
 | **O2** residual | Closes at 0.15% at rest, <1% slow, <2% up to 50% of velocity limit; above it an artifact that grows with physics rate (see `docs/RESIDUAL_FLOOR.md`), not model error. Wrench conversion fixed. |
 | **O3** confidence | `c(q)` works directionally but never exceeds 0.13 anywhere; needs rescaling. Threshold is a guess. |
 | **O4** payload | Chain verified to 0.04% at rest across 0.1–3.0 kg. Estimator not built. |
-| **O5** detection | Plant now has real friction. Detector not built. |
+| **O5** detection | Fault injectors built (friction, stuck joint, delay) and a 14-run sweep recorded: `docs/O5_INJECTORS.md`. Backlash, sensor noise, mass mismatch not built. Detector is the analysis side's (`observers/detector.py` on `nithya`); not yet run on our data. |
 | **O6** benchmark | Limits in config, generators not written. |
 | **O7** dashboard | Not started. Blocked by O1 throughput at 1 kHz. |
 | Validation push | `switch_control_mode("effort")` verified to work. |
