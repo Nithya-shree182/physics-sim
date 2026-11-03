@@ -113,5 +113,6 @@
   ],
   "drive_mode": "torque",
   "payload_kg": 0.0,
-  "traj_type": "slow_reference"
+  "traj_type": "slow_reference",
+  "tau_measured_includes_friction": false
 }

@@ -12,9 +12,10 @@ not see faults); both are fixed and the fixes are verified. The repeated pattern
 is that a passing check hid a problem, so this page lists what each result does and does not show.
 
 **Not done:** the dashboard (the analysis side's), and our websocket stream and in-simulator panel.
-**Done 2026-11-04:** Pinocchio installs here (uv, Python 3.12) and the analysis side's real detector has been run on
-our data (`docs/DETECTION_RESULTS.md`): it finds the locked joint and the 50 ms delay but not friction, because sensor
-noise amplified by the acceleration estimate sets a 1-3 N*m floor (their own synthetic data shows the same).
+**Done 2026-11-04:** Pinocchio installs here (uv, Python 3.12), the analysis side's branch is merged, and their real detector has
+been run on our data (`docs/DETECTION_RESULTS.md`): with the applied torque it finds 15 of 32 faulty runs and has no false
+alarms; with `tau_measured` it finds 8 and never finds friction. (An earlier claim of a noise floor from their acceleration
+estimate was my error and is corrected there.)
 
 ## Findings and their status
 
@@ -28,15 +29,16 @@ noise amplified by the acceleration estimate sets a 1-3 N*m floor (their own syn
 | F6 | Deterministic runs, so no false-alarm statistics | **Fixed**: seeded sensor noise |
 | F7 | The 5% O2 criterion has no denominator | **Reported both ways**; the stricter reading exposes a real limit (below) |
 | F8 | Reproducibility depends on files outside the repo | **Open** |
-| F9 | The validation push first failed its pre-set tolerance | **Diagnosed; two verdicts reported** (`docs/VALIDATION.md`) |
-| F10 | Mild backlash and delay leave no measurable signature | **Open, a limit of the fault set** |
+| F9 | The validation push first failed its pre-set tolerance (15.8% with simulator terms) | **Resolved**: passes (worst 9.9%) with the independent model that includes friction; both scorings in `docs/VALIDATION.md` |
+| F10 | Mild backlash and delay leave no measurable signature | **Open**; confirmed at 20% and at 40% speed (`out/fast`), so not a speed effect |
+| F12 | The analysis side's model subtracted friction from `tau_measured`, which is net torque and has none (bias up to 0.2 N*m on payload and wrench) | **Fixed**: manifest key `tau_measured_includes_friction`; empty-arm identity now under 0.1% of every limit |
 | F11 | Only the inertia diagonal was authored (found by the analysis side); the simulator's `M` was off by up to 0.015 kg*m^2 | **Fixed and verified** against an independent mass matrix (`pal_selftest.py` T5, 0.00004 kg*m^2) |
 
 ## What each check shows
 
 | check | result | repeat with |
 |---|---|---|
-| Unit tests: injectors, noise, trajectories, URDF kinematics, mass matrix | 30 pass | `python3 -m unittest discover tests` |
+| All tests, both teams (pytest, Pinocchio env): our injectors, noise, trajectories, kinematics, mass matrix; their model physics, observers, proposal table, dashboard engine; the real-fault regression tests | 138 pass | `python3 -m unittest discover tests` |
 | Plant self-test (in the sim) | 8 of 8 | `tools/run_sim.sh pal_selftest.py` |
 | Friction is in N*m | 1.0 N*m injected reads 1.008 / 1.001 / 1.001 on joints 2, 4, 6 | self-test T2 |
 | Zero-friction identity closes | 0.004-0.008 N*m | self-test T1 |
@@ -104,13 +106,13 @@ under any realistic sensor noise; the criterion should be stated against the tor
 | | proposal asks | state | honest gap |
 |---|---|---|---|
 | O1 telemetry | every quantity each physics step, no dropped frames | all quantities per step at 1 kHz, schema-valid, row counts verified | `M` and `J` held for 10 steps between reads; recorded to file, not streamed |
-| O2 residual | model within 5% on a slow unloaded run | simulator terms: 0.01% of limit, 0.58% of own torque (clean); URDF gravity matches independently | needs the analysis side's Pinocchio model run on `data/ref_matched_*`; fails above ~50% speed (artifact) |
+| O2 residual | model within 5% on a slow unloaded run | **the independent Pinocchio model closes the clean empty-arm run to under 0.1% of every joint's limit** (`[0.007, 0.010, 0.011, 0.006, 0.076, 0.082, 0.001]` %); simulator terms 0.01%; URDF gravity matches independently | fails above ~50% speed (artifact) |
 | O3 confidence | 0-1 score gating O4 and O5 | analysis side's | their rescaled score differs from the proposal's raw ratio, deliberately |
-| O4 payload | estimate converges, within a stated tolerance | known-mass data, 0.5-3 kg: 12 held runs at three poses verified to 0.02%; 4 moving runs recorded but not scored here | payload is a rigid point mass at the TCP, not a grasped object; the estimator itself is theirs |
-| O5 detection | detection and false-positive rate over a defined fault set, with and without the gate | injectors, 26 labelled runs, matched baselines, the C-list in `out/extra`, noise-free twins in `out/clean`; **their real detector finds 8 of 32 faulty runs (10 with the commanded acceleration), 0 false alarms in 9** | the gate was on and never fired; with-and-without-gate rates are identical here; friction is not found at x4 or below (`DETECTION_RESULTS.md`) |
+| O4 payload | estimate converges, within a stated tolerance | known-mass data, 0.5-3 kg, verified to 0.02% against independent kinematics; **the analysis side's real estimator with a tare recovers all 15 loaded runs (held at three poses, and moving) to within 1.1%** (`tools/run_payload_estimator.py`); untared it reads ~0.25 kg high from the 5% mass mismatch | payload is a rigid point mass at the TCP, not a grasped object; the estimator itself is theirs |
+| O5 detection | detection and false-positive rate over a defined fault set, with and without the gate | injectors, 26 labelled runs, matched baselines, the C-list in `out/extra`, noise-free twins in `out/clean`; **their real detector finds 15 of 32 faulty runs with the applied torque (8 with `tau_measured`), 0 false alarms in 9** | the gate was on and never fired; friction is found from about x4 upward, x3 with the opt-in baseline that needs the calibration window to cover the motion (`DETECTION_RESULTS.md`) |
 | O6 benchmark | cycle time, peak torque, energy for three styles | built and run: 26 runs, table below | single waypoint pair, two payloads; no pick-and-place with a gripper |
 | O7 presentation | streamed dashboard and in-sim panel | not built here | dashboard is theirs; stream and in-sim panel are ours and not done |
-| Validation | known force against estimate | built and run: 24 runs | strict pre-set criterion failed by 0.7 points on one run (`VALIDATION.md`) |
+| Validation | known force against estimate | built and run: 24 runs; **passes with the independent model (worst 9.9% against 15%)** | with simulator terms it missed by 0.8 points on one run, cause and control in `VALIDATION.md` |
 
 ### O6 result (the proposal's headline question)
 
@@ -149,8 +151,8 @@ They also found F11 (the armature lead, and the off-diagonal inertia).
 
 ## Remaining work
 
-1. **Analysis side:** switch the detector to `torque="applied"` and improve the acceleration estimate (the noise floor is
-   in `docs/DETECTION_RESULTS.md`); run `observers/` on the payload data `out/o4` (not yet run by anyone); report
+1. **Analysis side:** run `observers/` on the payload data `out/o4` (not yet run by anyone); consider a pose-dependent calibration
+   baseline for the detector (sensitivity limit in `docs/DETECTION_RESULTS.md`); report
    detection and false-positive rates with and without the gate; run the payload estimator on `out/o4`.
 2. **Ours, not done:** websocket stream of telemetry and the in-simulator panel (O7); a grasped payload
    with gripper actuation; backlash with impact dynamics; faster-motion fault sets.

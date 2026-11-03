@@ -34,7 +34,7 @@ HERE = Path(__file__).resolve().parent
 sys.path[:0] = [str(HERE), str(HERE.parent / "model")]
 from confidence import FORCE_GAIN_MAX, conditioning  # noqa: E402
 from pinocchio_model import load_panda  # noqa: E402
-from residual import DEFAULT_CUTOFF_HZ, Residual, Run, compute_residual, load_run  # noqa: E402
+from residual import DEFAULT_CUTOFF_HZ, Residual, Run, compute_residual, fault_torque, load_run  # noqa: E402
 
 FAULT_LABELS = {
     "none": "none",
@@ -85,8 +85,49 @@ def _run_length(over: np.ndarray) -> np.ndarray:
     return out
 
 
+BASELINES = ("none", "gain", "friction")
+FRICTION_WIDTH = 0.05        # rad/s, width of the tanh(qd / width) sign feature; a plain choice, not tuned
+
+
+def recalibrate_baseline(res: Residual, mode: str = "friction", calibration_s: float = CALIBRATION_S) -> Residual:
+    """Subtract, per joint, what the calibration window says the healthy residual looks like.
+
+    The healthy residual is not white: a mass mismatch makes a part proportional to the model torque, and Coulomb friction that the
+    model only approximates makes a sign(qd) part. Both are fitted by least squares on the calibration window only (before any
+    fault, so a later fault cannot leak into the fit) and removed, which narrows the z-score's denominator.
+
+      'none'      the residual as it is
+      'gain'      r - (a * tau_model + b)
+      'friction'  r - (a * tau_model + b + c * tanh(qd / FRICTION_WIDTH))
+
+    On our 40 faulty runs 'friction' finds friction down to x3 (x2 is still missed) with no false alarm; 'gain' alone changes
+    nothing (docs/DETECTION_RESULTS.md).
+
+    CONDITION: the fit extrapolates, so it is valid only when the calibration window covers the motion the run goes on to make.
+    That holds for our repeating reference (a period of about 2 s fits in the 3 s window) and for a repeated pick-and-place cycle.
+    It does NOT hold for motion that does not repeat: on the analysis side's synthetic slow_reference (autocorrelation -0.06 at
+    3 s) it false-alarms on joint 5 with a 3 s window and is clean with 6 s or more. Hence it is opt-in.
+    """
+    import dataclasses
+    if mode not in BASELINES:
+        raise ValueError(f"baseline must be one of {BASELINES}")
+    if mode == "none":
+        return res
+    calib = ((res.t - res.t[0]) < calibration_s) & res.valid
+    r = res.r.copy()
+    for j in range(res.r.shape[1]):
+        cols = [res.tau_model[:, j], np.ones(len(res.t))]
+        if mode == "friction":
+            cols.append(np.tanh(res.qd[:, j] / FRICTION_WIDTH))
+        X = np.stack(cols, axis=1)
+        coef, *_ = np.linalg.lstsq(X[calib], res.r[calib, j], rcond=None)
+        r[:, j] = res.r[:, j] - X @ coef
+    return dataclasses.replace(res, r=r)
+
+
 def detect(run: Run, res: Residual, calibration_s: float = CALIBRATION_S, z_threshold: float = Z_THRESHOLD,
-           consecutive: int = CONSECUTIVE, force_gain_max: float = FORCE_GAIN_MAX) -> Detection:
+           consecutive: int = CONSECUTIVE, force_gain_max: float = FORCE_GAIN_MAX, baseline: str = "none") -> Detection:
+    res = recalibrate_baseline(res, baseline, calibration_s)
     t = res.t
     calib = (t - t[0]) < calibration_s
     gated = np.array([conditioning(J)["force_noise_gain"] > force_gain_max for J in res.J])
@@ -138,6 +179,12 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("parquet", type=Path, nargs="+")
     ap.add_argument("--cutoff", type=float, default=DEFAULT_CUTOFF_HZ)
+    ap.add_argument("--torque", choices=("auto", "measured", "applied"), default="auto",
+                    help="auto (default): the applied torque on effort-mode logs, where friction and locked joints show; "
+                         "measured otherwise")
+    ap.add_argument("--baseline", choices=BASELINES, default="none",
+                    help="calibration-window baseline removed before the z-score (default none, the original rule; 'friction' finds "
+                         "smaller friction faults but needs a calibration window that covers the motion, see recalibrate_baseline)")
     ap.add_argument("--z", type=float, default=Z_THRESHOLD)
     ap.add_argument("--consecutive", type=int, default=CONSECUTIVE)
     args = ap.parse_args()
@@ -146,8 +193,9 @@ def main() -> int:
     print(f"{'run':40s} {'fault':36s} {'detected':>8s} {'delay s':>8s} {'false':>6s} {'joint':>9s}  channel")
     for p in args.parquet:
         run = load_run(p)
-        det = detect(run, compute_residual(run, model, cutoff_hz=args.cutoff), z_threshold=args.z,
-                     consecutive=args.consecutive)
+        torque = fault_torque(run) if args.torque == "auto" else args.torque
+        res = compute_residual(run, model, torque=torque, cutoff_hz=args.cutoff)
+        det = detect(run, res, z_threshold=args.z, consecutive=args.consecutive, baseline=args.baseline)
         e = evaluate(run, det)
         delay = f"{e['delay_s']:.3f}" if e["delay_s"] is not None else "-"
         joint = f"{e['suspected_joint'] or '-'}/{e['true_joint'] or '-'}"

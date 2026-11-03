@@ -26,9 +26,9 @@ from poses import PROBE_POSES
 from residual import DEFAULT_CUTOFF_HZ, compute_residual, load_run, run_from_frame
 from synth_log import generate
 
-REAL = REPO_ROOT / "data" / "real"
-REAL_RUNS = [REAL / "slow_reference_0kg_1000hz.parquet", REAL / "slow_reference_1p0kg_1000hz.parquet"]
-have_real = pytest.mark.skipif(not all(p.exists() for p in REAL_RUNS), reason="data/real/ logs not present")
+REAL = REPO_ROOT / "data"        # our tracked reference runs (the old data/real/ logs were on a wrong-friction plant)
+REAL_RUNS = [REAL / "ref_matched_0kg_1000hz.parquet", REAL / "ref_matched_1kg_1000hz.parquet"]
+have_real = pytest.mark.skipif(not all(p.exists() for p in REAL_RUNS), reason="data/ref_matched_* reference runs not present")
 LIMITS = np.array([87, 87, 87, 87, 12, 12, 12.0])           # N*m, datasheet
 
 

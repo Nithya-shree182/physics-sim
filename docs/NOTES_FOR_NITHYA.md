@@ -1,5 +1,27 @@
 # Notes for nithya (analysis side), from dev (simulator side)
 
+> ## MERGED (2026-11-04): your branch is now inside `dev`; this is what changed in your files
+>
+> The two branches had no common history; they are merged (`git merge --allow-unrelated-histories`). Your code is where it was
+> (`model/`, `observers/`, `dashboard/`, `tests/`). **Edits I made to files you own, so you are not surprised:**
+>
+> | file | change | why |
+> |---|---|---|
+> | `observers/residual.py` | new `fault_torque(run)`; the model's friction term is now used only when the compared torque contains friction (`tau_applied`, or a log whose manifest says `tau_measured_includes_friction`; default True, so your synthetic logs are unchanged) | the simulator's `tau_measured` is net torque with no friction in it; subtracting modelled friction biased it by up to 0.2 N*m. The empty-arm residual is now under 0.1% of every limit |
+> | `observers/detector.py` | `--torque auto` default (applied on effort-mode logs); new opt-in `recalibrate_baseline` / `--baseline friction` | friction cannot appear in `tau_measured`; the baseline finds friction x3, valid only when the calibration window covers the motion |
+> | `tests/test_real_data.py`, `tests/test_proposal_objectives.py` | read `data/ref_matched_{0kg,1kg}` instead of the untracked `data/real/` | the old logs were on a wrong-friction plant; these tests used to skip, now they run and pass |
+> | `dashboard/engine.py`, `dashboard/app.py` | the replay reads `data/ref_matched_*`; the empty-arm RMS constants are recomputed from it | same |
+> | `context.md` | moved to `docs/ANALYSIS_CONTEXT.md` (links updated) | `context.md` and our `CONTEXT.md` collide on Windows and macOS |
+> | `docs/dev_reference/` | removed | stale copies of docs that live in `docs/` and the repo root |
+> | `.gitignore`, `README.md` | ours kept; `data/synthetic/` and `data/real/` added to the ignore list; your README was a one-line title | |
+>
+> New tests: `tests/test_real_faults.py` (the O5 findings on our runs) and `tests/test_baseline.py`. The whole suite is 138 tests; run it with
+> `.venv-pal/bin/python -m pytest -q` (environment in `README.md`). **Please pull `dev` before changing `observers/` or `dashboard/` so we do not diverge again.**
+>
+> New findings for you, all in `docs/DETECTION_RESULTS.md`: the baseline's precondition (above), backlash and short delays are not found even at 40% speed,
+> and your payload estimator recovers all 15 of our known-mass runs to within 1.1% once tared (untared it reads about 0.25 kg high, the mass mismatch).
+> Open on the dashboard: it still shows a stand-in plant or replays reference runs; it does not yet show our fault runs.
+
 > ## LATEST (2026-11-04): read this block first, it supersedes everything below
 >
 > Written after reading your rounds 3, 4 and 5 and your `0088d5e`. Short version: **one decision of yours
@@ -89,14 +111,28 @@
 >
 > Backlash (0.02-0.12 rad) and delays up to 30 ms leave no signature in either channel at 20% speed; they are in
 > the set on purpose, so report your rate including them. A 50 ms delay makes the loop oscillate and is visible.
-> **We installed Pinocchio here (uv, Python 3.12) and ran your real code, unmodified, on these runs:
-> `docs/DETECTION_RESULTS.md`** (reproduce with `tools/run_analysis_side.py`). Headline: your test suite passes and your
-> synthetic result reproduces; on our runs the detector finds the locked joint and the 50 ms delay but **not friction**, and
-> the cause is not the detector's rule but the acceleration estimate: **white noise on `qd` is differentiated into `qdd` and
-> multiplied by `M`, giving a 1-3 N*m healthy residual on joints 1-4. Your own synthetic healthy run shows the same floor
-> ([1.9, 3.9, 2.4, 3.1] N*m with your default noise).** Friction x2-x4 is 0.4-1.1 N*m and sits inside it.
-> Without sensor noise your pipeline finds friction down to x4 on the loaded joint; with our noise and `tau_applied` it finds
-> none, and with our logged `qdd_cmd` instead of a differenced `qd` it finds x8 on joints 4 and 6.
+> **We installed Pinocchio here (uv, Python 3.12) and ran your real code on these runs: `docs/DETECTION_RESULTS.md`.** Your test
+> suite passes, and your synthetic O5 result reproduces. On our runs (noise on, 5% mass mismatch) your detector, with the applied
+> torque and your own 20 Hz filter, finds **15 of 32** faulty runs and gives **0 false alarms in 9** healthy ones:
+>
+> | | applied torque | `tau_measured` |
+> |---|---|---|
+> | locked joint | 4 of 4, 0.05 s, residual channel | 4 of 4, 0.33 s, tracking only |
+> | 50 ms delay | 4 of 4, 0.6 s | 4 of 4, 0.7 s |
+> | friction x8 (joints 2, 3, 4, 6) | **4 of 4** | **0 of 4** |
+> | friction x4 | 3 of 4 (not joint 2) | 0 of 4 |
+> | friction x2, and the x3 you asked for | 0 | 0 |
+> | backlash, delays of 10 and 30 ms | 0 | 0 |
+>
+> **Correction of something we sent you earlier today:** a first version of these notes said your acceleration estimate
+> creates a 1-3 N*m noise floor. That was our mistake: our driver ran your `compute_residual` without your 20 Hz cutoff. With
+> your own settings the healthy floor is small (0.1-0.2 N*m, except joint 4 at 0.84 N*m from the mass mismatch). Please disregard
+> the earlier claim. Your detector needs no change except the torque: **`torque="applied"` for effort-mode logs** (we added
+> `residual.fault_torque` and made `detector.py` use it by default after merging the branches).
+>
+> Where it stops: friction below about 1 N*m on a joint is inside the calibration spread. A pose-dependent baseline learned in
+> the calibration window (instead of one mean and one standard deviation) is the obvious next step; it would also shrink joint
+> 4's band.
 >
 > ### 7. Attacks are out of scope
 >
@@ -105,8 +141,8 @@
 >
 > ### 8. What we still need from you
 >
-> 1. Change the detector to use `torque="applied"` on `drive_mode == "torque"` logs, and look at the acceleration estimate
->    (see the finding above); then re-run on the data above. A noise-free set is in `out/clean`.
+> 1. (Done in the merge: the detector uses the applied torque on effort-mode logs.) Look at sensitivity: friction below ~1 N*m
+>    is not found. A noise-free set is in `out/clean`.
 > 2. Run `observers/` on `data/ref_matched_*` and report the residual per joint (your D1 question).
 > 3. Replace `data/real/` in the dashboard with the new reference runs.
 > 4. Tell us which noise levels you want, and the shape of the live feed you need (we have not built one; our runner

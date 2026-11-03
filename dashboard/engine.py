@@ -6,7 +6,7 @@ Two sources produce the same kind of block (50 ms of 1 kHz physics, decimated to
                 noise, optional payload / fault) driven by a joint-impedance controller, stepped in
                 real time while the user moves the load, speed and fault controls.
                 It is NOT Isaac Sim. Replace it with dev's HTTP feed when that exists.
-  ReplaySource  one of dev's real Isaac Sim logs (data/real/), looped.
+  ReplaySource  one of our reference runs (data/ref_matched_*, tracked in git), looped.
 
 Analyzer runs the repo's own analysis code on a sliding window of blocks: observers/residual.py
 (compute_residual, 20 Hz zero-phase filter), observers/confidence.py (conditioning, gates) and the
@@ -53,7 +53,9 @@ PAYLOAD_ON_KG, PAYLOAD_OFF_KG = 0.20, 0.12
 AMP = np.array([0.4, 0.25, 0.4, 0.3, 0.5, 0.3, 0.5])         # rad, stand-in trajectory amplitudes
 # Dev's sweep (RESIDUAL_FLOOR.md): worst-joint RMS residual, % of limit, 1000 Hz position drive.
 FLOOR_TABLE = [(0.0, 0.0), (0.1, 0.43), (0.2, 0.86), (0.3, 1.27), (0.5, 2.05), (0.75, 8.79), (1.0, 30.21)]
-REAL_RMS_PCT = [0.0889, 0.263, 0.1855, 0.2528, 1.7508, 0.9288, 1.3536]   # real empty-arm log, % of limit
+# Empty-arm residual of data/ref_matched_0kg, % of each joint's limit, tau_measured against the model without friction (the
+# simulator's measured torque is net torque; see docs/REVIEW.md). The old values, from the wrong-plant log, were 0.09-1.75%.
+REAL_RMS_PCT = [0.0071, 0.0103, 0.0113, 0.006, 0.0763, 0.0815, 0.0007]
 
 
 def floor_pct(s: float) -> float:
@@ -507,7 +509,7 @@ class Engine:
                 self.twin = self.source.twin
                 self.an = Analyzer(self.twin, "forward", detector=True)
             else:
-                path = REPO / "data" / "real" / f"slow_reference_{which}_1000hz.parquet"
+                path = REPO / "data" / f"ref_matched_{which}_1000hz.parquet"      # our tracked reference runs
                 self.twin = load_panda()
                 self.source = ReplaySource(path)
                 self.an = Analyzer(self.twin, "backward", detector=False)

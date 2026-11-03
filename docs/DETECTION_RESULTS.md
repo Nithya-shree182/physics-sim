@@ -1,99 +1,140 @@
 # Detection results with the analysis side's real code
 
-Written for: both people, and whoever reports O5. Supersedes `docs/PREVIEW_DETECTION.md`, which was a stand-in
-written before Pinocchio could be installed here.
+Written for: both people, and whoever reports O5. Supersedes `docs/PREVIEW_DETECTION.md`.
+
+> **Correction, 2026-11-04.** An earlier version of this page, and the notes sent to the analysis side in `e7b25a3`, said the
+> detector was limited by a 1-3 N*m "noise floor" created by their acceleration estimate, and that it found friction only
+> at x8 on two joints. **That was wrong.** My driver called `compute_residual` without the 20 Hz low-pass that their
+> detector applies by default, so it ran their pipeline unfiltered. With their own settings the floor is small and the
+> results below hold. The driver now uses their `DEFAULT_CUTOFF_HZ` unless told otherwise. The "commanded acceleration"
+> option I tried to work around the supposed floor is removed: it was not needed.
 
 ## How this was run
 
-Pinocchio 4.1.0 installs here with `uv` (Python 3.12, as in the analysis side's `environment.yml`); the earlier failure was
-pip stalling on the Python 3.14 environment:
+Pinocchio 4.1.0 installs with `uv` (Python 3.12, as in the analysis side's `environment.yml`); the earlier failure was pip
+stalling on the system Python 3.14. After the merge their code is in this repo:
 
 ```bash
 uv venv --python 3.12 .venv-pal
 uv pip install --python .venv-pal/bin/python pin numpy scipy pandas pyarrow pyyaml pytest
-git worktree add --detach /tmp/nithya origin/nithya        # their branch, read-only; nothing of theirs is edited
-.venv-pal/bin/python tools/run_analysis_side.py --nithya /tmp/nithya --torque applied out/o5/*.parquet
+.venv-pal/bin/python -m pytest -q --ignore=tests/test_dashboard_engine.py       # both teams' tests
+.venv-pal/bin/python observers/detector.py out/o5/*.parquet                      # their detector, torque auto
+.venv-pal/bin/python tools/run_analysis_side.py --nithya . --torque applied out/o5/*.parquet
 ```
 
-Their code is imported unmodified (`observers/residual.py`, `detector.py`, `confidence.py`, `model/pinocchio_model.py`).
-Their full test suite passes in this environment (the skips are tests that need their `data/real/`), and their synthetic
-O5 result reproduces (8 of 8 faults, 0 false alarms). The pose-confidence gate is on throughout; it never fired.
+Their code is used as written: 20 Hz zero-phase filter, 3 s calibration window, alarm after |z| > 8 for 50 ms, pose gate on
+(it never fired). The only change since the merge is that the detector now picks the **applied** torque on effort-mode logs
+(`residual.fault_torque`), because `tau_measured` cannot show friction (REVIEW F2).
 
-## Result 1: their detector on our noisy runs (`out/o5` plus the C4 set, 32 faulty and 9 healthy runs)
+## Result 1: noisy runs (`out/o5` plus the C4 set: 32 faulty, 9 healthy)
 
-Sensor noise: q 2e-5 rad, qd 1e-3 rad/s, torque 0.02 N*m. Four configurations: which torque the residual uses, and which
-acceleration goes into the model (their default, a 20 Hz filtered difference of `qd`, or our logged analytic `qdd_cmd`).
+Sensor noise: q 2e-5 rad, qd 1e-3 rad/s, torque 0.02 N*m.
 
-| fault (runs) | applied, differenced qd | applied, commanded qdd | measured, differenced qd | measured, commanded qdd |
-|---|---|---|---|---|
-| locked joint 4 (4) | 4 of 4, 0.33 s, **tracking channel** | 4 of 4, 0.05 s, residual | 4 of 4, 0.33 s (tracking) | 4 of 4, 0.33 s (tracking) |
-| delay 50 ms (4) | 4 of 4, 0.7 s (tracking) | 4 of 4, 0.4 s | 4 of 4, 0.7 s | 4 of 4, 0.4 s |
-| friction x8, joints 2, 3, 4, 6 (4) | **0 of 4** | **2 of 4** (joints 4 and 6) | 0 of 4 | 0 of 4 |
-| friction x4 and x2 (8) | 0 of 8 | 0 of 8 | 0 of 8 | 0 of 8 |
-| friction x3, joints 3 and 6, three seeds (6) | **0 of 6** | 0 of 6 | 0 of 6 | 0 of 6 |
-| delay 10 and 30 ms (2); backlash (4) | 0 of 6 | 0 of 6 | 0 of 6 | 0 of 6 |
-| **all faulty runs** | **8 of 32** | **10 of 32** | 8 of 32 | 8 of 32 |
-| false alarms on healthy runs, and before onset on faulty runs | 0 of 9, 0 of 32 | 0 of 9, 0 of 32 | 0 of 9, 0 of 32 | 0 of 9, 0 of 32 |
+| fault (runs) | applied torque (now the default) | `tau_measured` (what the detector used before) |
+|---|---|---|
+| locked joint 4 (4) | **4 of 4**, 0.05 s, residual channel | 4 of 4, 0.33 s, tracking channel only |
+| delay 50 ms (4) | **4 of 4**, 0.60 s, residual | 4 of 4, 0.70 s, tracking |
+| friction x8, joints 2, 3, 4, 6 (4) | **4 of 4**, 0.05-0.47 s, right joint | **0 of 4** |
+| friction x4, joints 2, 3, 4, 6 (4) | **3 of 4** (joints 3, 4, 6; delays 0.12-0.46 s) | 0 of 4 |
+| friction x2, joints 2, 3, 4, 6 (4) | 0 of 4 | 0 of 4 |
+| friction x3, joints 3 and 6, three seeds (6) | 0 of 6 | 0 of 6 |
+| delay 10 and 30 ms (2); backlash 0.02-0.12 rad (4) | 0 of 6 | 0 of 6 |
+| **all faulty runs** | **15 of 32** | **8 of 32** |
+| false alarms: healthy runs; before onset on faulty runs | 0 of 9; 0 of 32 | 0 of 9; 0 of 32 |
 
 Reading it:
-- Locked joint and 50 ms delay are found whatever is done. They are large effects. But with their default pipeline even a
-  locked joint (about 9 N*m) is caught only by the tracking channel, at 0.33 s: the noise floor hides it from the residual.
-  With the commanded acceleration the residual catches it at 0.05 s.
-- **Friction is found only with the applied torque and a cleaner acceleration, and then only at x8 on two of four joints.**
-  With `tau_measured` it is never found, which is the evidence for the effort-mode decision, now on their real code.
-- Nothing finds friction at x4 or below, including the x3 faults the analysis side asked for.
-- Zero false alarms in 9 healthy runs, so the rule is safe, not sensitive.
-
-## Why: the residual floor is sensor noise amplified by the acceleration estimate
-
-Healthy residual RMS per joint, `tau_applied - tau_model`, through their pipeline:
-
-| data | joints 1-7, N*m |
-|---|---|
-| clean reference (no noise, no mismatch) | 0.16, 0.08, 0.09, 0.19, 0.11, 0.07, 0.12 |
-| the same clean reference with our noise added offline (no mismatch) | **1.05, 2.42, 1.57, 1.75**, 0.19, 0.24, 0.13 |
-| our healthy run (noise and 5% mass mismatch) | 1.08, 2.45, 1.60, 1.95, 0.19, 0.25, 0.13 |
-| **their own synthetic healthy run, their default noise** (qd 2e-3, torque 0.05) | **1.90, 3.91, 2.38, 3.10**, 0.31, 0.37, 0.05 |
-| their synthetic healthy run with noise off | 0.01, 0.11, 0.03, 0.12, 0.06, 0.02, 0.02 |
-| our healthy run, `qdd_cmd` instead of a differenced `qd` | 0.17, 0.17, 0.13, 0.84, 0.12, 0.09, 0.14 |
-
-So the 1-3 N*m floor on joints 1-4 is **not** the mass mismatch (rows 2 and 3 are the same) and **not** specific to our data (row
-4 is theirs, and worse). It is white noise on `qd`, differentiated and multiplied by the mass matrix. Friction x2 to x4 is 0.4
-to 1.1 N*m and sits inside it. Using the noise-free commanded acceleration lowers the floor ten-fold on joints 1-3 (last row).
+- **With `tau_measured` friction is never found, whatever its size.** That is the evidence for the effort-mode decision, now
+  on their correctly configured pipeline. With the applied torque, friction is found from about x4 upward.
+- The threshold sits between x3 and x4: x4 on joints 3, 4, 6 is found, x3 on joints 3 and 6 is not. Friction x4 on joint 2 is
+  not found at all (its base friction is the smallest, so x4 is only ~0.7 N*m).
+- Zero false alarms in 9 healthy runs: the rule is safe. Sensitivity is the limit, not noise (Result 2).
+- A locked joint is caught on the residual in 0.05 s with the applied torque; with `tau_measured` only the slower tracking
+  channel sees it.
 
 ## Result 2: the same faults without sensor noise (`out/clean`, applied torque)
 
-| fault | their pipeline (differenced qd) | with commanded qdd |
-|---|---|---|
-| friction x8, joint 2 | **yes**, 0.05 s | no |
-| friction x4, joint 2 | no | no |
-| friction x8 and x4, joint 4 | **yes** (x8 0.05 s, x4 0.78 s) | x8 yes (0.10 s), x4 no |
-| friction x2, both joints | no | no |
-| locked joint 4 | yes, 0.05 s | yes, 0.05 s |
-| delay 50 ms | yes, 0.61 s | yes, 0.39 s |
-| healthy | no false alarm | no false alarm |
+| fault | detected |
+|---|---|
+| friction x8, joint 2 | yes, 0.06 s |
+| friction x4 and x2, joint 2 | no |
+| friction x8 and x4, joint 4 | yes (0.05 s, 0.07 s) |
+| friction x2, joint 4 | no |
+| locked joint 4 | yes, 0.05 s |
+| delay 50 ms | yes, 0.60 s |
+| healthy | no false alarm |
 
-Without noise their pipeline finds friction down to x4 on the loaded joint. So the ceiling on this detector is roughly "friction
-of a few N*m"; sensor noise at our level moves it up to roughly "x8 or larger". The commanded acceleration is not a cure: it
-removes noise but brings in tracking error, so it helps in the noisy set and hurts in the noise-free one.
+Noise changes little: the detection boundary is about the same with and without it (joint 4 x4 is found at 0.07 s noise-free and
+at 0.25 s with noise). So the noise level is a weaker lever than I first said.
 
-## What follows
+## The healthy residual (applied torque, joints 1-7, N*m)
 
-For the analysis side (these are findings, not instructions):
-1. Use `torque="applied"` on `drive_mode == "torque"` logs. Without it friction is invisible. (`detector.py`'s command line
-   defaults to `measured`.)
-2. The acceleration estimate is where the sensitivity goes. A smoother or model-based estimate (fitting `q`, not
-   differencing a noisy `qd`) is worth more than any threshold change. The 8-sigma rule against a 3 s window is otherwise
-   safe (no false alarms) but only finds large faults.
-3. Their own synthetic data has the same floor, so the "8 of 8 detected" there means the synthetic faults were large.
+| data | RMS |
+|---|---|
+| clean reference, 20 Hz filter | 0.16, 0.08, 0.08, 0.18, 0.11, 0.07, 0.12 |
+| our healthy run (noise and 5% mass mismatch), 20 Hz filter | 0.16, 0.17, 0.13, **0.84**, 0.11, 0.08, 0.13 |
+| the same healthy run **without** the filter | 1.08, 2.45, 1.60, 1.95, 0.19, 0.25, 0.13 |
 
-For us: the noise level is a [CHOICE] and not identified. It decides how much of the fault set is findable. Two stances
-are defensible and both are in the data: the noisy runs (stress case) and `out/clean` plus `ref_matched_*` (noise-free). We
-should ask which noise level the analysis side wants as the main set.
+The filter matters: unfiltered, the differenced `qd` gives a 1-3 N*m floor on joints 1-4 (this is what I mistakenly reported as
+their pipeline's behaviour). Filtered, the floor is the clean one plus joint 4's mass-mismatch term (0.84 N*m, the plant's arm
+is 5% heavier than the model).
+
+## Result 3: a calibration-window baseline finds friction down to x3 (opt-in, with a condition)
+
+The healthy residual is not white: the 5% mass mismatch makes a part proportional to the model torque, and Coulomb friction that the
+model only approximates makes a sign(qd) part. `detector.recalibrate_baseline` fits those per joint on the calibration window only
+(before any fault, so a later fault cannot leak into the fit) and removes them before the z-score. `tools/try_recalibration.py`
+compares the variants on all 40 faulty runs (applied torque):
+
+| fault | original rule | gain only | **friction baseline** |
+|---|---|---|---|
+| friction x8 (6 runs) | 6 of 6 | 6 of 6 | 6 of 6 |
+| friction x4 (6) | 4 of 6 | 4 of 6 | **6 of 6** |
+| friction x3, the C4 faults (6) | 0 of 6 | 0 of 6 | **6 of 6** |
+| friction x2 (6) | 0 of 6 | 0 of 6 | 0 of 6 |
+| locked joint (5) | 5 of 5 | 5 of 5 | 5 of 5 |
+| delay, incl. 50 ms (7) | 5 of 7 | 5 of 7 | 5 of 7 |
+| backlash (4) | 0 of 4 | 0 of 4 | 0 of 4 |
+| **all faulty** | **20 of 40** | 20 of 40 | **28 of 40** |
+| false alarms, any run | 0 | 0 | 0 |
+
+No parameter is tuned on the runs (the tanh width of 0.05 rad/s is a plain choice).
+
+**The condition, found by testing it on their data.** The fit extrapolates, so it is valid only when the 3 s calibration window covers
+the motion. Our reference motion repeats about every 2 s, so it does. The analysis side's synthetic `slow_reference` does not (autocorrelation
+0.4 at 2 s, -0.06 at 3 s), and there the friction baseline **false-alarms on joint 5 in five of six healthy runs** with a 3 s window and is
+clean with 6 s or more. Hence it is **opt-in** (`--baseline friction`, `detect(..., baseline="friction")`), off by default, and it is
+the right choice for a repeated reference or pick-and-place cycle, not for motion that does not repeat.
+
+## Result 4: faster motion (`out/fast`, 40% of the velocity limit, applied torque)
+
+Does moving faster expose backlash and short delays? No:
+
+| fault | detected |
+|---|---|
+| friction x8 and x4, joint 4 | yes, 0.05 s and 0.06 s |
+| friction x2, joint 4 | no |
+| locked joint 4 | yes, 0.05 s |
+| backlash 0.02 and 0.12 rad (joints 1 and 7) | **no** |
+| delay 10 and 30 ms | **no** |
+| healthy twin | no false alarm |
+
+So backlash and short delays are not just a low-speed problem; the applied torque stays consistent with the dynamics and the tracking error stays small.
+
+**A trap worth recording.** A first version of this set ran at 50% speed. The healthy run peaked at 51.7% of the limit, just past the knee, and
+it raised a joint-6 alarm at 5.775 s; every faulty run, backlash and delay included, raised the same alarm at the same moment, and read as
+"detected". They were the healthy run's own false alarm. The set was re-run at 40%.
+
+## What limits detection now
+
+1. **Sensitivity of the 8-sigma rule**: friction below roughly 1 N*m on a joint is not found (x3 and x4 with the opt-in baseline, x4 and up without). The calibration window's own
+   spread (mass mismatch on joint 4, friction that changes sign) sets the band.
+2. **Faults the residual cannot see by construction**: backlash and delays up to 30 ms leave the applied torque consistent
+   with the dynamics, and the tracking error is too small at 20% speed (REVIEW F10).
+3. The mass-mismatch term on joint 4 inflates that joint's band; a pose-dependent baseline learned during calibration
+   would shrink it.
 
 ## Limits of this result
 
 - Our noise sigmas are representative, not measured on a real arm.
-- Their detector constants were set on synthetic data and are untuned for this plant; they plan to re-tune.
-- Backlash and short delays are not findable here by either channel (REVIEW F10); the rate has to include them.
-- One trajectory family at 20% speed, onset at 3 s, which is also the end of their 3 s calibration window.
+- Their detector constants were set on synthetic data and are untuned for this plant.
+- One trajectory family at 20% speed, fault onset at 3 s (also the end of the 3 s calibration window).

@@ -3,7 +3,7 @@
 Physics Attestation Layer: a Franka Panda digital twin in Isaac Sim that audits the arm by
 comparing measured torque against model torque. Proposal is the PDF in the repo root.
 
-Last worked: 2026-11-03. Branch `dev`. **Start with `README.md` and `docs/REVIEW.md`.** This file is the long-form
+Last worked: 2026-11-04. Branch `dev`, which now also contains the analysis side (merged from `nithya`; see `docs/README.md` and `docs/STATUS.md`). **Start with `README.md` and `docs/REVIEW.md`.** This file is the long-form
 history; where it disagrees with REVIEW.md (written later the same day), REVIEW.md wins.
 
 ---
@@ -13,7 +13,7 @@ history; where it disagrees with REVIEW.md (written later the same day), REVIEW.
 ```bash
 tools/pal_pipeline.sh pal_o5_sweep.py out/o5     # current way: sim -> Parquet -> checks (see README.md)
 tools/run_sim.sh pal_selftest.py                 # plant self-test; run after any change to the plant
-python3 -m unittest discover tests               # 30 unit tests, no simulator needed
+.venv-pal/bin/python -m pytest -q                   # all 138 tests, both teams; no simulator needed
 ```
 
 Older scripts and the notes below predate 2026-11-03 (the scene audit and early probes build the OLD plant, whose

@@ -22,37 +22,28 @@ def main():
     ap.add_argument("--nithya", type=Path, required=True)
     ap.add_argument("--torque", default="applied", choices=("applied", "measured"))
     ap.add_argument("--z", type=float, default=None)
+    ap.add_argument("--cutoff", type=float, default=None,
+                    help="low-pass cutoff in Hz (default: the analysis side's own DEFAULT_CUTOFF_HZ, as their detector uses; "
+                         "0 = unfiltered)")
     ap.add_argument("--no-gate", action="store_true")
-    ap.add_argument("--qdd", default="estimated", choices=("estimated", "commanded"),
-                    help="acceleration used in the model torque: their differenced qd (default) or our logged "
-                         "analytic qdd_cmd (noise-free; close to the true value while tracking is good)")
     ap.add_argument("parquet", nargs="+", type=Path)
     a = ap.parse_args()
     sys.path[:0] = [str(a.nithya / "observers"), str(a.nithya / "model")]
     from detector import FORCE_GAIN_MAX, Z_THRESHOLD, detect, evaluate        # noqa: E402
     from pinocchio_model import load_panda                                     # noqa: E402
-    from residual import compute_residual, load_run                            # noqa: E402
+    from residual import DEFAULT_CUTOFF_HZ, compute_residual, load_run         # noqa: E402
 
+    cutoff = DEFAULT_CUTOFF_HZ if a.cutoff is None else a.cutoff
     model = load_panda()
     kw = {"z_threshold": a.z or Z_THRESHOLD}
     if a.no_gate:
         kw["force_gain_max"] = 1e18
-    print(f"torque signal: tau_{a.torque}   qdd: {a.qdd}   gate: {'off' if a.no_gate else 'on'}   z: {kw['z_threshold']}\n")
+    print(f"torque signal: tau_{a.torque}   cutoff: {cutoff:g} Hz   gate: {'off' if a.no_gate else 'on'}   z: {kw['z_threshold']}\n")
     print(f"{'run':<34}{'fault':<36}{'detected':>9}{'delay s':>9}{'false':>7}  first alarm")
     rows = []
     for p in a.parquet:
         run = load_run(p)
-        res = compute_residual(run, model, torque=a.torque)
-        if a.qdd == "commanded":
-            import dataclasses
-            import numpy as np
-            qdd_c = run.arr("qdd_cmd")
-            tm = np.full_like(res.tau_model, np.nan)
-            for k in np.flatnonzero(res.valid):
-                tm[k] = model.tau_model(res.q[k], res.qd[k], qdd_c[k])
-            r = res.tau - tm
-            r[~res.valid] = np.nan
-            res = dataclasses.replace(res, r=r, tau_model=tm, qdd=qdd_c)
+        res = compute_residual(run, model, torque=a.torque, cutoff_hz=cutoff)
         det = detect(run, res, **kw)
         e = evaluate(run, det)
         rows.append(e)

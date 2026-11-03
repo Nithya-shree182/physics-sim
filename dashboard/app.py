@@ -64,7 +64,7 @@ def serve_layout():
             html.Div(className="brand", children=[html.B("PAL"), html.Span("Franka Panda #1", className="muted", style=dict(fontSize=13))]),
             html.Div(id="pill", className="pill"),
             dcc.RadioItems(id="source", className="radio", value="live", inline=True,
-                           options=[dict(label="Stand-in plant", value="live"), dict(label="Replay real 0 kg", value="0kg"), dict(label="Replay real 1 kg", value="1p0kg")]),
+                           options=[dict(label="Stand-in plant", value="live"), dict(label="Replay real 0 kg", value="0kg"), dict(label="Replay real 1 kg", value="1kg")]),
             html.Span(id="hdr-t", className="num", style=dict(fontSize=13, minWidth=96)),
             html.Button("Pause", id="play", n_clicks=0, className="btn", style=dict(minWidth=88)),
             html.Button("Demo", id="demo-btn", n_clicks=0, className="btn", style=dict(minWidth=88)),
@@ -329,7 +329,7 @@ def _real_pct():
     if _REAL is None:
         try:
             from residual import compute_residual, load_run
-            p = Path(__file__).resolve().parents[1] / "data" / "real" / "slow_reference_0kg_1000hz.parquet"
+            p = Path(__file__).resolve().parents[1] / "data" / "ref_matched_0kg_1000hz.parquet"
             res = compute_residual(load_run(p), E.twin if E.which == "live" else None)
             _REAL = (100 * np.sqrt(np.nanmean(res.r ** 2, axis=0)) / V.TL).tolist()
         except Exception:

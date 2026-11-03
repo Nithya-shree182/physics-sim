@@ -6,17 +6,24 @@
 #
 # Exit code 0 only if all of them pass. The push check prints a STRICT and an AMENDED verdict; the
 # STRICT one is expected to FAIL by one run (docs/VALIDATION.md), so it is reported but only the
-# AMENDED verdict and the friction-OFF control decide this script's exit code.
+# AMENDED verdict and the friction-OFF control decide this script's exit code. The independent-model scoring
+# (tools/check_push_model.py) passes the strict rule and is the estimator the proposal means.
 set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PY="$ROOT/.venv-tools/bin/python"
 cd "$ROOT"
 rc=0
 
-echo "== unit tests"
-"$PY" -m unittest discover tests 2>&1 | tail -3 || rc=1
+PYP="$ROOT/.venv-pal/bin/python"
+if [ -x "$PYP" ]; then
+  echo "== all tests, both teams (pytest, Pinocchio env)"
+  "$PYP" -m pytest -q 2>&1 | tail -3 || rc=1
+else
+  echo "== unit tests (no Pinocchio env: .venv-pal missing, so the analysis side's tests are skipped)"
+  "$PY" -m unittest discover tests 2>&1 | tail -3 || rc=1
+fi
 
-for d in data out/o5 out/o4 out/extra out/clean out/o6 out/push; do
+for d in data out/o5 out/o4 out/extra out/clean out/fast out/o6 out/push; do
   n=0; bad=0
   for f in "$d"/*.parquet; do
     [ -e "$f" ] || continue
@@ -34,6 +41,16 @@ echo "== payload data (O4)"
 echo "== validation push"
 "$PY" tools/check_push.py out/push/*.parquet | grep -E "== |runs \||STRICT|AMENDED" || true
 "$PY" tools/check_push.py out/push/*.parquet >/dev/null || rc=1
+
+if [ -x "$PYP" ] && ls out/push/push_*.parquet >/dev/null 2>&1; then
+  echo "== validation push, independent model with friction (the pre-registered 15% rule)"
+  "$PYP" tools/check_push_model.py out/push/push_*.parquet | tail -3 || rc=1
+fi
+
+if [ -x "$PYP" ] && [ -f out/o4/index.json ]; then
+  echo "== payload estimator (the analysis side's, tared) on out/o4"
+  "$PYP" tools/run_payload_estimator.py out/o4 | tail -3 || rc=1
+fi
 
 echo; [ "$rc" -eq 0 ] && echo "ALL CHECKS PASS" || echo "SOME CHECKS FAILED"
 exit $rc

@@ -172,6 +172,10 @@ class Runner:
                 "friction_values": self.p.base_friction.tolist(),
                 "friction_units": "columns: static N*m, dynamic N*m, viscous N*m*s/rad",
                 "torque_convention": cfg.TORQUE_CONVENTION, "finger_q_ref": cfg.FINGER_OPEN,
+                # Measured, not assumed (docs/REVIEW.md F2): tau_measured is the net joint torque and contains no friction;
+                # tau_applied is the commanded effort and does carry friction compensation. The analysis side uses this to
+                # decide whether its model's friction term belongs in the residual.
+                "tau_measured_includes_friction": False,
                 "plant_link_mass_scale": sc.mass_scale,
                 "control": {"mode": "effort", "law": "computed torque with the plant's own M, C, g",
                             "kp": KP_LOW if sc.gains == "low" else KP_NORMAL,

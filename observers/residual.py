@@ -52,6 +52,18 @@ TIMING_FORWARD = "tau at row k moves qd[k] to qd[k+1]"
 DEFAULT_CUTOFF_HZ = 20.0
 
 
+def fault_torque(run) -> str:
+    """Which torque the FAULT residual should use for this log.
+
+    tau_measured is the NET joint torque, which obeys Newton's law whatever produced it, so friction, backlash and a
+    locked joint cannot appear in it (measured: ~0.001 N*m with friction x8; docs/REVIEW.md F2). The torque that was
+    APPLIED does show them, and exists only in effort mode (it is zero in position mode). So: applied on effort-mode
+    logs, measured otherwise. Payload and wrench estimation keep tau_measured: an external load is in the net torque,
+    and friction (which is not) cannot contaminate it.
+    """
+    return "applied" if run.drive_mode in EFFORT_MODES else "measured"
+
+
 # ── loading ─────────────────────────────────────────────────────────────────────────────
 @dataclass
 class Run:
@@ -168,15 +180,19 @@ def compute_residual(run: Run, model: PandaModel | None = None, torque: str = "m
     qd = lowpass(run.arr("qd"), dt, cutoff_hz)
     tau = lowpass(run.arr(f"tau_{torque}"), dt, cutoff_hz)
     qdd = joint_acceleration(qd, dt, timing)
-
     n = len(q)
     tau_model = np.full((n, 7), np.nan)
     J = np.zeros((n, 6, 7))
     J_logged = (run.df[[f"J_{a}_{b}" for a in range(6) for b in range(7)]].to_numpy().reshape(n, 6, 7)
                 if jacobian == "logged" else None)
+    # Friction belongs in the model only when the torque it is compared with contains friction. The APPLIED (commanded) torque
+    # does: it has to overcome friction. The simulator's tau_measured is the NET joint torque and does not (measured,
+    # docs/REVIEW.md F2). Logs say which in the manifest; the default (True) is what the synthetic logs need, where
+    # tau_measured = tau_applied + noise.
+    include_friction = True if torque == "applied" else bool(run.manifest.get("tau_measured_includes_friction", True))
     for k in range(n):
         if np.all(np.isfinite(qdd[k])):
-            tau_model[k] = model.tau_model(q[k], qd[k], qdd[k])
+            tau_model[k] = model.tau_model(q[k], qd[k], qdd[k], include_friction=include_friction)
         J[k] = J_logged[k] if J_logged is not None else model.jacobian(q[k])
     r = tau - tau_model
     if cutoff_hz:
@@ -194,6 +210,7 @@ def compute_residual(run: Run, model: PandaModel | None = None, torque: str = "m
             W[k] = external_wrench(J[k], r[k])
 
     settings = {"torque": torque, "cutoff_hz": cutoff_hz, "timing": timing, "jacobian": jacobian,
+                "model_friction": include_friction,
                 "ee_frame": model.ee_frame, "drive_mode": run.drive_mode}
     return Residual(run.df["t"].to_numpy(), r, tau_model, tau, qdd, W, J, q, qd, settings)
 

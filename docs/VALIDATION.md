@@ -60,8 +60,25 @@ which passes.
 An earlier draft of the amended rule used a flat 1.5 N floor; that number was read off the data (the worst
 error was 1.57 N), so it was dropped in favour of the parameter-derived dead band above.
 
+## Re-scored with the independent model (2026-11-04): the strict rule passes
+
+After the analysis side's branch was merged, the same 18 realistic-friction runs were scored through their residual and wrench
+conversion (`tools/check_push_model.py`): Pinocchio model **with friction**, applied torque, 20 Hz filter, `W_ext = -(J^T)^+ r`.
+Same window, same force columns, same pre-registered rule (15%, 1.5 N off-axis, under 50% speed).
+
+| | worst magnitude error | worst off-axis | speed |
+|---|---|---|---|
+| simulator terms (no friction in them), `check_push.py` | 15.8% (one run over) | 1.29 N | 49% |
+| independent model, friction included, `check_push_model.py` | **9.9%** | **1.36 N** | 49% |
+
+All 18 runs are within 15%, so **the pre-registered criterion passes with the estimator the proposal means** (a residual against an
+independent model). The near-miss above came from scoring with simulator terms, which contain no friction. The two scorings are
+reported side by side because the second was chosen after seeing the first; the control group (friction off, 0.2%) shows the
+mathematics was never the problem.
+
 ## Conclusion for the proposal
 
-The residual-to-force conversion is mathematically exact. In practice an estimate from a realistic arm is
-good to roughly 15% or a few N, limited by static friction the model does not know about. The proposal's
+The residual-to-force conversion is mathematically exact. With a model that includes friction, a push of 10-20 N is recovered
+to within 10% (worst case 9.9%, 18 runs, three poses, three axes). With a model that ignores friction the error grows to about 16%,
+limited by static friction. The proposal's
 "agreement within tolerance" should be stated with that tolerance.

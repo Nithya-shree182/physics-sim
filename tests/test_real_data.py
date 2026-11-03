@@ -1,4 +1,5 @@
-"""Checks against dev's Isaac Sim logs in data/real/ (not committed; skipped when absent)."""
+"""Checks against the simulator's reference runs in data/ (tracked in git): ref_matched_{0kg,1kg}, slow reference, effort mode,
+no sensor noise, no mass mismatch. (These tests used to read data/real/, the old wrong-plant logs; see docs/REVIEW.md.)"""
 import numpy as np
 import pytest
 
@@ -10,11 +11,11 @@ import json
 import pandas as pd
 from validate import load_schema, validate_frame, validate_manifest
 
-REAL = REPO_ROOT / "data" / "real"
-RUN_0 = REAL / "slow_reference_0kg_1000hz.parquet"
-RUN_1 = REAL / "slow_reference_1p0kg_1000hz.parquet"
+REAL = REPO_ROOT / "data"
+RUN_0 = REAL / "ref_matched_0kg_1000hz.parquet"
+RUN_1 = REAL / "ref_matched_1kg_1000hz.parquet"
 
-pytestmark = pytest.mark.skipif(not (RUN_0.exists() and RUN_1.exists()), reason="data/real/ logs not present")
+pytestmark = pytest.mark.skipif(not (RUN_0.exists() and RUN_1.exists()), reason="data/ref_matched_* reference runs not present")
 
 
 @pytest.fixture(scope="module")
