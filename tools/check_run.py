@@ -70,6 +70,12 @@ def main():
     man = json.loads(a.parquet.with_suffix('.json').read_text())
     mass_scale = float(man.get('plant_link_mass_scale', 1.0))
     payload_col = d["payload_kg"].to_numpy(dtype=float)           # per row: a pickup changes it mid-run
+    if man.get("payload_in_dynamics_terms", True) is False:
+        # a physical cube is a separate body: the articulation's g and M do not contain it, its weight arrives as a contact load
+        loaded_rows = payload_col > 0
+        payload_col = np.zeros_like(payload_col)
+    else:
+        loaded_rows = np.zeros(len(payload_col), bool)
     payload = float(payload_col[-1])
     urdfs = {}
     def urdf_for(kg):
@@ -86,7 +92,7 @@ def main():
           f"[N*m]: {np.round(worst, 3).tolist()}  (tolerance {GRAVITY_TOL_NM})")
 
     traj_type = str(d["traj_type"].iloc[0])
-    fast = traj_type in ("trapezoidal", "s_curve", "torque_aware", "pick")
+    fast = traj_type in ("trapezoidal", "s_curve", "torque_aware")        # the O6 styles run above the 50% regime; "pick" is kept under ~40%
     lo = int(0.1 * n)
     noisy = "sensor_noise" in man
     if noisy:                                    # zero-phase 20 ms boxcar, as the analysis side filters
@@ -97,7 +103,7 @@ def main():
     qdd = np.vstack([np.zeros((1, ARM)), np.diff(qd_s, axis=0) / dt])      # backward difference
     net = np.array([M[:, :, k] @ qdd[k] + c[k] + g_sim[k] for k in range(n)])
     hi = n - (w if noisy else 0)
-    healthy_rows = ~d["fault_active"].to_numpy(dtype=bool)
+    healthy_rows = ~d["fault_active"].to_numpy(dtype=bool) & ~loaded_rows      # rows carrying a physical load are an external force
     mask = np.zeros(n, bool); mask[lo:hi] = True; mask &= healthy_rows
     res = (tm - net)[mask]
     rms_pct = 100 * np.sqrt((res ** 2).mean(axis=0)) / TAU_MAX

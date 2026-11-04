@@ -1,6 +1,6 @@
 """The O5 findings on real simulator runs, as regression tests (skipped when the runs are not present).
 
-The runs live in out/ (git-ignored, ~4 MB each); regenerate with tools/pal_pipeline.sh pal_o5_sweep.py out/o5.
+The runs live in out/ (git-ignored, ~4 MB each); regenerate with tools/pal_suite.sh o5.
 Each test states one finding from docs/DETECTION_RESULTS.md and docs/REVIEW.md.
 """
 from pathlib import Path

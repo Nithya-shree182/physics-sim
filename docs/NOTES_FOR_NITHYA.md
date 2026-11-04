@@ -1,5 +1,21 @@
 # Notes for nithya (analysis side), from dev (simulator side)
 
+> ## NEWEST (2026-11-04, evening): a real pick, a windowed simulator, and three changes to your `observers/`
+>
+> 1. **The simulator now picks up a real cube** (`docs/PICK_AND_GRIPPER.md`): IK pick-and-place in three styles, a physical table and cube, fingers
+>    that close on it. `tools/pal_suite.sh pickphys --window` shows it. Data: `out/pickphys` (15 runs), `out/pick` (modelled payload, 14), `out/o6pick`
+>    (18), `out/o3` (12, confidence poses). The cube's weight is NOT in the simulator's `M` or `g`; it arrives through contact, as in a real cell.
+> 2. **Changes I made to your code** (all in `observers/detector.py`, `observers/payload.py`; tests in `tests/test_baseline.py`, 138+ tests pass):
+>    `payload_torque_per_kg` (payload.py); `compensate_payload`, `against_reference` (healthy-run calibration on both channels, `--reference`),
+>    and an edge-safe smoothing (detector.py). **Please pull before editing `observers/`.**
+> 3. **Findings for you:** (a) a healthy pick false-alarms the default detector (the first 3 s never see the carry); subtracting the payload torque does
+>    **not** fix it; a healthy reference run of the same task does, and every fault is then found. (b) Your payload estimator is within 1-4% on the
+>    modelled payload but **25-36% low on a real 2 kg cube** (and 2-5% low at 0.5 and 1 kg); the cube's mass is verified, and a harder grip made it worse.
+>    I have not found the cause. (c) O3 passes on simulator data: the gate closes at the extended-elbow singular pose only, 44% of a pass through it.
+>    Details: `docs/DETECTION_RESULTS.md` Result 5, `docs/REVIEW.md`.
+> 4. A bug of mine you should know about: the first windowed runs were time-warped (33x motion on rendered rows). Fixed; windowed data matches
+>    headless to ~0.04 N*m.
+
 > ## MERGED (2026-11-04): your branch is now inside `dev`; this is what changed in your files
 >
 > The two branches had no common history; they are merged (`git merge --allow-unrelated-histories`). Your code is where it was
@@ -324,5 +340,5 @@ What we need from you: confirm you are happy to add an effort-mode path to `resi
 | correction to the old P1 claim | `docs/OPEN_PROBLEMS.md` (P1) |
 | effort-mode test | `workspace/pal_effort_test.py`, `logs/pal_effort_test_{500,1000,2000}.log` |
 | review, with all findings | `docs/REVIEW.md` |
-| O5 injectors and first sweep | `docs/O5_INJECTORS.md`, `workspace/pal_faults.py`, `workspace/pal_o5_sweep.py` |
+| O5 injectors and first sweep | `docs/O5_INJECTORS.md`, `workspace/pal_faults.py`, `workspace/pal_suites.py` |
 | decoupled controller rate test (no effect) | `workspace/pal_rate_decouple.py` |

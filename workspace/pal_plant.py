@@ -66,10 +66,46 @@ def base_friction():
                      cfg.FRICTION_VISCOUS * s], axis=1)
 
 
+def dress_scene(world, with_table=True):
+    """Lights, a ground plane and the camera, so a window shows something. Does not touch the arm's physics.
+
+    The ground sits at cfg.GROUND_PLANE_Z (below the base), so no pose in any suite touches it; physics is identical with and without
+    it (checked with tools/compare_runs.py)."""
+    import omni.usd
+    from pxr import Gf, UsdGeom, UsdLux
+    stage = omni.usd.get_context().get_stage()
+    L = cfg.LIGHTS
+    UsdLux.DomeLight.Define(stage, "/World/Lights/DomeLight").CreateIntensityAttr(L["dome"]["intensity"])
+    key = UsdLux.DistantLight.Define(stage, "/World/Lights/KeyLight")
+    UsdGeom.Xformable(key).AddRotateXYZOp().Set(Gf.Vec3f(*L["key"]["rotation"]))
+    key.CreateIntensityAttr(L["key"]["intensity"]); key.CreateColorAttr(Gf.Vec3f(*L["key"]["color"]))
+    world.scene.add_default_ground_plane(z_position=cfg.GROUND_PLANE_Z)
+    if not with_table:
+        return
+    table = UsdGeom.Cube.Define(stage, "/World/Table")                 # visual only: no collision, nothing touches it
+    table.CreateSizeAttr(1.0)
+    UsdGeom.Xformable(table).AddTranslateOp().Set(Gf.Vec3d(*cfg.TABLE_POSITION))
+    UsdGeom.Xformable(table).AddScaleOp().Set(Gf.Vec3f(*cfg.TABLE_SCALE))
+    table.CreateDisplayColorAttr([Gf.Vec3f(0.30, 0.33, 0.40)])
+
+
+def frame_camera():
+    """Point the viewport at the arm (the old scene's isometric three-quarter overview)."""
+    try:
+        from isaacsim.core.utils.viewports import set_camera_view
+        set_camera_view(eye=np.array(cfg.CAM_POSITION), target=np.array(cfg.CAM_LOOK_AT))
+    except Exception as e:                                   # a missing viewport (headless) is not an error
+        print(f"[view] camera not set: {e!r}", flush=True)
+
+
 class Plant:
-    def __init__(self, hz, kp=400.0, kd=80.0):
+    def __init__(self, hz, kp=400.0, kd=80.0, scene=False, gripper=False):
         self.hz, self.dt = hz, 1.0 / hz
-        self.world = World(stage_units_in_meters=1.0, physics_dt=self.dt, rendering_dt=1 / 30.0)
+        # A rendered step (world.step(render=True)) advances the simulation by rendering_dt. With the usual 1/30 s that is 33 physics
+        # steps inside ONE call, so windowed telemetry was time-warped (33x the motion on every rendered row; found 2026-11-04).
+        # In a window the rendering interval equals the physics step, so a rendered step is exactly one physics step. Headless
+        # never renders, and keeps its original value so existing runs stay bit-identical.
+        self.world = World(stage_units_in_meters=1.0, physics_dt=self.dt, rendering_dt=self.dt if scene else 1 / 30.0)
         pc = self.world.get_physics_context()
         pc.set_solver_type(cfg.SOLVER_TYPE); pc.enable_ccd(cfg.ENABLE_CCD)
         pc.enable_stablization(cfg.ENABLE_STABILIZATION); pc.set_gravity(cfg.GRAVITY)
@@ -78,9 +114,27 @@ class Plant:
         sp.CreateMinVelocityIterationCountAttr(cfg.VELOCITY_ITERATIONS)
         add_reference_to_stage(usd_path=get_assets_root_path() + cfg.ROBOT_USD_SUBPATH,
                                prim_path=cfg.ROBOT_PRIM)
+        self.gripper = gripper
+        if gripper:
+            # Physyk's recipe (and NVIDIA's franka_pick_up demo): the stock Franka asset's default gripper variant leaves the second
+            # finger undriven; "AlternateFinger" is the one meant for real physical grasping. Select it before the articulation exists.
+            import omni.usd
+            variants = omni.usd.get_context().get_stage().GetPrimAtPath(cfg.ROBOT_PRIM).GetVariantSet("Gripper")
+            if "AlternateFinger" in variants.GetVariantNames():
+                variants.SetVariantSelection("AlternateFinger")
+            print(f"[plant] gripper variant: {variants.GetVariantSelection()} (available {variants.GetVariantNames()})", flush=True)
+        if scene:
+            dress_scene(self.world, with_table=not gripper)
+        self.cell = None
+        if gripper:
+            from pal_objects import Workcell
+            self.cell = Workcell(self.world)               # a table you can touch and a cube with real mass
         self.art = Articulation(cfg.ROBOT_PRIM)
         self.world.reset(); self.art.initialize()
         self.idx = np.arange(ARM)
+        if gripper:
+            self.cell.initialize()
+            self.configure_gripper()
         self.pv = self.art._physics_view
         self.bodies = list(self.art.body_names)
         self.urdf = _urdf_inertials(cfg.URDF_PATH)
@@ -93,6 +147,23 @@ class Plant:
         self.payload_kg, self.mass_scale = 0.0, 1.0
         self.set_inertials(0.0, DEFAULT_MASS_SCALE)
         self.set_friction(self.base_friction)
+
+    # -- gripper --------------------------------------------------------------------------------------------------
+    FINGERS = np.array([7, 8])
+
+    def configure_gripper(self, kp=2400.0, kd=60.0, effort=70.0):
+        """Drive BOTH fingers. Measured on this asset: even with the AlternateFinger variant the second finger has kp = kd = effort = 0 and
+        the first only 7.2 N. A 25 mm squeeze error at kp 400 is 10 N; holding 2 kg at friction 1.05 needs ~10 N per finger plus margin and
+        the datasheet's continuous grasp force is 70 N in total. Measured: with effort = 35 the fingers squeezed with only 17.5 N each (the
+        limit is shared by the two mimicked fingers), so effort = 70 is what gives 35 N each, the datasheet's 70 N. Prismatic gains are N/m,
+        no degree conversion."""
+        self.art.set_gains(kps=np.full((1, 2), kp, np.float32), kds=np.full((1, 2), kd, np.float32), joint_indices=self.FINGERS)
+        self.art.set_max_efforts(np.full((1, 2), effort, np.float32), joint_indices=self.FINGERS)
+        self.finger_effort = effort
+
+    def set_fingers(self, each):
+        """Command both fingers to `each` metres (0.04 = open, 0 = closed on nothing); the position drive does the rest."""
+        self.art.set_joint_position_targets(np.full((1, 2), each, np.float32), joint_indices=self.FINGERS)
 
     # -- inertials ------------------------------------------------------------------------
     def set_inertials(self, payload_kg, mass_scale):
@@ -159,8 +230,10 @@ class Plant:
         self.pv.apply_forces_and_torques_at_position(f, t, None, np.array([0], dtype=np.int32), True)
 
 
-def build_plant(hz, payload_kg=0.0, mass_scale=DEFAULT_MASS_SCALE, kp=400.0, kd=80.0):
-    plant = Plant(hz, kp=kp, kd=kd)
+def build_plant(hz, payload_kg=0.0, mass_scale=DEFAULT_MASS_SCALE, kp=400.0, kd=80.0, scene=False, gripper=False):
+    plant = Plant(hz, kp=kp, kd=kd, scene=scene, gripper=gripper)
+    if scene:
+        frame_camera()
     plant.set_inertials(payload_kg, mass_scale)
     print(f"[plant] {hz:.0f} Hz | payload {payload_kg:g} kg | arm link mass scale {mass_scale:g} | "
           f"friction (N*m) static {plant.friction[:, 0].round(3).tolist()} | readbacks ok", flush=True)

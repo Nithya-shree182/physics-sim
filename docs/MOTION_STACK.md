@@ -42,7 +42,7 @@ attestation parameter**, and the transit phases have to be checked against the e
 ### 2. It decides what the telemetry schema can carry
 
 The schema wants `q_cmd`, `qd_cmd`, `qdd_cmd`. An analytic trajectory supplies all three
-exactly, which is what `pal_capture.py` writes today.
+exactly, which is what the suites in `pal_suites.py` write today.
 
 **RMPFlow supplies `q_cmd` and nothing else.** Getting `qd_cmd`/`qdd_cmd` means
 differentiating the command stream, which reintroduces the finite-difference noise we

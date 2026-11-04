@@ -83,14 +83,8 @@ class Urdf:
             out["payload"] = (self.payload[0], p + R @ self.payload[1])
         return out
 
-    def mass_matrix(self, q, finger=0.04, armature=0.0):
-        """Joint-space mass matrix M(q) of the 7 arm joints, composite-rigid-body from the URDF.
-
-        Sum over every massive link of  m Jv^T Jv + Jw^T (R I R^T) Jw,  with the full 3x3 inertia
-        tensor (off-diagonal terms included). The gripper and fingers ride on link 7, so they enter
-        through joints 1-7 only. `armature` (kg*m^2) is added to every diagonal term, which is how
-        the plant's dynamics include the reflected rotor inertia.
-        """
+    def _forward(self, q, finger=0.04):
+        """Link poses and world joint axes/origins for arm angles q: (pose, axis_w, origin_w, joint_of_child)."""
         pose = {"panda_link0": (np.eye(3), np.zeros(3))}
         axis_w, origin_w, joint_of_child = {}, {}, {}
         todo = list(self.joints)
@@ -112,6 +106,17 @@ class Urdf:
             if len(rest) == len(todo):
                 break
             todo = rest
+        return pose, axis_w, origin_w, joint_of_child
+
+    def mass_matrix(self, q, finger=0.04, armature=0.0):
+        """Joint-space mass matrix M(q) of the 7 arm joints, composite-rigid-body from the URDF.
+
+        Sum over every massive link of  m Jv^T Jv + Jw^T (R I R^T) Jw,  with the full 3x3 inertia
+        tensor (off-diagonal terms included). The gripper and fingers ride on link 7, so they enter
+        through joints 1-7 only. `armature` (kg*m^2) is added to every diagonal term, which is how
+        the plant's dynamics include the reflected rotor inertia.
+        """
+        pose, axis_w, origin_w, joint_of_child = self._forward(q, finger)
         parent_of = {j["child"]: j["parent"] for j in self.joints}
 
         def ancestors(link):
@@ -138,6 +143,19 @@ class Urdf:
             Iw = R @ I @ R.T
             M += m * Jv.T @ Jv + Jw.T @ Iw @ Jw
         return M + armature * np.eye(ARM)
+
+    def tool_jacobian(self, q, finger=0.04, offset=(0.0, 0.0, 0.1034)):
+        """Tool-centre-point pose and geometric Jacobian: (R 3x3, p 3, J 6x7 with rows [linear; angular], world frame).
+
+        The TCP is `offset` along the panda_hand z axis (0.1034 m, the fingertip centre), the same point the payload is attached at."""
+        pose, axis_w, origin_w, _ = self._forward(q, finger)
+        R, p0 = pose["panda_hand"]
+        p = p0 + R @ np.asarray(offset, float)
+        J = np.zeros((6, ARM))
+        for k in range(ARM):
+            J[:3, k] = np.cross(axis_w[k], p - origin_w[k])
+            J[3:, k] = axis_w[k]
+        return R, p, J
 
     def gravity(self, q, finger):
         """tau_g = d(U)/dq with U = sum m g z, by central differences."""

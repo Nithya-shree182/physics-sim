@@ -124,6 +124,41 @@ So backlash and short delays are not just a low-speed problem; the applied torqu
 it raised a joint-6 alarm at 5.775 s; every faulty run, backlash and delay included, raised the same alarm at the same moment, and read as
 "detected". They were the healthy run's own false alarm. The set was re-run at 40%.
 
+## Result 5: picks (`out/pick` modelled payload, `out/pickphys` real cube)
+
+A pick does not repeat, and it picks something up. Both break the default calibration (the first 3 s):
+
+| calibration | healthy 1 kg pick | faults after the grasp |
+|---|---|---|
+| first 3 s (the default) | **false alarm** (joint 1, residual) | all found |
+| first 3 s, payload torque removed (`compensate_payload`) | **still a false alarm** (joint 5) | all found |
+| a healthy run of the same task, different noise seed (`against_reference`, `--reference`) | **no false alarm** | all found |
+
+Findings, in the order they were made:
+1. The healthy pick false-alarms because the model has no payload. Subtracting the estimated payload's torque did **not** remove it: the cause
+   was elsewhere.
+2. The cause is the same precondition as the friction baseline: the first 3 s (home to grasp, unloaded) never sees the carry or the place, and the
+   tracking channel sees a loaded carry sag that the unloaded start did not. A non-repeating task needs a calibration that covers it: a healthy
+   reference run of the same task, subtracted on **both** channels.
+3. Two bugs in my own first version of that reference, each caught by a test: a zero-padded smoothing turned a constant 0.1 rad tracking offset into a
+   false alarm in the last half second; and zero-filling the filter's NaN edge rows dragged the smoothed reference to zero near the ends.
+
+With the reference, every fault is found on the right joint (physical cube: friction x8 on joint 6 in 0.05 s, locked joint 1 in 0.03 s, a locked joint 4
+and friction x8 on joint 4 in 0.09 s, 50 ms delay in 0.11 s; modelled payload: 0.06-0.12 s, except friction and a lock on joint 4 at 3.27 s because that
+joint hardly moves on this path). The reference must be a healthy run of the same task: it is a requirement, not a free improvement.
+
+**Payload estimate on a pick** (the estimator's own tare: its reading on the empty stretch before the grasp):
+
+| payload | 0.5 kg | 1 kg | 2 kg |
+|---|---|---|---|
+| modelled mass at the TCP | -1.6 to -4.0% | -2.5% | -1.0 to -1.7% |
+| loaded ellipse (tare: the empty ellipse) | | -0.3% | |
+| **real cube held by the fingers** | -2.4 to -4.5% | -2.1 to -3.1% | **-25 to -36%** |
+
+The real cube at 2 kg is badly under-estimated, and **got worse when the squeeze force was doubled** (-14 to -18% at 17.5 N per finger, -25 to -36% at
+33 N), so friction slip is not the explanation. The cube's mass was read back and is 2.000 kg. The per-row estimate has a standard deviation near 1 kg
+and the carry window is short, but the modelled 2 kg shows none of this. Not understood; recorded as open.
+
 ## What limits detection now
 
 1. **Sensitivity of the 8-sigma rule**: friction below roughly 1 N*m on a joint is not found (x3 and x4 with the opt-in baseline, x4 and up without). The calibration window's own

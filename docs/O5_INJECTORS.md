@@ -15,8 +15,7 @@ prediction it is compared with.)
 | `workspace/pal_runner.py` | effort-mode controller and scenario runner; logs `tau_applied` |
 | `workspace/pal_faults.py` | `FaultSpec` and `FaultInjector` (friction, stuck joint, delay, backlash) |
 | `workspace/pal_sensors.py` | seeded sensor noise on the logged values |
-| `workspace/pal_o5_sweep.py` | the 26-run sweep |
-| `workspace/pal_extra_runs.py` | the analysis side's requested set: excitation, matched C4 faults at 0 and 1 kg over three seeds, a 60 s healthy run, a payload pickup |
+| `workspace/pal_suites.py` | the suites `o5` (26 runs), `clean`, `fast`, `extra` (the analysis side's requested set), `pick`, `pickphys` |
 
 | `fault_type` | `fault_param` | how it acts |
 |---|---|---|
@@ -39,7 +38,7 @@ push).
 ## Run it
 
 ```bash
-tools/pal_pipeline.sh pal_o5_sweep.py out/o5     # ~12 min: sim, Parquet, then checks on every run
+tools/pal_suite.sh o5                  # ~12 min: sim, Parquet, then checks on every run
 ```
 
 ## The set (what "defined fault set" means)

@@ -3,7 +3,7 @@
 #
 #   tools/package_handover.sh            # -> handover/pal_runs_<commit>.tar.gz and a MANIFEST.txt inside it
 #
-# Contents: data/ref_matched_*, out/o5, out/o4, out/extra, out/push, out/o6 (Parquet + JSON each),
+# Contents: data/ref_matched_*, out/o5, out/o4, out/extra, out/push, out/o6, out/o3, out/pick, out/o6pick, out/pickphys (Parquet + JSON each),
 # plus a MANIFEST.txt listing every file with its size and sha256 so the receiver can verify the copy.
 # Parquet in git history is permanent, which is why bulk data does not go through git.
 set -euo pipefail
@@ -13,7 +13,7 @@ COMMIT="$(git rev-parse --short HEAD)"
 OUT="handover"; mkdir -p "$OUT"
 STAGE="$(mktemp -d)"; trap 'rm -rf "$STAGE"' EXIT
 mkdir -p "$STAGE/pal_runs"
-for d in data out/o5 out/o4 out/extra out/clean out/fast out/push out/o6; do
+for d in data out/o5 out/o4 out/extra out/clean out/fast out/push out/o6 out/o3 out/pick out/o6pick out/pickphys; do
   [ -d "$d" ] || continue
   mkdir -p "$STAGE/pal_runs/$d"
   cp "$d"/*.parquet "$d"/*.json "$STAGE/pal_runs/$d/" 2>/dev/null || true

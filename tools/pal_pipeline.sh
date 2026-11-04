@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # One command: run a sim script, convert its runs to Parquet, validate and sanity-check each.
 #
-#   tools/pal_pipeline.sh pal_o5_sweep.py out/o5        # O5 sweep -> out/o5/*.parquet, checked
-#   tools/pal_pipeline.sh pal_capture.py data           # one capture -> data/, checked
+#   (superseded for the suites by tools/pal_suite.sh; this stays for running any other script that writes .npz runs)
+#   tools/pal_pipeline.sh some_script.py out/some_dir   # run, convert and check its runs
 #
 # Steps: tools/run_sim.sh (watchdogged Isaac run) -> tools/npz_to_parquet.py (host) ->
 # tools/check_run.py on every Parquet produced (schema, URDF gravity, identity).

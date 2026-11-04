@@ -90,7 +90,7 @@ columns:
     note: "Ground truth for evaluation. Constant per run except the *_active flags."
     fields:
       - {name: run_id, dtype: string, unit: "-"}
-      - {name: traj_type, dtype: string, unit: "-", allowed: [hold, slow_reference, trapezoidal, s_curve, torque_aware, pick, excitation, push]}
+      - {name: traj_type, dtype: string, unit: "-", allowed: [hold, slow_reference, trapezoidal, s_curve, torque_aware, pick, excitation, push, ellipse]}
       - {name: drive_mode, dtype: string, unit: "-", allowed: [position_stiff, position_soft, impedance, torque, asset_stock]}
       - {name: payload_kg, dtype: float64, unit: kg}
       - {name: payload_attached, dtype: bool, unit: "-"}

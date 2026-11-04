@@ -1,13 +1,13 @@
 {
   "schema_version": 0,
   "run_id": "ref_matched_0kg_1000hz",
-  "created_utc": "2026-11-03T18:32:47Z",
+  "created_utc": "2026-11-03T21:35:56Z",
   "ee_body_index": 7,
   "ee_frame": "/World/Franka/panda_hand",
   "rows": 6000,
   "mj_every": 10,
   "timing_convention": "row assembled after world.step(); all quantities are post-step values; tau_measured[k] is the effort during the step that produced q[k]. Measured: pre-step / post-step / midpoint evaluation give 27.99 / 27.98 / 27.98 percent residual, i.e. indistinguishable.",
-  "git_commit": "1edfe37",
+  "git_commit": "7577d15",
   "machine": "omen-5090",
   "isaac_sim_version": "6.0.1",
   "physics_hz": 1000.0,
@@ -78,6 +78,7 @@
   "friction_units": "columns: static N*m, dynamic N*m, viscous N*m*s/rad",
   "torque_convention": "unverified",
   "finger_q_ref": 0.04,
+  "tau_measured_includes_friction": false,
   "plant_link_mass_scale": 1.0,
   "control": {
     "mode": "effort",
@@ -94,6 +95,8 @@
     ],
     "model": "point mass folded into the hand's composite"
   },
+  "payload_physical": false,
+  "payload_in_dynamics_terms": true,
   "fault": {
     "type": "none",
     "joint": -1,
@@ -101,7 +104,7 @@
     "onset_s": 3.0
   },
   "scenario": "ref_matched_0kg",
-  "speed_fraction": 0.22148670364613735,
+  "speed_fraction": 0.22148492235790268,
   "speed_fraction_per_joint": [
     0.1988,
     0.2025,
@@ -113,6 +116,5 @@
   ],
   "drive_mode": "torque",
   "payload_kg": 0.0,
-  "traj_type": "slow_reference",
-  "tau_measured_includes_friction": false
+  "traj_type": "slow_reference"
 }

@@ -2,9 +2,9 @@
 # Run one script inside the Isaac Sim container, with a watchdog that can tell a slow
 # boot from a real hang.
 #
-#   tools/run_sim.sh pal_capture.py [logfile]
+#   tools/run_sim.sh pal_selftest.py [logfile]
 #   HEADLESS=0 tools/run_sim.sh pal_experiment.py      # with a window on the host display
-#   PAL_STEPS=5000 PAL_PAYLOAD_KG=2 tools/run_sim.sh pal_capture.py logs/cap.log
+#   PAL_SUITE=o5 tools/run_sim.sh pal_run_suite.py logs/o5.log   (tools/pal_suite.sh wraps this)
 #
 # Why this exists: the previous inline watchdog detected "booted" by counting lines in
 # docker logs and gave up after 200 s. Isaac's extension loading alone can exceed that on
@@ -33,6 +33,8 @@ mkdir -p "$ROOT/out/o5" "$ROOT/out/o4" "$ROOT/out/o6" "$ROOT/out/push" "$ROOT/ou
 chmod 777 "$ROOT/data" "$ROOT/out" "$ROOT/out/o5" "$ROOT/out/o4" "$ROOT/out/o6" "$ROOT/out/push" "$ROOT/out/extra" "$ROOT/out/clean" "$ROOT/out/fast" 2>/dev/null || true
 
 cleanup() { docker rm -f "$NAME" >/dev/null 2>&1 || true; }
+# Files the container writes (uid 1234) can come out owner-only, e.g. viewport PNGs; open them so the host user can read them.
+open_perms() { docker run --rm --entrypoint /bin/chmod -v "$ROOT/out:/o" -v "$ROOT/data:/d" "$IMAGE" -R a+rwX /o /d >/dev/null 2>&1 || true; }
 trap 'echo; echo "interrupted, stopping $NAME"; cleanup; exit 130' INT TERM
 
 for attempt in $(seq 1 "$ATTEMPTS"); do
@@ -46,7 +48,7 @@ for attempt in $(seq 1 "$ATTEMPTS"); do
     -e ACCEPT_EULA=Y -e PRIVACY_CONSENT=Y -e OMNI_KIT_ACCEPT_EULA=YES \
     -e NVIDIA_DRIVER_CAPABILITIES=all -e ISAAC_SIM_HEADLESS="${HEADLESS:-1}" \
     "${X11_ARGS[@]}" \
-    $(env | grep -E '^PAL_(STEPS|TRAJ|PAYLOAD_KG|PHYSICS_HZ|MJ_EVERY|RUN_ID|DRIVE_MODE|FRAC|SEED|GIT_COMMIT|MACHINE|NO_FRICTION|FRICTION_API|FAST_FRAC|DURATION_S|ONSET_S)=' | sed 's/^/-e /') \
+    $(env | grep -E '^PAL_(STEPS|TRAJ|PAYLOAD_KG|PHYSICS_HZ|MJ_EVERY|RUN_ID|DRIVE_MODE|FRAC|SEED|GIT_COMMIT|MACHINE|NO_FRICTION|FRICTION_API|FAST_FRAC|SUITE|ONLY|RENDER_EVERY|FRAMES|DURATION_S|ONSET_S)=' | sed 's/^/-e /') \
     -v "$CACHE/kit:/isaac-sim/kit/cache:rw" -v "$CACHE/ov:/root/.cache/ov:rw" \
     -v "$ROOT/workspace:/workspace:rw" \
     -v "$ROOT/assets/franka_panda:/workspace/assets:ro" \
@@ -73,7 +75,7 @@ for attempt in $(seq 1 "$ATTEMPTS"); do
   if (( booted )); then
     echo "attempt $attempt: script started after $((SECONDS - t0))s"
     if timeout "$RUN_TIMEOUT" docker wait "$NAME" >/dev/null 2>&1; then
-      docker logs "$NAME" > "$LOG" 2>&1; cleanup
+      docker logs "$NAME" > "$LOG" 2>&1; cleanup; open_perms
       echo "done -> $LOG"
       exit 0
     fi

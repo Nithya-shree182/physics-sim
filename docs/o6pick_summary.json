@@ -1,0 +1,246 @@
+{
+  "runs": [
+    {
+      "run_id": "o6pick_s_curve_0kg_0",
+      "style": "s_curve",
+      "payload_kg": 0.0,
+      "cycle_time_s": 5.09764,
+      "peak_torque_frac": 0.628881388697131,
+      "energy_drawn_J": 65.28726932358826,
+      "energy_backdriven_J": -52.60114139242659,
+      "track_err_max_rad": 0.13764960319498543,
+      "speed_fraction": 0.9561262459590518
+    },
+    {
+      "run_id": "o6pick_s_curve_0kg_1",
+      "style": "s_curve",
+      "payload_kg": 0.0,
+      "cycle_time_s": 6.092980000000001,
+      "peak_torque_frac": 0.5485804327603044,
+      "energy_drawn_J": 55.10944900607993,
+      "energy_backdriven_J": -51.673407083964065,
+      "track_err_max_rad": 0.11656303552736946,
+      "speed_fraction": 0.6012741724650066
+    },
+    {
+      "run_id": "o6pick_s_curve_0kg_2",
+      "style": "s_curve",
+      "payload_kg": 0.0,
+      "cycle_time_s": 8.276900000000001,
+      "peak_torque_frac": 0.4976000292547818,
+      "energy_drawn_J": 52.92163718022904,
+      "energy_backdriven_J": -50.005765869661786,
+      "track_err_max_rad": 0.10255406682181278,
+      "speed_fraction": 0.351240497896041
+    },
+    {
+      "run_id": "o6pick_s_curve_2kg_0",
+      "style": "s_curve",
+      "payload_kg": 2.0,
+      "cycle_time_s": 5.09764,
+      "peak_torque_frac": 0.8016614365851742,
+      "energy_drawn_J": 72.18512733777926,
+      "energy_backdriven_J": -59.40911528536659,
+      "track_err_max_rad": 0.14068509091813253,
+      "speed_fraction": 0.956127342136427
+    },
+    {
+      "run_id": "o6pick_s_curve_2kg_1",
+      "style": "s_curve",
+      "payload_kg": 2.0,
+      "cycle_time_s": 6.092980000000001,
+      "peak_torque_frac": 0.698865210872957,
+      "energy_drawn_J": 60.96095316611488,
+      "energy_backdriven_J": -57.47567283386344,
+      "track_err_max_rad": 0.12023511870836212,
+      "speed_fraction": 0.6013552895907699
+    },
+    {
+      "run_id": "o6pick_s_curve_2kg_2",
+      "style": "s_curve",
+      "payload_kg": 2.0,
+      "cycle_time_s": 8.276900000000001,
+      "peak_torque_frac": 0.6338237893992457,
+      "energy_drawn_J": 58.4583650889605,
+      "energy_backdriven_J": -55.51224772445139,
+      "track_err_max_rad": 0.10675771197201955,
+      "speed_fraction": 0.3512745890124091
+    },
+    {
+      "run_id": "o6pick_torque_aware_0kg_0",
+      "style": "torque_aware",
+      "payload_kg": 0.0,
+      "cycle_time_s": 5.636327138113382,
+      "peak_torque_frac": 0.5712503016680136,
+      "energy_drawn_J": 60.54288608718425,
+      "energy_backdriven_J": -51.821362592553314,
+      "track_err_max_rad": 0.12504069290380349,
+      "speed_fraction": 0.9087161360115841
+    },
+    {
+      "run_id": "o6pick_torque_aware_0kg_1",
+      "style": "torque_aware",
+      "payload_kg": 0.0,
+      "cycle_time_s": 7.537863487592065,
+      "peak_torque_frac": 0.5410976190676634,
+      "energy_drawn_J": 53.60627587246824,
+      "energy_backdriven_J": -50.39828530631003,
+      "track_err_max_rad": 0.10492999207693332,
+      "speed_fraction": 0.5742948356716112
+    },
+    {
+      "run_id": "o6pick_torque_aware_0kg_2",
+      "style": "torque_aware",
+      "payload_kg": 0.0,
+      "cycle_time_s": 12.029772479320108,
+      "peak_torque_frac": 0.4671332260658001,
+      "energy_drawn_J": 52.52263959691815,
+      "energy_backdriven_J": -49.746255600407636,
+      "track_err_max_rad": 0.09318081130038225,
+      "speed_fraction": 0.3448353964706947
+    },
+    {
+      "run_id": "o6pick_torque_aware_2kg_0",
+      "style": "torque_aware",
+      "payload_kg": 2.0,
+      "cycle_time_s": 5.636327138113382,
+      "peak_torque_frac": 0.7279086058167206,
+      "energy_drawn_J": 66.85522646760748,
+      "energy_backdriven_J": -58.076592293264106,
+      "track_err_max_rad": 0.12811334617644454,
+      "speed_fraction": 0.9087171225712218
+    },
+    {
+      "run_id": "o6pick_torque_aware_2kg_1",
+      "style": "torque_aware",
+      "payload_kg": 2.0,
+      "cycle_time_s": 7.537863487592065,
+      "peak_torque_frac": 0.6894786440092942,
+      "energy_drawn_J": 59.252081779510334,
+      "energy_backdriven_J": -56.017535197796484,
+      "track_err_max_rad": 0.10835322319244178,
+      "speed_fraction": 0.5742986722924244
+    },
+    {
+      "run_id": "o6pick_torque_aware_2kg_2",
+      "style": "torque_aware",
+      "payload_kg": 2.0,
+      "cycle_time_s": 12.029772479320108,
+      "peak_torque_frac": 0.5952304971629175,
+      "energy_drawn_J": 58.01963750278167,
+      "energy_backdriven_J": -55.234111349080585,
+      "track_err_max_rad": 0.09711264792959429,
+      "speed_fraction": 0.3448282439133217
+    },
+    {
+      "run_id": "o6pick_trapezoidal_0kg_0",
+      "style": "trapezoidal",
+      "payload_kg": 0.0,
+      "cycle_time_s": 4.350976965374082,
+      "peak_torque_frac": 0.6609884240161413,
+      "energy_drawn_J": 68.0068287146517,
+      "energy_backdriven_J": -51.73008356740659,
+      "track_err_max_rad": 0.1390304954492625,
+      "speed_fraction": 0.9686297931890379
+    },
+    {
+      "run_id": "o6pick_trapezoidal_0kg_1",
+      "style": "trapezoidal",
+      "payload_kg": 0.0,
+      "cycle_time_s": 5.672994488071557,
+      "peak_torque_frac": 0.5478359529341774,
+      "energy_drawn_J": 55.206246376963826,
+      "energy_backdriven_J": -51.751720626485486,
+      "track_err_max_rad": 0.11684613328509164,
+      "speed_fraction": 0.6017412536445705
+    },
+    {
+      "run_id": "o6pick_trapezoidal_0kg_2",
+      "style": "trapezoidal",
+      "payload_kg": 0.0,
+      "cycle_time_s": 8.03190457722627,
+      "peak_torque_frac": 0.4974237200857579,
+      "energy_drawn_J": 52.926872245486784,
+      "energy_backdriven_J": -50.00669141136829,
+      "track_err_max_rad": 0.10261057610634738,
+      "speed_fraction": 0.35123033085088623
+    },
+    {
+      "run_id": "o6pick_trapezoidal_2kg_0",
+      "style": "trapezoidal",
+      "payload_kg": 2.0,
+      "cycle_time_s": 4.350976965374082,
+      "peak_torque_frac": 0.8257170929305855,
+      "energy_drawn_J": 75.00333398428174,
+      "energy_backdriven_J": -58.56313484233993,
+      "track_err_max_rad": 0.14196995605467166,
+      "speed_fraction": 0.9686297931890379
+    },
+    {
+      "run_id": "o6pick_trapezoidal_2kg_1",
+      "style": "trapezoidal",
+      "payload_kg": 2.0,
+      "cycle_time_s": 5.672994488071557,
+      "peak_torque_frac": 0.7021675986805181,
+      "energy_drawn_J": 61.054615488882206,
+      "energy_backdriven_J": -57.548364358323624,
+      "track_err_max_rad": 0.12057157976639399,
+      "speed_fraction": 0.601789156595866
+    },
+    {
+      "run_id": "o6pick_trapezoidal_2kg_2",
+      "style": "trapezoidal",
+      "payload_kg": 2.0,
+      "cycle_time_s": 8.03190457722627,
+      "peak_torque_frac": 0.6360969981927981,
+      "energy_drawn_J": 58.46311912110533,
+      "energy_backdriven_J": -55.50069717215581,
+      "track_err_max_rad": 0.10685740190192639,
+      "speed_fraction": 0.35126184595042265
+    }
+  ],
+  "shortest_under_budget": [
+    {
+      "payload_kg": 0.0,
+      "budget": 0.4,
+      "trapezoidal": null,
+      "s_curve": null,
+      "torque_aware": null
+    },
+    {
+      "payload_kg": 0.0,
+      "budget": 0.55,
+      "trapezoidal": 5.672994488071557,
+      "s_curve": 6.092980000000001,
+      "torque_aware": 7.537863487592065
+    },
+    {
+      "payload_kg": 0.0,
+      "budget": 0.7,
+      "trapezoidal": 4.350976965374082,
+      "s_curve": 5.09764,
+      "torque_aware": 5.636327138113382
+    },
+    {
+      "payload_kg": 2.0,
+      "budget": 0.4,
+      "trapezoidal": null,
+      "s_curve": null,
+      "torque_aware": null
+    },
+    {
+      "payload_kg": 2.0,
+      "budget": 0.55,
+      "trapezoidal": null,
+      "s_curve": null,
+      "torque_aware": null
+    },
+    {
+      "payload_kg": 2.0,
+      "budget": 0.7,
+      "trapezoidal": 8.03190457722627,
+      "s_curve": 6.092980000000001,
+      "torque_aware": 7.537863487592065
+    }
+  ]
+}

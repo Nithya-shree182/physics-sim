@@ -58,6 +58,19 @@ class PayloadEstimate:
                              "m_band": self.m_band, "gated": self.gated})
 
 
+def payload_torque_per_kg(model: PandaModel, q, qd, qdd, offset_local=PAYLOAD_OFFSET_M) -> np.ndarray:
+    """Joint torque residual that 1 kg at the payload point produces: J_p^T (a_p + (0, 0, g)).
+
+    At rest this is the weight's torque; moving, it includes the payload's own acceleration. (The dashboard has the same function in
+    dashboard/engine.py; this is the one the detector uses.)"""
+    J = model.jacobian(q)
+    a = model.point_acceleration(q, qd, qdd, offset_local)
+    R = model.data.oMf[model.model.getFrameId("panda_hand")].rotation
+    p = R @ np.asarray(offset_local, float)
+    skew = np.array([[0, -p[2], p[1]], [p[2], 0, -p[0]], [-p[1], p[0], 0]])
+    return (J[:3] - skew @ J[3:]).T @ (a - GRAVITY_VEC)
+
+
 def estimate_payload(res: Residual, model: PandaModel, offset_local=PAYLOAD_OFFSET_M,
                      tau_s: float = TAU_S, tare_kg: float = 0.0,
                      vertical_gain_max: float = VERTICAL_GAIN_MAX) -> PayloadEstimate:

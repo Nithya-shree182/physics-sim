@@ -15,27 +15,25 @@ The repository holds both halves, merged on 2026-11-04 from two branches that ha
 ## Run something
 
 ```bash
-tools/pal_pipeline.sh pal_o5_sweep.py out/o5        # fault sweep: sim -> Parquet -> checks     (~12 min)
-tools/pal_pipeline.sh pal_o4_payload.py out/o4      # known payloads                            (~6 min)
-tools/pal_pipeline.sh pal_validation_push.py out/push  # push with a known force               (~4 min)
-tools/pal_pipeline.sh pal_o6_benchmark.py out/o6    # trajectory styles                         (~4 min)
-tools/pal_pipeline.sh pal_capture.py data           # reference captures for model calibration  (~2 min)
-tools/run_sim.sh pal_selftest.py                    # plant self-test; run after ANY change to the plant
-tools/pal_pipeline.sh pal_extra_runs.py out/extra   # the analysis side's requested run list       (~15 min)
-tools/pal_pipeline.sh pal_o5_fast.py out/fast      # faults at 40% speed                                  (~6 min)
-tools/pal_pipeline.sh pal_o5_clean.py out/clean    # noise-free twins                                       (~4 min)
-tools/check_all.sh                                  # every host-side check on existing outputs, no sim
-tools/package_handover.sh                           # one tarball of every run for the analysis side (outside git)
-git worktree add --detach /tmp/nithya origin/nithya   # then, in the Pinocchio env (see below):
-.venv-pal/bin/python tools/run_analysis_side.py --nithya /tmp/nithya --torque applied out/o5/*.parquet   # their real detector
-.venv-pal/bin/python -m pytest -q                      # all 138 tests, both teams (Pinocchio env); `unittest discover tests` runs our 30 without it
+tools/pal_suite.sh o5                  # one objective's tests, headless, then convert and check every run
+tools/pal_suite.sh o3,o4 --window      # several, drawn in an Isaac Sim window (slower: rendering) so you can watch the arm
+tools/pal_suite.sh pickphys --window   # a REAL pick: the fingers close on a physical cube and carry it across the table
+tools/pal_suite.sh all                 # every objective's tests (about an hour headless); add --window to watch them
+tools/run_sim.sh pal_selftest.py       # plant self-test; run after ANY change to the plant
+tools/check_all.sh                     # every host-side check on existing outputs, no sim
+tools/package_handover.sh              # one tarball of every run for the analysis side (outside git)
+.venv-pal/bin/python -m pytest -q      # all tests, both teams (Pinocchio env); `unittest discover tests` runs ours without it
 ```
+
+Suites (`workspace/pal_suites.py`): `reference` (O1/O2), `o3` (confidence poses), `o4` (known payloads), `o5` (26 fault runs), `clean`
+(noise-free), `fast` (40% speed), `extra` (the analysis side's run list), `push` (validation), `o6` (styles, out-and-back), `pick` and `o6pick`
+(IK pick-and-place with a modelled payload), `pickphys` (a real cube). Their definitions are plain data and unit-tested.
 
 **"Plant"** is control-engineering for the thing being controlled: the simulated Franka arm with its masses,
 friction and motors, standing in for the real robot. The analysis side's Pinocchio model is the separate
 prediction it is compared with; the residual is plant versus model.
 
-`pal_pipeline.sh` runs the sim (with a boot-hang watchdog), converts the runs to Parquet, then runs
+`pal_suite.sh` runs the sim (with a boot-hang watchdog), converts the runs to Parquet, then runs
 `tools/check_run.py` on each one. That check does not trust the simulator's own numbers:
 
 1. the schema validator passes;
@@ -57,8 +55,11 @@ All runs are **effort mode**: the arm is driven by explicit torques and `tau_app
 | `workspace/pal_plant.py` | **the one place the plant is built** (inertials, friction, armature, gains) |
 | `workspace/pal_config.py` | every parameter, each tagged with its source |
 | `workspace/pal_runner.py` | effort-mode controller and scenario runner |
-| `workspace/pal_faults.py`, `pal_sensors.py`, `pal_o5_sweep.py` | O5 injectors, seeded sensor noise, the sweep |
-| `workspace/pal_trajectories.py`, `pal_o6_benchmark.py` | reference motions and the O6 benchmark |
+| `workspace/pal_faults.py`, `pal_sensors.py` | O5 injectors, seeded sensor noise |
+| `workspace/pal_suites.py`, `pal_run_suite.py` | every objective's scenarios as data, and the runner (headless or windowed) |
+| `workspace/pal_ik.py`, `pal_tasks.py` | inverse kinematics; pick-and-place and ellipse tasks built from it |
+| `workspace/pal_objects.py`, `pal_view.py` | the physical table and cube; the drawn cube for modelled picks |
+| `workspace/pal_trajectories.py` | reference motions and the three movement styles |
 | `workspace/pal_kinematics.py` | independent URDF kinematics and gravity (numpy), used by the checks |
 | `workspace/pal_telemetry.py` | O1 telemetry writer in `schema/telemetry_v0.yaml` format |
 | `workspace/pal_*_test.py` and similar | one-off probes; each is the evidence for one claim in the docs |

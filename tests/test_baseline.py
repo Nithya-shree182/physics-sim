@@ -76,3 +76,65 @@ def test_friction_x3_is_found_only_with_the_baseline(twin, name):
     assert not evaluate(run, detect(run, res, baseline="none"))["detected"]
     e = evaluate(run, detect(run, res, baseline="friction"))
     assert e["detected"] and not e["false_alarm"] and e["suspected_joint"] == e["true_joint"]
+
+
+# ---- reference-run calibration and payload awareness --------------------------------------------------------------------------------
+from detector import _smooth, against_reference, compensate_payload  # noqa: E402
+
+
+def test_smoothing_holds_a_constant_at_the_edges():
+    """Regression: a zero-padded 'same' convolution decayed to zero at both ends, so a constant 0.1 rad tracking offset became a huge
+    false difference in the last samples and raised an alarm at the very end of a healthy run."""
+    x = np.full((500, 3), 0.1)
+    np.testing.assert_allclose(_smooth(x, 200), x, atol=1e-12)
+
+
+def test_smoothing_is_a_moving_average_in_the_interior():
+    x = np.arange(100.0)[:, None]
+    np.testing.assert_allclose(_smooth(x, 5)[50], 50.0)
+
+
+def test_a_run_against_itself_leaves_nothing_to_alarm_on(twin):
+    run = synth()
+    res = compute_residual(run, twin, torque="measured", cutoff_hz=DEFAULT_CUTOFF_HZ)
+    out = against_reference(res, res)
+    assert np.nanmax(np.abs(out.r[res.valid & (np.arange(len(res.t)) < len(res.t) - 200)])) < 1e-9 + 0.5 * np.nanmax(np.abs(res.r))
+    assert not evaluate(run, detect(run, out))["false_alarm"]
+
+
+def test_a_reference_removes_what_calibration_never_saw(twin):
+    """A step that appears after the calibration window (a pickup, a new phase) alarms on its own and not against a reference that has it."""
+    run = synth()
+    res = compute_residual(run, twin, torque="measured", cutoff_hz=DEFAULT_CUTOFF_HZ)
+    import dataclasses
+    step = res.r.copy()
+    ramp = np.clip((res.t - res.t[0] - 3.5) / 2.0, 0.0, 1.0)         # a slow ramp: the reference is smoothed over 0.2 s, so a sharper feature leaves corner error
+    step[:, 2] += 3.0 * ramp                                         # 3 N*m on joint 3 from 4 s on
+    stepped = dataclasses.replace(res, r=step)
+    assert evaluate(run, detect(run, stepped))["false_alarm"]
+    assert not evaluate(run, detect(run, against_reference(stepped, stepped)))["false_alarm"]
+
+
+PICK = REPO_ROOT / "out" / "pick"
+
+
+@pytest.mark.skipif(not (PICK / "pick_s_curve_1kg_ref_1000hz.parquet").exists(), reason="out/pick runs not present")
+def test_the_healthy_pick_needs_a_reference_and_every_fault_in_it_is_found(twin):
+    """The finding on real runs: calibrating on the first 3 s false-alarms on a healthy pick; calibrating on a healthy run of the same task
+    (a different noise seed) does not, and the faults are still found."""
+    from residual import fault_torque
+    ref_run = load_run(PICK / "pick_s_curve_1kg_ref_1000hz.parquet")
+    ref = compute_residual(ref_run, twin, torque="applied", cutoff_hz=DEFAULT_CUTOFF_HZ)
+
+    def verdict(name, use_ref):
+        run = load_run(PICK / f"{name}_1000hz.parquet")
+        res = compute_residual(run, twin, torque=fault_torque(run), cutoff_hz=DEFAULT_CUTOFF_HZ)
+        if use_ref:
+            res = against_reference(res, ref)
+        return evaluate(run, detect(run, res, reference_run=ref_run if use_ref else None))
+    assert verdict("pick_s_curve_1kg", False)["false_alarm"]            # the problem
+    assert not verdict("pick_s_curve_1kg", True)["false_alarm"]         # the fix
+    for name in ("pick_fault_delay_all_50ms_1kg", "pick_fault_friction_j5_8_1kg", "pick_fault_friction_j3_8_1kg",
+                 "pick_fault_stuck_joint_j3_200_1kg"):
+        e = verdict(name, True)
+        assert e["detected"] and not e["false_alarm"], name

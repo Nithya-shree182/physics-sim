@@ -11,7 +11,7 @@ derivatives, plus a `.duration` (None for endless ones).
       trapezoidal      velocity-limit / acceleration-limit trapezoid
       s_curve          jerk-limited 7-segment profile
       torque_aware     quintic (minimum-jerk) with a duration CHOSEN to respect a torque
-                       budget; the duration search lives in pal_o6_benchmark.py
+                       budget; the o6 / o6pick suites run it over a grid of durations
 
 Joints move together: each style is a scalar profile s(t) in [0, 1] scaled by the joint
 displacement, with the scalar limits set by the most demanding joint.
@@ -126,26 +126,74 @@ def _quintic_scalar(T):
     return T, fn
 
 
-def cycle(q0, q1, kind, T=None, dwell=0.2, vscale=1.0, ascale=1.0):
-    """Out-and-back q0 -> q1 -> q0 with a dwell at each end. `T` is the duration of ONE leg
-    (torque_aware only). vscale/ascale shrink the kinematic limits (1.0 = full)."""
-    q0, q1 = np.asarray(q0, float), np.asarray(q1, float)
-    d = q1 - q0
+def _leg_profile(d, kind, T, vscale, ascale):
+    """Scalar profile for a move of joint displacements d: (leg time, fn(t) -> s, sd, sdd). The limits come from the most demanding joint."""
     ad = np.abs(d)
     mv = ad > 1e-9
     v_s = float(np.min(vscale * cfg.QD_MAX[mv] / ad[mv]))
     a_s = float(np.min(ascale * A_MAX[mv] / ad[mv]))
     j_s = float(np.min(J_MAX[mv] / ad[mv]))
     if kind == "trapezoidal":
-        Tleg, leg = _trap_scalar(v_s, a_s)
-    elif kind == "s_curve":
-        Tleg, leg = _scurve_scalar(v_s, a_s, j_s)
-    elif kind == "torque_aware":
+        return _trap_scalar(v_s, a_s)
+    if kind == "s_curve":
+        return _scurve_scalar(v_s, a_s, j_s)
+    if kind == "torque_aware":
         if T is None:
             raise ValueError("torque_aware needs T")
-        Tleg, leg = _quintic_scalar(T)
-    else:
-        raise ValueError(kind)
+        return _quintic_scalar(T)
+    raise ValueError(kind)
+
+
+def leg(q0, q1, kind, T=None, vscale=1.0, ascale=1.0):
+    """One-way rest-to-rest move q0 -> q1 in the given style. The Traj has .duration."""
+    q0, q1 = np.asarray(q0, float), np.asarray(q1, float)
+    d = q1 - q0
+    Tleg, prof = _leg_profile(d, kind, T, vscale, ascale)
+
+    def fn(t):
+        s, sd, sdd = prof(t)
+        return q0 + s * d, sd * d, sdd * d
+    return Traj(fn, duration=Tleg)
+
+
+def dwell(q, seconds):
+    q = np.asarray(q, float).copy()
+    return Traj(lambda t: (q, np.zeros(ARM), np.zeros(ARM)), duration=seconds)
+
+
+def from_samples(q, hz=1000.0):
+    """A Traj from joint samples on the physics grid; qd and qdd by central differences (the IK path is smooth to ~1e-9)."""
+    q = np.asarray(q, float)
+    dt = 1.0 / hz
+    qd = np.gradient(q, dt, axis=0)
+    qdd = np.gradient(qd, dt, axis=0)
+    n = len(q)
+
+    def fn(t):
+        i = int(min(max(round(t * hz), 0), n - 1))
+        return q[i], qd[i], qdd[i]
+    return Traj(fn, duration=(n - 1) * dt)
+
+
+def sequence(parts):
+    """Play Trajs one after another. Returns a Traj whose .starts gives each part's start time."""
+    starts = np.concatenate([[0.0], np.cumsum([p.duration for p in parts])])
+
+    def fn(t):
+        i = int(min(np.searchsorted(starts, t, side="right") - 1, len(parts) - 1))
+        return parts[i](min(t - starts[i], parts[i].duration))
+    tr = Traj(fn, duration=float(starts[-1]))
+    tr.starts = starts
+    return tr
+
+
+def cycle(q0, q1, kind, T=None, dwell=0.2, vscale=1.0, ascale=1.0):
+    """Out-and-back q0 -> q1 -> q0 with a dwell at each end. `T` is the duration of ONE leg
+    (torque_aware only). vscale/ascale shrink the kinematic limits (1.0 = full)."""
+    q0, q1 = np.asarray(q0, float), np.asarray(q1, float)
+    d = q1 - q0
+    Tleg, leg_fn = _leg_profile(d, kind, T, vscale, ascale)
+    leg = leg_fn
     total = 2 * Tleg + 2 * dwell
 
     def fn(t):

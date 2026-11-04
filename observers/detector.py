@@ -34,6 +34,7 @@ HERE = Path(__file__).resolve().parent
 sys.path[:0] = [str(HERE), str(HERE.parent / "model")]
 from confidence import FORCE_GAIN_MAX, conditioning  # noqa: E402
 from pinocchio_model import load_panda  # noqa: E402
+from payload import estimate_payload, payload_torque_per_kg                                  # noqa: E402
 from residual import DEFAULT_CUTOFF_HZ, Residual, Run, compute_residual, fault_torque, load_run  # noqa: E402
 
 FAULT_LABELS = {
@@ -125,8 +126,65 @@ def recalibrate_baseline(res: Residual, mode: str = "friction", calibration_s: f
     return dataclasses.replace(res, r=r)
 
 
+def compensate_payload(run: Run, model, res: Residual, cutoff_hz: float | None = DEFAULT_CUTOFF_HZ, tau_s: float = 0.3) -> Residual:
+    """Remove the torque of a payload the model does not know about, so picking something up is not read as a fault.
+
+    The model has no payload, so a pickup steps the applied-torque residual up by the payload's torque and the detector raises an alarm
+    (measured: a healthy 1 kg pick false-alarms at the grasp). The analysis side's own estimator measures the payload from the NET torque,
+    where friction and the other faults do not appear, so it cannot absorb a fault. Its running estimate (a short time constant, so the
+    pickup is followed within ~0.3 s) times the torque one kilogram produces is subtracted from the residual before the z-score."""
+    est = estimate_payload(compute_residual(run, model, torque="measured", cutoff_hz=cutoff_hz), model, tau_s=tau_s)
+    import dataclasses
+    m = np.where(np.isfinite(est.m_est), est.m_est, 0.0)
+    r = res.r.copy()
+    for k in np.flatnonzero(res.valid):
+        r[k] -= m[k] * payload_torque_per_kg(model, res.q[k], res.qd[k], res.qdd[k])
+    return dataclasses.replace(res, r=r)
+
+
+def _smooth(x: np.ndarray, w: int) -> np.ndarray:
+    """Moving average along axis 0 that holds the edge values (a zero-padded 'same' convolution decays to zero at both ends, which turns a
+    constant offset into a huge false difference in the last w/2 samples)."""
+    if w <= 1:
+        return x
+    pad = np.pad(x, ((w // 2, w - 1 - w // 2), (0, 0)), mode="edge")
+    kernel = np.ones(w) / w
+    return np.stack([np.convolve(pad[:, j], kernel, mode="valid") for j in range(x.shape[1])], axis=1)
+
+
+def _fill_edges(x: np.ndarray) -> np.ndarray:
+    """Replace NaN rows (the filter's edge effect, and rows without an acceleration) by the nearest valid row. Filling with zero instead
+    drags a smoothed reference toward zero near the ends, which is wrong whenever the residual is not zero there."""
+    x = x.copy()
+    for j in range(x.shape[1]):
+        ok = np.isfinite(x[:, j])
+        if ok.any() and not ok.all():
+            idx = np.flatnonzero(ok)
+            x[:, j] = np.interp(np.arange(len(x)), idx, x[idx, j])          # holds the end values outside the valid range
+    return x
+
+
+def against_reference(res: Residual, reference: Residual, smooth_s: float = 0.2) -> Residual:
+    """Subtract the residual of a known-healthy run of the SAME task, aligned in time, before detection.
+
+    For a task that does not repeat (a pick-and-place), a 3 s calibration window never sees the carry or the place, so everything after it
+    looks abnormal (measured: a healthy 1 kg pick false-alarms). A healthy reference of the same task carries the pose-dependent part of
+    the residual (mass mismatch, friction hysteresis, the payload's weight), so the difference isolates what changed. The reference is
+    smoothed over `smooth_s` so its own noise is not injected into the run being tested. Both runs must have the same timeline."""
+    import dataclasses
+    n = min(len(res.r), len(reference.r))
+    w = max(1, int(round(smooth_s / float(np.median(np.diff(res.t))))))
+    ref = _fill_edges(reference.r[:n])
+    ref = _smooth(ref, w)
+    r = res.r.copy()
+    r[:n] -= ref
+    r[n:] = np.nan
+    return dataclasses.replace(res, r=r)
+
+
 def detect(run: Run, res: Residual, calibration_s: float = CALIBRATION_S, z_threshold: float = Z_THRESHOLD,
-           consecutive: int = CONSECUTIVE, force_gain_max: float = FORCE_GAIN_MAX, baseline: str = "none") -> Detection:
+           consecutive: int = CONSECUTIVE, force_gain_max: float = FORCE_GAIN_MAX, baseline: str = "none",
+           reference_run: Run | None = None) -> Detection:
     res = recalibrate_baseline(res, baseline, calibration_s)
     t = res.t
     calib = (t - t[0]) < calibration_s
@@ -134,6 +192,13 @@ def detect(run: Run, res: Residual, calibration_s: float = CALIBRATION_S, z_thre
 
     z_r = _standardise(res.r, calib & res.valid, FLOOR_RESIDUAL_NM)
     track = run.arr("q_cmd") - run.arr("q")
+    if reference_run is not None:
+        # the tracking channel needs the same reference: a loaded carry tracks worse than the unloaded first seconds, and that is not a fault
+        ref = reference_run.arr("q_cmd") - reference_run.arr("q")
+        n = min(len(track), len(ref))
+        w = max(1, int(round(0.2 / float(np.median(np.diff(t))))))
+        ref = _smooth(ref[:n], w)
+        track = track.copy(); track[:n] -= ref; track[n:] = np.nan
     z_e = _standardise(track, calib & np.all(np.isfinite(track), axis=1), FLOOR_TRACKING_RAD)
 
     over_r = np.nan_to_num(np.abs(z_r), nan=0.0) > z_threshold
@@ -185,6 +250,10 @@ def main() -> int:
     ap.add_argument("--baseline", choices=BASELINES, default="none",
                     help="calibration-window baseline removed before the z-score (default none, the original rule; 'friction' finds "
                          "smaller friction faults but needs a calibration window that covers the motion, see recalibrate_baseline)")
+    ap.add_argument("--payload-aware", action="store_true",
+                    help="subtract the estimated payload's torque first, so a pickup mid-run is not read as a fault")
+    ap.add_argument("--reference", type=Path, default=None,
+                    help="a known-healthy run of the same task (same timeline): calibrate against it instead of the first seconds")
     ap.add_argument("--z", type=float, default=Z_THRESHOLD)
     ap.add_argument("--consecutive", type=int, default=CONSECUTIVE)
     args = ap.parse_args()
@@ -195,7 +264,13 @@ def main() -> int:
         run = load_run(p)
         torque = fault_torque(run) if args.torque == "auto" else args.torque
         res = compute_residual(run, model, torque=torque, cutoff_hz=args.cutoff)
-        det = detect(run, res, z_threshold=args.z, consecutive=args.consecutive, baseline=args.baseline)
+        if args.payload_aware:
+            res = compensate_payload(run, model, res, args.cutoff)
+        if args.reference:
+            ref_run = load_run(args.reference)
+            res = against_reference(res, compute_residual(ref_run, model, torque=torque, cutoff_hz=args.cutoff))
+        det = detect(run, res, z_threshold=args.z, consecutive=args.consecutive, baseline=args.baseline,
+                     reference_run=ref_run if args.reference else None)
         e = evaluate(run, det)
         delay = f"{e['delay_s']:.3f}" if e["delay_s"] is not None else "-"
         joint = f"{e['suspected_joint'] or '-'}/{e['true_joint'] or '-'}"

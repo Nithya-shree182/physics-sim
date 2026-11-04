@@ -11,7 +11,7 @@ history; where it disagrees with REVIEW.md (written later the same day), REVIEW.
 ## Run it
 
 ```bash
-tools/pal_pipeline.sh pal_o5_sweep.py out/o5     # current way: sim -> Parquet -> checks (see README.md)
+tools/pal_suite.sh o5                            # current way: sim -> Parquet -> checks; --window to watch (see README.md)
 tools/run_sim.sh pal_selftest.py                 # plant self-test; run after any change to the plant
 .venv-pal/bin/python -m pytest -q                   # all 138 tests, both teams; no simulator needed
 ```
@@ -32,7 +32,7 @@ Run any probe script through the watchdog runner:
 
 ```bash
 tools/run_sim.sh pal_fast_random.py            # -> logs/pal_fast_random.log
-PAL_STEPS=5000 PAL_PAYLOAD_KG=2 tools/run_sim.sh pal_capture.py
+tools/run_sim.sh pal_selftest.py
 ```
 
 It waits for the script's own `[PAL]` marker rather than log volume, allows 420 s for
@@ -69,11 +69,11 @@ The probe scripts are kept deliberately — each one is the evidence for a claim
 | `pal_drive_test.py` | what does tau_measured actually represent? |
 | `pal_residual_diag.py` | ablation: iterations, rate, armature, stiffness |
 | `pal_selftest.py` | plant self-test: friction in N*m, identity, mid-run inertials, push recovery |
-| `pal_capture.py` | reference captures for model calibration (effort mode, matched, no noise) |
-| `pal_extra_runs.py`, `pal_o5_clean.py` | the analysis side's requested run list; noise-free twins of the key faults |
+| `pal_suites.py`, `pal_run_suite.py` | every objective's scenarios (reference, o3, o4, o5, clean, fast, extra, push, o6, pick, o6pick, pickphys) and the runner; replaced the per-objective scripts |
+| `pal_ik.py`, `pal_tasks.py`, `pal_objects.py` | IK, pick-and-place and ellipse tasks, the physical table and cube |
+| `pal_gripper_probe.py` | measured finger geometry and drives (evidence for the physical grasp) |
 | `pal_inertia_convention.py` | which convention `set_body_inertias` uses (full 3x3 in the link frame; evidence for the fix) |
-| `pal_validation_push.py`, `pal_o4_payload.py`, `pal_o6_benchmark.py` | validation push, payload data, trajectory benchmark |
-| `pal_o5_sweep.py` / `pal_faults.py` | O5 fault injectors and the 14-scenario sweep |
+| `pal_faults.py` | O5 fault injectors |
 | `pal_friction_visibility.py` | is injected friction visible in `tau_measured`? in `tau_applied`? (only the latter) |
 | `pal_effort_test.py` | does the residual artifact survive in effort mode? (yes) |
 | `pal_rate_decouple.py` | does controller rate matter? (no) |
@@ -168,7 +168,7 @@ ownership.
 
 | | status |
 |---|---|
-| **O1** telemetry | All 7 quantities available. Writer implemented against the analysis side's schema (`pal_telemetry.py` + `pal_capture.py`). Cannot stream at 1 kHz; `M`/`J` decimation is the agreed trade. |
+| **O1** telemetry | All 7 quantities available. Writer implemented against the analysis side's schema (`pal_telemetry.py`; the runs come from `pal_suites.py`). Cannot stream at 1 kHz; `M`/`J` decimation is the agreed trade. |
 | **O2** residual | Closes at 0.15% at rest, <1% slow, <2% up to 50% of velocity limit; above it an artifact that grows with physics rate (see `docs/RESIDUAL_FLOOR.md`), not model error. Wrench conversion fixed. |
 | **O3** confidence | `c(q)` works directionally but never exceeds 0.13 anywhere; needs rescaling. Threshold is a guess. |
 | **O4** payload | Known-mass data recorded (0.5-3 kg, three poses + moving) and verified to 0.02% with independent URDF kinematics (`tools/check_payload.py`). The estimator is the analysis side's (`observers/payload.py`); not run on this data. |

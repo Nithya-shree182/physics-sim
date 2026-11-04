@@ -25,13 +25,17 @@ estimate was my error and is corrected there.)
 | F2 | `tau_measured` is net torque, so friction, backlash and a locked joint are invisible to it | **Fixed**: effort mode, applied torque is the signal |
 | F3 | Attacks dropped; the proposal includes them | **Decided and written up** (`PROPOSAL_AMENDMENTS.md`) |
 | F4 | The proposal's required plant/model mismatch was missing | **Fixed**: 5% arm-mass mismatch on every run |
-| F5 | The O5 data was schema-invalid | **Fixed**; `tools/pal_pipeline.sh` now checks every run |
+| F5 | The O5 data was schema-invalid | **Fixed**; `tools/pal_suite.sh` now checks every run |
 | F6 | Deterministic runs, so no false-alarm statistics | **Fixed**: seeded sensor noise |
 | F7 | The 5% O2 criterion has no denominator | **Reported both ways**; the stricter reading exposes a real limit (below) |
 | F8 | Reproducibility depends on files outside the repo | **Open** |
 | F9 | The validation push first failed its pre-set tolerance (15.8% with simulator terms) | **Resolved**: passes (worst 9.9%) with the independent model that includes friction; both scorings in `docs/VALIDATION.md` |
 | F10 | Mild backlash and delay leave no measurable signature | **Open**; confirmed at 20% and at 40% speed (`out/fast`), so not a speed effect |
 | F12 | The analysis side's model subtracted friction from `tau_measured`, which is net torque and has none (bias up to 0.2 N*m on payload and wrench) | **Fixed**: manifest key `tau_measured_includes_friction`; empty-arm identity now under 0.1% of every limit |
+| F13 | Windowed runs were time-warped: with the default 1/30 s rendering interval each rendered step silently advanced 33 physics steps, so the arm moved 33x as far on every rendered row and the dynamics checks broke while moving | **Fixed** (rendering interval = physics step in a window); verified: the per-row motion ratio went from 33.3 to 1.00 and a windowed run reproduces the headless one |
+| F14 | The "pick" was not a pick: no IK, no gripper motion, the payload was an invisible mass and the cube a drawing | **Fixed**: IK pick-and-place in three styles, and a physical cube gripped by driven fingers (`docs/PICK_AND_GRIPPER.md`) |
+| F15 | A healthy pick false-alarms the detector: the first 3 s of calibration never see the carry, and a payload pickup steps the residual | **Fixed by an opt-in**: calibrate against a healthy run of the same task on both channels (`--reference`); subtracting the payload torque alone does not fix it |
+| F16 | The payload estimate on a REAL cube at 2 kg is 25-36% low (modelled mass: 1-2%) | **Open**, cause not established; got worse with a harder grip |
 | F11 | Only the inertia diagonal was authored (found by the analysis side); the simulator's `M` was off by up to 0.015 kg*m^2 | **Fixed and verified** against an independent mass matrix (`pal_selftest.py` T5, 0.00004 kg*m^2) |
 
 ## What each check shows
@@ -107,14 +111,27 @@ under any realistic sensor noise; the criterion should be stated against the tor
 |---|---|---|---|
 | O1 telemetry | every quantity each physics step, no dropped frames | all quantities per step at 1 kHz, schema-valid, row counts verified | `M` and `J` held for 10 steps between reads; recorded to file, not streamed |
 | O2 residual | model within 5% on a slow unloaded run | **the independent Pinocchio model closes the clean empty-arm run to under 0.1% of every joint's limit** (`[0.007, 0.010, 0.011, 0.006, 0.076, 0.082, 0.001]` %); simulator terms 0.01%; URDF gravity matches independently | fails above ~50% speed (artifact) |
-| O3 confidence | 0-1 score gating O4 and O5 | analysis side's | their rescaled score differs from the proposal's raw ratio, deliberately |
+| O3 confidence | 0-1 score gating O4 and O5 | analysis side's, now tested on simulator runs (`tools/run_confidence_check.py`, `out/o3`): the gate closes only at the extended-elbow singular pose (c = 0.034, noise gains 26.7 and 23.8 against a limit of 10), is open at the other four poses where a 1 kg load reads 0.993-1.003 kg, and pauses the estimate on 44% of a pass through the singularity | their rescaled score differs from the proposal's raw ratio, deliberately; the near-singular *wrist* pose is not gated (its gains are 6.0 and 3.8) |
 | O4 payload | estimate converges, within a stated tolerance | known-mass data, 0.5-3 kg, verified to 0.02% against independent kinematics; **the analysis side's real estimator with a tare recovers all 15 loaded runs (held at three poses, and moving) to within 1.1%** (`tools/run_payload_estimator.py`); untared it reads ~0.25 kg high from the 5% mass mismatch | payload is a rigid point mass at the TCP, not a grasped object; the estimator itself is theirs |
 | O5 detection | detection and false-positive rate over a defined fault set, with and without the gate | injectors, 26 labelled runs, matched baselines, the C-list in `out/extra`, noise-free twins in `out/clean`; **their real detector finds 15 of 32 faulty runs with the applied torque (8 with `tau_measured`), 0 false alarms in 9** | the gate was on and never fired; friction is found from about x4 upward, x3 with the opt-in baseline that needs the calibration window to cover the motion (`DETECTION_RESULTS.md`) |
-| O6 benchmark | cycle time, peak torque, energy for three styles | built and run: 26 runs, table below | single waypoint pair, two payloads; no pick-and-place with a gripper |
-| O7 presentation | streamed dashboard and in-sim panel | not built here | dashboard is theirs; stream and in-sim panel are ours and not done |
+| O6 benchmark | cycle time, peak torque, energy per pick for three styles | built twice: out-and-back (26 runs, below) and on a real IK pick cycle (18 runs, `docs/o6pick_comparison.svg`) | one pick location, two payloads |
+| O7 presentation | streamed dashboard and in-sim panel | the simulator runs in a window with a physical table and cube (`tools/pal_suite.sh --window`) | the stream to the dashboard and the in-sim panel are not built |
 | Validation | known force against estimate | built and run: 24 runs; **passes with the independent model (worst 9.9% against 15%)** | with simulator terms it missed by 0.8 points on one run, cause and control in `VALIDATION.md` |
 
-### O6 result (the proposal's headline question)
+### O6 on a real pick cycle (`out/o6pick`, `tools/summarize_o6pick.py`)
+
+Shortest cycle time that keeps peak torque within a budget, home to home through the whole IK pick (the proposal's "energy per pick"):
+
+| payload | budget | trapezoidal | S-curve | torque-aware |
+|---|---|---|---|---|
+| 0 kg | 55% | 5.67 s | 6.09 s | 7.54 s |
+| 0 kg | 70% | 4.35 s | 5.10 s | 5.64 s |
+| 2 kg | 70% | 8.03 s | 6.09 s | 7.54 s |
+
+The 2 kg 70% row is knife-edge: the 5.67 s trapezoid peaks at 70.4%, just outside the budget. Nothing meets 40% or, at 2 kg, 55%. The fastest runs reach 96-97% of the
+velocity limit, above the 50% regime, so they are for time, torque and energy only (never the residual).
+
+### O6 out-and-back (the proposal's headline question)
 
 Shortest cycle time that keeps peak torque within a budget (fraction of datasheet limits), out-and-back
 between two joint configurations; chart in `docs/o6_comparison.svg`:
