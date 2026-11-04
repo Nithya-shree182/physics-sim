@@ -29,8 +29,8 @@ ATTEMPTS="${PAL_ATTEMPTS:-3}"
 mkdir -p "$ROOT/logs" "$ROOT/data" "$ROOT/out"
 # The container runs as uid 1234 — neither root nor the host user — so host directories at
 # the usual 755 are not writable by it, and that fails only at the END of a run.
-mkdir -p "$ROOT/out/o5" "$ROOT/out/o4" "$ROOT/out/o6" "$ROOT/out/push" "$ROOT/out/extra" "$ROOT/out/clean" "$ROOT/out/fast"
-chmod 777 "$ROOT/data" "$ROOT/out" "$ROOT/out/o5" "$ROOT/out/o4" "$ROOT/out/o6" "$ROOT/out/push" "$ROOT/out/extra" "$ROOT/out/clean" "$ROOT/out/fast" 2>/dev/null || true
+mkdir -p "$ROOT/out/o5" "$ROOT/out/o4" "$ROOT/out/o6" "$ROOT/out/push" "$ROOT/out/extra" "$ROOT/out/clean" "$ROOT/out/fast" "$ROOT/out/live"
+chmod 777 "$ROOT/out/live" "$ROOT/data" "$ROOT/out" "$ROOT/out/o5" "$ROOT/out/o4" "$ROOT/out/o6" "$ROOT/out/push" "$ROOT/out/extra" "$ROOT/out/clean" "$ROOT/out/fast" 2>/dev/null || true
 
 cleanup() { docker rm -f "$NAME" >/dev/null 2>&1 || true; }
 # Files the container writes (uid 1234) can come out owner-only, e.g. viewport PNGs; open them so the host user can read them.
@@ -48,7 +48,7 @@ for attempt in $(seq 1 "$ATTEMPTS"); do
     -e ACCEPT_EULA=Y -e PRIVACY_CONSENT=Y -e OMNI_KIT_ACCEPT_EULA=YES \
     -e NVIDIA_DRIVER_CAPABILITIES=all -e ISAAC_SIM_HEADLESS="${HEADLESS:-1}" \
     "${X11_ARGS[@]}" \
-    $(env | grep -E '^PAL_(STEPS|TRAJ|PAYLOAD_KG|PHYSICS_HZ|MJ_EVERY|RUN_ID|DRIVE_MODE|FRAC|SEED|GIT_COMMIT|MACHINE|NO_FRICTION|FRICTION_API|FAST_FRAC|SUITE|ONLY|RENDER_EVERY|FRAMES|DURATION_S|ONSET_S)=' | sed 's/^/-e /') \
+    $(env | grep -E '^PAL_(STEPS|TRAJ|PAYLOAD_KG|PHYSICS_HZ|MJ_EVERY|RUN_ID|DRIVE_MODE|FRAC|SEED|GIT_COMMIT|MACHINE|NO_FRICTION|FRICTION_API|FAST_FRAC|SUITE|ONLY|RENDER_EVERY|FRAMES|DURATION_S|ONSET_S|LIVE_PORT|LIVE_REALTIME)=' | sed 's/^/-e /') \
     -v "$CACHE/kit:/isaac-sim/kit/cache:rw" -v "$CACHE/ov:/root/.cache/ov:rw" \
     -v "$ROOT/workspace:/workspace:rw" \
     -v "$ROOT/assets/franka_panda:/workspace/assets:ro" \

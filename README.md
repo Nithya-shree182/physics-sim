@@ -51,6 +51,7 @@ All runs are **effort mode**: the arm is driven by explicit torques and `tau_app
 | path | what |
 |---|---|
 | `model/pinocchio_model.py`, `observers/` | the analysis side: independent model, residual, confidence, payload, detector (`docs/ANALYSIS_CONTEXT.md`, `setup.md`) |
+| `pal.sh` | **start everything**: `./pal.sh` (headless Isaac Sim + dashboard with the simulator's picture inside it, press Run pick), `--window`, `--dash-only`, `--stop`, `--status`, `--logs`, `--test [suite]` |
 | `dashboard/` | the Plotly Dash dashboard (`dashboard/README.md`); runs on a stand-in plant or replays `data/ref_matched_*` |
 | `workspace/pal_plant.py` | **the one place the plant is built** (inertials, friction, armature, gains) |
 | `workspace/pal_config.py` | every parameter, each tagged with its source |

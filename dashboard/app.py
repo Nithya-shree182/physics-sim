@@ -10,6 +10,7 @@ and says which in the header. See engine.py for what is real and what is a stand
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -36,7 +37,7 @@ DEMO = [
     dict(t="5 · Compare the trajectory styles", len=10, reach=0.0, drawer=None, tab="bench", ctl=dict(fault="none"),
          d="Waits for dev: three movement styles between the same waypoints, with time, peak torque and energy."),
 ]
-DEF_UI = dict(tab="arm", drawer=None, chan="res", sel=3, more=False, brk=False, view="twin", demo=dict(on=False, step=0, t0=0.0, later=False), nonce=0)
+DEF_UI = dict(tab="arm", drawer=None, chan="res", sel=3, more=False, brk=False, view=("stream" if os.environ.get("PAL_DASH_SOURCE") == "isaac" else "twin"), demo=dict(on=False, step=0, t0=0.0, later=False), nonce=0)
 PANELS = [("o1", "O1 Telemetry"), ("o3", "O3 Confidence"), ("o4", "O4 Payload"), ("about", "About")]
 CHANS = [("res", "Residual"), ("tau", "Torque"), ("conf", "Confidence"), ("pay", "Payload")]
 TITLES = dict(o1="O1 Telemetry · current frame", o3="O3 Pose confidence", o4="O4 Payload estimator", alerts="Alerts", about="About this view")
@@ -52,19 +53,23 @@ layout_joint_speeds = [html.Div(style=dict(display="flex", flexDirection="column
         html.Label(f"Joint {i + 1}", htmlFor=f"spd-{i}"), html.Span(id=f"spd-txt-{i}", className="num")]),
     slider(f"spd-{i}", 5, 100, 5, 30)]) for i in range(7)]
 
+DEFAULT_SOURCE = os.environ.get("PAL_DASH_SOURCE", "live")       # pal.sh sets "isaac"
+SIM_URL = os.environ.get("PAL_LIVE_URL", "http://127.0.0.1:8765")
+
+
 def serve_layout():
     """Runs on every page load: the server has one engine, so a fresh page starts it afresh (stand-in plant,
     running, no fault) and the controls on screen always match what the engine is doing."""
-    E.use("live")
+    E.use(DEFAULT_SOURCE)
     E.playing = True
     return html.Div(className="page", children=[
         dcc.Store(id="ui", data=DEF_UI), dcc.Store(id="demo-ctl", data={}), dcc.Store(id="dummy"), dcc.Store(id="ctl-sync"),
-        dcc.Interval(id="tick", interval=500),
+        dcc.Interval(id="tick", interval=500), dcc.Interval(id="frame-tick", interval=350),
         html.Header(className="hdr", children=[
             html.Div(className="brand", children=[html.B("PAL"), html.Span("Franka Panda #1", className="muted", style=dict(fontSize=13))]),
             html.Div(id="pill", className="pill"),
-            dcc.RadioItems(id="source", className="radio", value="live", inline=True,
-                           options=[dict(label="Stand-in plant", value="live"), dict(label="Replay real 0 kg", value="0kg"), dict(label="Replay real 1 kg", value="1kg")]),
+            dcc.RadioItems(id="source", className="radio", value=DEFAULT_SOURCE, inline=True,
+                           options=[dict(label="Isaac Sim (live)", value="isaac"), dict(label="Stand-in plant", value="live"), dict(label="Replay real 0 kg", value="0kg"), dict(label="Replay real 1 kg", value="1kg")]),
             html.Span(id="hdr-t", className="num", style=dict(fontSize=13, minWidth=96)),
             html.Button("Pause", id="play", n_clicks=0, className="btn", style=dict(minWidth=88)),
             html.Button("Demo", id="demo-btn", n_clicks=0, className="btn", style=dict(minWidth=88)),
@@ -96,13 +101,25 @@ def serve_layout():
                                 dcc.Graph(id="twin-graph", config=dict(displayModeBar=False, staticPlot=True), style=dict(height=380)),
                                 html.Div(id="stream", style=dict(display="none", aspectRatio="640 / 420", background="#05070a", border="1px dashed rgba(255,255,255,0.18)", borderRadius=6,
                                                                  alignItems="center", justifyContent="center", flexDirection="column", gap=8, textAlign="center"),
-                                         children=[html.Div("Headless Isaac Sim, streamed over HTTP"), html.Div("[stream URL from dev]", className="muted", style=dict(fontSize=12))]),
+                                         children=[html.Img(id="sim-img", style=dict(width="100%", height="100%", objectFit="contain", display="block")),
+                                                   html.Div(id="sim-msg", className="muted", style=dict(fontSize=12, position="absolute", padding=8))]),
                                 html.Div(className="row", style=dict(marginTop=8, fontSize=11, color="#9ca3af", gap="6px 18px"), children=[
                                     html.Span("Link tint: share of torque limit"),
                                     html.Span(style=dict(display="flex", alignItems="center", gap=6), children=[
                                         html.Span(style=dict(width=60, height=8, borderRadius=4, background="linear-gradient(90deg,#4b5563,#fab219,#f87171)")), "0 – 100%"]),
                                     html.Span("Dashed ellipse: how freely the hand can move (flat = near singular)")])]),
                             html.Div(id="stats", style=dict(flex="1 1 200px", minWidth=0, display="flex", flexDirection="column", gap=10))])]),
+                    html.Section(id="task-card", className="card", style=dict(padding="14px 18px", display="none"), children=[
+                        html.Div(className="row", style=dict(gap="12px 24px", alignItems="center"), children=[
+                            html.Div(children=[html.Div("PICK STYLE", className="lbl"),
+                                               dcc.RadioItems(id="task-style", className="radio", value="s_curve", inline=True, options=[
+                                                   dict(label="Trapezoidal", value="trapezoidal"), dict(label="S-curve", value="s_curve"), dict(label="Torque-aware", value="torque_aware")])]),
+                            html.Button("Run pick", id="task-run", n_clicks=0, className="btn btn-on"),
+                            html.Button("Stop", id="task-stop", n_clicks=0, className="btn"),
+                            dcc.Checklist(id="task-loop", options=[dict(label=" repeat", value="loop")], value=[], className="radio"),
+                            html.Div(id="task-status", className="muted", style=dict(fontSize=13, flex="1 1 260px"))]),
+                        html.P("The load slider below is the cube's mass (0.2 to 3 kg). A fault chosen under More controls starts 0.4 s after the grasp, on the joint chosen there.",
+                               className="muted", style=dict(margin="8px 0 0", fontSize=12))]),
                     html.Section(className="card", style=dict(padding="14px 18px"), children=[
                         html.Div(id="ctl-note"),
                         html.Div(id="ctl-wrap", children=[
@@ -161,6 +178,8 @@ def controls(load, fault, fjoint, *spd):
     if E.source.kind == "live":
         E.set_controls(load=float(load or 0), speeds=[float(v or 30) for v in spd], fault=fault or "none",
                        fault_joint=int(fjoint if fjoint is not None else 2))
+    elif E.source.kind == "isaac":                                  # speeds are set by the pick style; these three apply to the next pick
+        E.set_controls(load=float(load or 0), fault=fault or "none", fault_joint=int(fjoint if fjoint is not None else 3))
     return no_update
 
 
@@ -189,11 +208,33 @@ def play(_):
 
 @app.callback(
     [Output("load", "value", allow_duplicate=True), Output("spd-all", "value", allow_duplicate=True), Output("fault", "value", allow_duplicate=True),
-     Output("fault-joint", "value", allow_duplicate=True)],
-    Input("source", "value"), prevent_initial_call=True)
-def source(which):
+     Output("fault-joint", "value", allow_duplicate=True), Output("ui", "data", allow_duplicate=True)],
+    Input("source", "value"), State("ui", "data"), prevent_initial_call=True)
+def source(which, ui):
     E.use(which)
-    return (E.controls.load, 30, "none", 2) if which == "live" else (E.controls.load, no_update, "none", no_update)
+    ui = dict(ui, view="stream" if which == "isaac" else "twin")
+    if which == "isaac":
+        return E.controls.load, 30, "none", 3, ui
+    return (E.controls.load, 30, "none", 2, ui) if which == "live" else (E.controls.load, no_update, "none", no_update, ui)
+
+
+@app.callback(Output("dummy", "data", allow_duplicate=True), Input("task-run", "n_clicks"), State("task-style", "value"), State("task-loop", "value"),
+              State("load", "value"), State("fault", "value"), State("fault-joint", "value"), prevent_initial_call=True)
+def task_run(n, style, loop, kg, fault, joint):
+    if E.source.kind == "isaac" and n:
+        E.source.last_reply = E.source.command(cmd="run", style=style, kg=max(0.2, float(kg or 1.0)), fault=fault or "none",
+                                               joint=int(joint if joint is not None else 3), loop=bool(loop))
+    return no_update
+
+
+@app.callback(Output("dummy", "data", allow_duplicate=True), Input("task-stop", "n_clicks"), prevent_initial_call=True)
+def task_stop(n):
+    if E.source.kind == "isaac" and n:
+        E.source.last_reply = E.source.command(cmd="stop")
+    return no_update
+
+
+app.clientside_callback("function(n){return '%s/frame.png?' + Date.now();}" % SIM_URL, Output("sim-img", "src"), Input("frame-tick", "n_intervals"))
 
 
 @app.callback(Output("dummy", "data", allow_duplicate=True), Input("tare-on", "n_clicks"), Input("tare-off", "n_clicks"), prevent_initial_call=True)
@@ -324,6 +365,24 @@ _REAL = None
 _toast_sig = None
 
 
+def _task_status(src):
+    """Text for the task card and the picture overlay, from the simulator's own status."""
+    st = src.status
+    if not src.connected:
+        return "Simulator not reachable yet. It takes a few minutes to start (see logs/pal_live.log).", "Waiting for the simulator at %s ..." % SIM_URL
+    reply = getattr(src, "last_reply", None)
+    if reply and not reply.get("ok", True):
+        return f"Command refused: {reply.get('error')}", ""
+    if st.get("state") == "running":
+        f = "" if st.get("fault", "none") == "none" else f" · fault: {st['fault']}" + (f" on joint {st['joint'] + 1}" if st.get("joint", -1) >= 0 else "")
+        return f"Picking a {st['kg']:g} kg cube, {st['style']} · {st['t']:.1f} of {st['duration']:.1f} s{f}" + (" · repeating" if st.get("loop") else ""), ""
+    last = st.get("last")
+    if last:
+        verdict = "cube placed" if last["ok"] else ("stopped" if last["aborted"] else "PICK FAILED: cube not at the place point")
+        return f"Idle. Last pick: {last['kg']:g} kg, fault {last['fault']}: {verdict} ({last['placed_error_m'] * 1000:.0f} mm from target).", ""
+    return "Ready. Press Run pick.", "" if st.get("windowed") else "Simulator is headless: no picture (start without --headless to see it)."
+
+
 def _real_pct():
     global _REAL
     if _REAL is None:
@@ -339,7 +398,7 @@ def _real_pct():
 
 OUTS = ["hdr-t", "bell", "bell:cls", "pill", "pill:style", "play", "demo-banner:style", "demo-title", "demo-remain", "demo-text", "demo-dots",
         "tab-arm:cls", "tab-bench:cls", "main-arm:style", "main-bench:style", "twin-graph:style", "stream:style", "v-twin:cls", "v-stream:cls",
-        "stats", "ctl-wrap:cls", "ctl-note", "more:style", "more-btn", "load-txt", "spd-txt", "chart-title", "chart-sub", "main-chart:fig",
+        "task-card:style", "task-status", "sim-msg", "stats", "ctl-wrap:cls", "ctl-note", "more:style", "more-btn", "load-txt", "spd-txt", "chart-title", "chart-sub", "main-chart:fig",
         "brk-btn", "brk", "main-bench", "drawer:style", "drawer-title", "drawer-body", "toasts"] + [f"p-{k}:cls" for k, _ in PANELS] + [f"ch-{k}:cls" for k, _ in CHANS] + \
        [f"spd-txt-{i}" for i in range(7)] + ["twin-graph:fig"]
 _PROP = {"cls": "className", "style": "style", "fig": "figure"}
@@ -360,10 +419,15 @@ def render(_n, ui):
     if not snap or "geom" not in snap:
         raise_ = [no_update] * (len(OUTS) + 2)
         raise_[OUTS.index("hdr-t")] = "warming up…"
+        if E.source.kind == "isaac":                      # the simulator takes minutes to boot: say what it is doing
+            raise_[OUTS.index("task-card:style")] = dict(padding="14px 18px", display="block")
+            raise_[OUTS.index("task-status")], raise_[OUTS.index("sim-msg")] = _task_status(E.source)
+            raise_[OUTS.index("stream:style")] = dict(display="flex", position="relative", aspectRatio="16 / 9", background="#05070a", borderRadius=6)
         return raise_
     an = E.an
     cal = an.cal
-    live = E.source.kind == "live"
+    kind = E.source.kind
+    live = kind == "live"
     active = [a for a in snap["alerts"].values() if a["sev"] > 0]
     sel = ui["sel"]
     dm = ui["demo"]
@@ -372,7 +436,9 @@ def render(_n, ui):
     r["hdr-t"] = f"t = {snap['t']:.2f} s"
     r["bell"] = f"Alerts {len(active)}"
     r["bell:cls"] = on(ui["drawer"] == "alerts", "btn")
-    if live:
+    if kind == "isaac":
+        r["pill"] = [html.Span(className="dot", style=dict(background="#34d399")), "ISAAC SIM · live pick on the physical cube"]
+    elif live:
         r["pill"] = [html.Span(className="dot", style=dict(background="#fab219")), "STAND-IN · Pinocchio plant, not Isaac Sim"]
     else:
         r["pill"] = [html.Span(className="dot", style=dict(background="#34d399")), f"REPLAY · dev's Isaac Sim log ({E.source.name.split('_')[2]}), looped"]
@@ -388,14 +454,16 @@ def render(_n, ui):
     r["main-arm:style"] = dict(display="flex" if ui["tab"] == "arm" else "none", flexDirection="column", gap=20)
     r["main-bench:style"] = dict(display="flex" if ui["tab"] == "bench" else "none", flexDirection="column", gap=20)
     r["twin-graph:style"] = dict(height=380, display="block" if ui["view"] == "twin" else "none")
-    r["stream:style"] = dict(display="flex" if ui["view"] == "stream" else "none", aspectRatio="640 / 420", background="#05070a",
+    r["stream:style"] = dict(display="flex" if ui["view"] == "stream" else "none", position="relative", aspectRatio="16 / 9", background="#05070a",
                              border="1px dashed rgba(255,255,255,0.18)", borderRadius=6, alignItems="center", justifyContent="center",
                              flexDirection="column", gap=8, textAlign="center")
     r["v-twin:cls"] = on(ui["view"] == "twin", "btn btn-s")
     r["v-stream:cls"] = on(ui["view"] == "stream", "btn btn-s")
     r["stats"] = V.stat_cards(snap, cal)
-    r["ctl-wrap:cls"] = "" if live else "disabled"
-    r["ctl-note"] = [] if live else html.Div("Replay of a real log: the load and speed are what dev recorded. Switch to the stand-in plant to use the controls.", className="banner", style=dict(marginBottom=10))
+    r["task-card:style"] = dict(padding="14px 18px", display="block" if kind == "isaac" else "none")
+    r["task-status"], r["sim-msg"] = _task_status(E.source) if kind == "isaac" else ("", "")
+    r["ctl-wrap:cls"] = "" if kind in ("live", "isaac") else "disabled"
+    r["ctl-note"] = [] if kind in ("live", "isaac") else html.Div("Replay of a real log: the load and speed are what dev recorded. Switch to the stand-in plant to use the controls.", className="banner", style=dict(marginBottom=10))
     r["more:style"] = dict(display="flex" if ui["more"] else "none", flexDirection="column", gap=14, paddingTop=12,
                            borderTop="1px solid rgba(255,255,255,0.12)", marginTop=12)
     r["more-btn"] = "Fewer controls" if ui["more"] else "More controls"
@@ -440,5 +508,5 @@ def render(_n, ui):
 
 
 if __name__ == "__main__":
-    print("PAL dashboard on http://127.0.0.1:8050  (stand-in plant; not Isaac Sim)")
-    app.run(debug=False, host="127.0.0.1", port=8050)
+    print(f"PAL dashboard on http://127.0.0.1:8050  (source: {DEFAULT_SOURCE})")
+    app.run(debug=False, host="127.0.0.1", port=int(os.environ.get("PAL_DASH_PORT", "8050")))

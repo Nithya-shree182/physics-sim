@@ -199,6 +199,22 @@ def pickphys(masses=(0.5, 1.0, 2.0)):
     return runs
 
 
+LIVE_FAULTS = {"friction": 8.0, "stuck_joint": 200.0, "delay": 0.050}       # what the dashboard's fault choices mean in the simulator
+
+
+def live_pick(style="s_curve", kg=1.0, fault="none", joint=3, name="live_pick"):
+    """One real pick for the live dashboard: the physical cube at `kg`, the given style, and optionally a fault that starts 0.4 s after the grasp.
+    Same scenario recipe as pickphys(), without sensor noise (the live server adds its own to what it streams)."""
+    if style not in ("trapezoidal", "s_curve", "torque_aware"):
+        raise ValueError(f"unknown style {style!r}")
+    if not 0.2 <= kg <= 3.0:
+        raise ValueError("cube mass must be 0.2-3 kg")
+    task = K.pick_place(style, physical=True)
+    f = FaultSpec() if fault == "none" else FaultSpec(fault, 0 if fault == "delay" else int(joint), LIVE_FAULTS[fault], task.t_attach + 0.4)
+    return Scenario(name=name, traj=task.traj, traj_type="pick", duration_s=task.duration + 0.5, payload_physical=True,
+                    payload_events=((task.t_attach, kg), (task.t_open, 0.0)), cube_kg=kg, task=task, fault=f)
+
+
 def o6pick():
     """O6 on a real pick cycle: cycle time, peak torque and energy per pick, for each style over a speed grid, at 0 and 2 kg."""
     grid = {"trapezoidal": [dict(vscale=v, ascale=v) for v in (1.0, 0.6, 0.35)],

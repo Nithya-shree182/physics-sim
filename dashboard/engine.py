@@ -17,6 +17,8 @@ filter edge that residual.py drops.
 """
 from __future__ import annotations
 
+import json
+import os
 import sys
 import threading
 import time
@@ -206,6 +208,77 @@ class ReplaySource:
             self.k = 0
         return Block(self.t, self.q[take], self.qd[take], tau, self.qc[take],
                      {"load": self.payload_kg, "fault": "none", "fault_joint": -1})
+
+
+class IsaacSource:
+    """The live Isaac Sim (workspace/pal_live.py, started by pal.sh): rows come over HTTP, the dashboard commands picks back.
+    Rows are 200 Hz; a block is 10 of them (50 ms). A new `run_id` means a new pick: the window and the detector restart."""
+    kind = "isaac"
+    timing = "backward"
+    URL = os.environ.get("PAL_LIVE_URL", "http://127.0.0.1:8765")
+
+    def __init__(self):
+        self.twin = None
+        self.cursor = 0
+        self._synced = False
+        self.pending = deque()
+        self.status = {}
+        self.connected = False
+        self.run_id = None
+        self.new_run = False
+        self.c = Controls()
+        self.c.load = 1.0
+        self.last_error = ""
+        self._last_poll = 0.0
+
+    def _get(self):
+        import urllib.request
+        with urllib.request.urlopen(f"{self.URL}/state?since={self.cursor}", timeout=1.5) as r:
+            return json.loads(r.read())
+
+    def poll(self):
+        try:
+            d = self._get()
+        except Exception as exc:
+            self.connected, self.last_error = False, repr(exc)
+            return
+        self.connected = True
+        self.status = d["status"]
+        if not self._synced or d["seq"] < self.cursor:   # first contact, or the simulator restarted: start at "now", not at its history
+            self._synced = True
+            self.cursor = d["seq"]
+            self.pending.clear()
+            return
+        self.cursor = d["last"]
+        self.pending.extend(d["rows"])
+        while len(self.pending) > 1500:                  # more than 7 s behind: skip ahead
+            self.pending.popleft()
+
+    def command(self, **msg) -> dict:
+        import urllib.request
+        req = urllib.request.Request(f"{self.URL}/cmd", json.dumps(msg).encode(), {"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=3) as r:
+                return json.loads(r.read())
+        except Exception as exc:
+            return {"ok": False, "error": repr(exc)}
+
+    def next_block(self):
+        if len(self.pending) < DECIM * 2 and time.time() - self._last_poll > 0.04:
+            self._last_poll = time.time()
+            self.poll()
+        n = BLOCK_STEPS // DECIM
+        if len(self.pending) < n:
+            return None
+        rows = [self.pending.popleft() for _ in range(n)]
+        if rows[0][-1] != self.run_id:
+            self.run_id, self.new_run = rows[0][-1], True
+        rows = [r for r in rows if r[-1] == self.run_id] or rows
+        a = np.array([r[:-2] for r in rows], dtype=float)
+        held = float(rows[-1][-2])
+        st = self.status
+        return Block(t=float(a[-1, 0]), q=a[:, 1:8], qd=a[:, 8:15], tau=a[:, 15:22], q_cmd=a[:, 22:29],
+                     truth={"load": held, "fault": st.get("fault", "none"), "fault_joint": st.get("joint", -1)})
 
 
 # ── analysis ────────────────────────────────────────────────────────────────────────────
@@ -490,6 +563,10 @@ class Analyzer:
 
 
 # ── the running engine ──────────────────────────────────────────────────────────────────
+class _NoBlock(Exception):
+    pass
+
+
 class Engine:
     """Steps the source in real time on a background thread; the UI reads `.snapshot`."""
 
@@ -508,6 +585,10 @@ class Engine:
                 self.source = LiveSource()
                 self.twin = self.source.twin
                 self.an = Analyzer(self.twin, "forward", detector=True)
+            elif which == "isaac":
+                self.source = IsaacSource()
+                self.twin = load_panda()
+                self.an = Analyzer(self.twin, "backward", detector=True)
             else:
                 path = REPO / "data" / f"ref_matched_{which}_1000hz.parquet"      # our tracked reference runs
                 self.twin = load_panda()
@@ -544,10 +625,18 @@ class Engine:
                 with self.lock:
                     try:
                         blk = self.source.next_block()
+                        if blk is None:                                  # the simulator has not sent a full block yet
+                            raise _NoBlock
+                        if getattr(self.source, "new_run", False):       # a new pick: start the window and the detector afresh
+                            self.source.new_run = False
+                            self.an.reset_window()
+                            self.an.recalibrate()
                         self.t_run += BLOCK_STEPS * 1e-3
                         if self.source.kind == "replay" and getattr(self.source, "wrapped", False):
                             self.an.reset_window()
                         self.an.feed(blk, self.controls, self.t_run)
+                    except _NoBlock:
+                        pass
                     except Exception as exc:                      # keep the loop alive; the UI shows the error
                         self.an.snapshot = dict(self.an.snapshot, error=repr(exc))
                 self.cost_ms = (time.perf_counter() - t0) * 1e3

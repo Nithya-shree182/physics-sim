@@ -76,3 +76,18 @@ class Suites(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_live_pick_builds_and_validates():
+    import pal_suites as S
+    sc = S.live_pick("s_curve", 1.5, "none")
+    assert sc.cube_kg == 1.5 and sc.payload_physical and sc.fault.type == "none"
+    f = S.live_pick("torque_aware", 1.0, "stuck_joint", joint=0).fault
+    assert f.type == "stuck_joint" and f.joint == 0 and f.onset_s > 0
+    assert S.live_pick("s_curve", 1.0, "delay").fault.joint == 0          # a delay carries the nominal joint 0
+    for bad in (dict(style="zigzag"), dict(kg=9.0)):
+        try:
+            S.live_pick(**bad)
+        except ValueError:
+            continue
+        raise AssertionError(bad)
