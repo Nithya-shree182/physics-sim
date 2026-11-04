@@ -1,5 +1,7 @@
 # Dashboard plan (objective O7)
 
+> **2026-11-05:** this was the plan. The dashboard is built and was redesigned; what it does now is in `dashboard/README.md` and `DECISIONS.md` D9. The confidence panel and the over-speed state in this plan no longer exist.
+
 Status: **first version built** (`dashboard/`, Plotly Dash; see `dashboard/README.md`), running on a
 stand-in plant and on replays of dev's real logs. The live Isaac Sim parts wait for dev's feed. The
 interactive design canvas below is the reference. Last updated 2026-11-03 (23:30 IST).

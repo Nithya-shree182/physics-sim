@@ -3,7 +3,7 @@
 Physics Attestation Layer: a Franka Panda digital twin in Isaac Sim that audits the arm by
 comparing measured torque against model torque. Proposal is the PDF in the repo root.
 
-Last worked: 2026-11-04. Branch `dev`, which now also contains the analysis side (merged from `nithya`; see `docs/README.md` and `docs/STATUS.md`). **Start with `README.md` and `docs/REVIEW.md`.** This file is the long-form
+Last worked: 2026-11-05. **For the current state read `docs/HANDOFF.md` and `DECISIONS.md` first** (confidence removed, live view at 250 Hz, speed capped at 50%, reference-based faults, redesigned dashboard); this file is the long-form history up to 2026-11-04. Branch `dev`, which now also contains the analysis side (merged from `nithya`; see `docs/README.md` and `docs/STATUS.md`). **Start with `README.md` and `docs/REVIEW.md`.** This file is the long-form
 history; where it disagrees with REVIEW.md (written later the same day), REVIEW.md wins.
 
 ---
@@ -13,7 +13,7 @@ history; where it disagrees with REVIEW.md (written later the same day), REVIEW.
 ```bash
 tools/pal_suite.sh o5                            # current way: sim -> Parquet -> checks; --window to watch (see README.md)
 tools/run_sim.sh pal_selftest.py                 # plant self-test; run after any change to the plant
-.venv-pal/bin/python -m pytest -q                   # all 138 tests, both teams; no simulator needed
+.venv-pal/bin/python -m pytest -q                   # all 165 tests, both teams; no simulator needed
 ```
 
 Older scripts and the notes below predate 2026-11-03 (the scene audit and early probes build the OLD plant, whose
@@ -170,11 +170,11 @@ ownership.
 |---|---|
 | **O1** telemetry | All 7 quantities available. Writer implemented against the analysis side's schema (`pal_telemetry.py`; the runs come from `pal_suites.py`). Cannot stream at 1 kHz; `M`/`J` decimation is the agreed trade. |
 | **O2** residual | Closes at 0.15% at rest, <1% slow, <2% up to 50% of velocity limit; above it an artifact that grows with physics rate (see `docs/RESIDUAL_FLOOR.md`), not model error. Wrench conversion fixed. |
-| **O3** confidence | `c(q)` works directionally but never exceeds 0.13 anywhere; needs rescaling. Threshold is a guess. |
+| **O3** confidence | **Removed 2026-11-05** (`DECISIONS.md` D4, D6): no score, no panel, no payload gate; the detector keeps one pose rule (`observers/pose_mask.py`). |
 | **O4** payload | Known-mass data recorded (0.5-3 kg, three poses + moving) and verified to 0.02% with independent URDF kinematics (`tools/check_payload.py`). The estimator is the analysis side's (`observers/payload.py`); not run on this data. |
 | **O5** detection | Built: friction, stuck joint, delay, backlash injectors; 5% mass mismatch; seeded sensor noise; 26 labelled runs in effort mode, plus the analysis side's requested set in `out/extra` (`docs/O5_INJECTORS.md`). Backlash and short delays are invisible at this speed. Detector is the analysis side's; not yet run on our data. |
 | **O6** benchmark | Built and run: trapezoidal, S-curve, quintic over a speed grid at 0 and 2 kg, 26 runs; table and chart in `docs/REVIEW.md`, `docs/o6_comparison.svg`. |
-| **O7** dashboard | Dashboard is the analysis side's. Our parts (websocket stream, in-sim panel) not built. |
+| **O7** dashboard | Built and live: `./pal.sh` streams rows over HTTP (`workspace/pal_live.py`) to the dashboard, with a run summary, compact alerts and a benchmark tab (`DECISIONS.md` D9). Not built: the in-simulator panel. |
 | Validation push | Built and run (24 runs). Exact with friction off (0.2%); with realistic friction 15.8% worst case against a 15% pre-set limit: strict verdict FAIL, cause identified (`docs/VALIDATION.md`). |
 
 ---
@@ -227,10 +227,7 @@ real time (`DECISIONS.md` D3).
 
 ## What is left
 
-1. Analysis side: run `observers/` on `data/ref_matched_*`, `out/o5`, `out/o4`; report detection and false-positive rates
-   with and without the confidence gate.
-2. Ours, not built: websocket stream and in-sim panel (O7); a grasped payload with gripper actuation; backlash with
-   impacts; faster-motion fault sets.
-3. Keep `docs/REVIEW.md` current when results change.
+See `docs/HANDOFF.md` ("Open items") for the current list. In short: the dead-code sweep (D2), faults at random cube positions,
+fault-time payload estimates, why 250 Hz fixes the 2 kg real cube, and the in-simulator panel. Keep `docs/REVIEW.md` current.
 
 Full history with evidence in `docs/OPEN_PROBLEMS.md`.

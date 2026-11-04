@@ -1,5 +1,7 @@
 # Detection results with the analysis side's real code
 
+> **2026-11-05:** the detector's "50 consecutive steps" is now 50 ms (`observers/detector.py`, `CONSECUTIVE_S`); results at 1000 Hz are unchanged. Detection on live picks: `DECISIONS.md` D7.
+
 Written for: both people, and whoever reports O5. Supersedes `docs/PREVIEW_DETECTION.md`.
 
 > **Correction, 2026-11-04.** An earlier version of this page, and the notes sent to the analysis side in `e7b25a3`, said the

@@ -1,31 +1,44 @@
-# PAL dashboard (objective O7)
+# Dashboard: Physics Attestation Layer
 
-Plotly Dash, one page, following [docs/DASHBOARD_PLAN.md](../docs/DASHBOARD_PLAN.md) and the final design canvas.
+Plotly Dash, one page, NTT DATA branded. Started with the rest of the system by `./pal.sh` (http://127.0.0.1:8050), or alone on its
+stand-in plant with `python dashboard/app.py` (`.venv-pal`). Design record: `DECISIONS.md` D9; screens in `docs/screens/`.
 
-```
-conda activate pal
-python dashboard/app.py          # http://127.0.0.1:8050
-```
+## Sources (the switch on the toolbar)
 
-## What it runs on today
-
-| Source (header switch) | What it is |
+| Source | What it is |
 |---|---|
-| **Stand-in plant** (default) | Our Pinocchio plant (link masses ±3%, friction ×1.15, sensor noise) under a joint-impedance controller, stepped live. The mock load, speed and test-fault controls drive it. **Not Isaac Sim**: the header says so. |
-| **Replay real 0 kg / 1 kg** | Dev's real Isaac Sim slow-reference logs from `data/real/`, looped. Controls are disabled; the payload estimate and residual are the real ones (1 kg reads about 0.96 to 1.02 kg raw). |
+| **Isaac Sim (live)** | The live simulator (`workspace/pal_live.py`, 250 Hz physics): rows come over HTTP, picks are sent back. Run pick, stop, repeat, random cube position, cube mass, speed bar, test fault. |
+| **Stand-in plant** | A Pinocchio plant (link masses +-3%, friction x1.15, sensor noise) under a joint-impedance controller. Not Isaac Sim; the toolbar says so. |
+| **Replay · empty arm / 1 kg** | Recorded Isaac Sim slow-reference logs from `data/ref_matched_*`, looped. Controls are off. |
 
-The live Isaac Sim feed is a third source (`engine.IsaacSource`, started by `./pal.sh`; rows over HTTP from `workspace/pal_live.py`).
+## The page
 
-## What is real and what is a stand-in
+- **Run controls** (top): pick style, Run / Stop, repeat, random cube position; cube mass and speed bars (0 to 100%, where 100% is half of each
+  joint's velocity limit); "More controls" for per-joint speeds and a test fault.
+- **Arm twin**: the Isaac Sim picture (or a schematic), with the key numbers: payload estimate (zeroed before the grasp, shown while a pick
+  runs) and the largest residual.
+- **Run summary**: task, cube position, fault, progress, set versus estimated payload, typical peak residual, alarms, whether the pick was
+  recorded as or compared with a healthy reference, and the result. It stays after the pick ends.
+- **Alerts**: a compact card (grouped by type); the bell opens the full list. No pop-ups.
+- **Chart**: residual, torque or payload for the selected joint, with the no-alarm band; per-joint bars; a torque breakdown.
+- **Panels**: telemetry (current frame), payload estimator (with tare), About.
+- **Benchmark tab**: the three movement styles on a real pick (`docs/o6pick_summary.json`), plus this session's scores and the residual
+  floor against speed.
 
-- **Real analysis code**: `observers/residual.py` (`compute_residual`, 20 Hz zero-phase filter), `observers/pose_mask.py` (the detector's pose mask), the payload formula of `observers/payload.py`. They run on a sliding 1.2 s window, so live values lag by the 0.15 s filter edge.
-- **Live detector** (`engine.Analyzer._alerts`): same constants as `observers/detector.py` (z > 8, 3 s calibration window, pose gate), applied per 50 ms block, plus a payload-signature fit to tell a load from a fault, and a lag estimate for the tracking channel. Calibration is per speed (the page recalibrates when you change speed). Thresholds are tuned on synthetic data: re-tune on Isaac Sim fault logs.
-- **Speed is capped at 50% of a joint's velocity limit** (`DECISIONS.md` D1): the speed bars read 0-100%, and 100% on a bar is half the limit, the range where the residual is trustworthy (`RESIDUAL_FLOOR.md`). The engine clamps any speed above that, so there is no over-speed state.
-- **Row rate**: the live Isaac Sim feed runs at 250 Hz physics (`DECISIONS.md` D3) and sends 250 Hz rows; the engine reads the rate from the simulator's status and times the analysis window by it.
-- **Not built yet**: the in-simulator panel, the O6 trajectory comparison and the validation push in the dashboard.
+## What is real
+
+- **Real analysis code**: `observers/residual.py` (`compute_residual`, 20 Hz zero-phase filter), `observers/pose_mask.py` (the detector's pose
+  rule), the payload formula of `observers/payload.py`, on a sliding 1.2 s window (live values lag by the 0.15 s filter edge).
+- **Faults** (`engine.Analyzer`): the fault channel uses the applied torque; the payload uses the measured (net) torque. A pick is compared
+  with a healthy run of the same task (style, cube mass, speed bar, cube position), recorded automatically the first time; choosing a fault
+  with no reference first runs a healthy pick. An alarm needs |z| > 8 for 150 ms and a residual of at least 0.10 N*m and 0.5% of the joint's
+  limit. Picks without a reference (random cube positions) are not judged for faults.
+- **Speed**: capped at 50% of a joint's velocity limit everywhere (the engine clamps it; live picks refuse more).
 
 ## Files
 
-`app.py` layout and callbacks, `views.py` figures and panels (pure functions), `engine.py` sources, analysis and alerts, `assets/style.css` the Physyk AI look and feel only. Smoke test: `tests/test_dashboard_engine.py`.
+`app.py` layout and callbacks, `views.py` figures and panels (pure functions), `engine.py` sources, analysis and alerts,
+`assets/style.css` the look, `assets/ntt_data_logo.png` the header logo. Smoke tests: `tests/test_dashboard_engine.py`.
+Screenshots: `PAL_DASH_TAB=bench` or `PAL_DASH_DRAWER=alerts` start the page on that tab or panel; headless Chrome can then capture it.
 
-State is global in the server process (one engine), so open one browser tab.
+State is global in the server process (one engine), so open one browser tab. Refresh the tab after a restart.

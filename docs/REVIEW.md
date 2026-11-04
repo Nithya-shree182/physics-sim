@@ -11,7 +11,7 @@ first review found two serious defects (the plant's friction was wrong and `tau_
 not see faults); both are fixed and the fixes are verified. The repeated pattern in this project
 is that a passing check hid a problem, so this page lists what each result does and does not show.
 
-**Not done:** the dashboard (the analysis side's), and our websocket stream and in-simulator panel.
+**Not done:** the in-simulator panel. The dashboard and its live feed exist (`DECISIONS.md` D9). **Current state: `docs/HANDOFF.md`.**
 **Done 2026-11-04:** Pinocchio installs here (uv, Python 3.12), the analysis side's branch is merged, and their real detector has
 been run on our data (`docs/DETECTION_RESULTS.md`): with the applied torque it finds 15 of 32 faulty runs and has no false
 alarms; with `tau_measured` it finds 8 and never finds friction. (An earlier claim of a noise floor from their acceleration
@@ -109,13 +109,13 @@ under any realistic sensor noise; the criterion should be stated against the tor
 
 | | proposal asks | state | honest gap |
 |---|---|---|---|
-| O1 telemetry | every quantity each physics step, no dropped frames | all quantities per step at 1 kHz, schema-valid, row counts verified | `M` and `J` held for 10 steps between reads; recorded to file, not streamed |
+| O1 telemetry | every quantity each physics step, no dropped frames | all quantities per step at 1 kHz, schema-valid, row counts verified; the live view streams rows over HTTP at 250 Hz, in real time | `M` and `J` held for 10 steps between reads in recorded data |
 | O2 residual | model within 5% on a slow unloaded run | **the independent Pinocchio model closes the clean empty-arm run to under 0.1% of every joint's limit** (`[0.007, 0.010, 0.011, 0.006, 0.076, 0.082, 0.001]` %); simulator terms 0.01%; URDF gravity matches independently | fails above ~50% speed (artifact) |
 | O3 confidence | removed on 2026-11-05 (`PROPOSAL_AMENDMENTS.md` section 5, `DECISIONS.md` D6) | the 0-1 score, its panel and the payload gate are gone; the detector keeps a pose mask (`observers/pose_mask.py`) | tested before removal: the payload estimate is only wrong while moving through the straight-up elbow-extended pose; the mask matters only with the arm stretched to about 0.78 m |
 | O4 payload | estimate converges, within a stated tolerance | known-mass data, 0.5-3 kg, verified to 0.02% against independent kinematics; **the analysis side's real estimator with a tare recovers all 15 loaded runs (held at three poses, and moving) to within 1.1%** (`tools/run_payload_estimator.py`); untared it reads ~0.25 kg high from the 5% mass mismatch | payload is a rigid point mass at the TCP, not a grasped object; the estimator itself is theirs |
 | O5 detection | detection and false-positive rate over a defined fault set, with and without the gate | injectors, 26 labelled runs, matched baselines, the C-list in `out/extra`, noise-free twins in `out/clean`; **their real detector finds 15 of 32 faulty runs with the applied torque (8 with `tau_measured`), 0 false alarms in 9** | the gate was on and never fired; friction is found from about x4 upward, x3 with the opt-in baseline that needs the calibration window to cover the motion (`DETECTION_RESULTS.md`) |
 | O6 benchmark | cycle time, peak torque, energy per pick for three styles | built twice: out-and-back (26 runs, below) and on a real IK pick cycle (18 runs, `docs/o6pick_comparison.svg`) | one pick location, two payloads |
-| O7 presentation | streamed dashboard and in-sim panel | the simulator runs in a window with a physical table and cube (`tools/pal_suite.sh --window`) | the stream to the dashboard and the in-sim panel are not built |
+| O7 presentation | streamed dashboard and in-sim panel | `./pal.sh`: live Isaac Sim picks streamed to the dashboard (run summary, alerts, benchmark); window mode with `--window` | the in-simulator panel is not built |
 | Validation | known force against estimate | built and run: 24 runs; **passes with the independent model (worst 9.9% against 15%)** | with simulator terms it missed by 0.8 points on one run, cause and control in `VALIDATION.md` |
 
 ### O6 on a real pick cycle (`out/o6pick`, `tools/summarize_o6pick.py`)

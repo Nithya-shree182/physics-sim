@@ -1,4 +1,4 @@
-# Problem board (2026-11-04, after merging the two branches)
+# Problem board (2026-11-05)
 
 Written for: both people. One line per problem; what is fixed is listed so nobody re-investigates it.
 
@@ -44,3 +44,17 @@ Friction in N*m through the torque-valued API. 5% arm-mass mismatch and seeded s
 | Two branches with no common history, a `context.md`/`CONTEXT.md` case clash | merged; theirs is `docs/ANALYSIS_CONTEXT.md` |
 | Payload estimator never run on our data | 15 loaded runs within 1.1% (tared) |
 | Real-fault findings not protected | 14 regression tests in `tests/test_real_faults.py`, 7 in `tests/test_baseline.py` |
+
+## Added 2026-11-05 (see `HANDOFF.md` and `DECISIONS.md`)
+
+| # | Problem | Where / next step |
+|---|---|---|
+| 16 | The payload estimate is unreliable while a fault is active, and one fault flags its neighbour joints (sometimes as "stuck" when the joint barely moves) | D7; the summary says "unreliable" when a fault was active |
+| 17 | Faults at random cube positions have no baseline (no reference run), so no fault alarms there | D7; needs a model-based baseline |
+| 18 | The real 2 kg cube reads 3 to 6% low at 250 Hz but 25 to 36% low at 1000 Hz (problem 11 is much smaller at the live rate); cause not known | D3; try 500 Hz |
+| 19 | Dead-code sweep (D2) not done; candidates are listed in `HANDOFF.md` | D2 |
+| 20 | Delays shorter than 50 ms at the 4 ms step are untested; one stray pre-fault alert seen once in a live pass | D3, D7 |
+
+Fixed 2026-11-05: confidence removed (D6); detector row count is a duration (D7); friction alert on live picks (D7, fixed spot only);
+wrist-joint residual explained (D8); alerts no longer fire on noise; dashboard redesigned with a run summary and a real benchmark (D9);
+speed bars drive live picks (D1); live view in real time (D3).

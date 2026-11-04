@@ -6,6 +6,7 @@ the older carries a correction note at the top.
 ## Where the project stands
 | page | what |
 |---|---|
+| `HANDOFF.md` | **start here**: current state, how to run, open items, traps |
 | `../DECISIONS.md` | decisions taken and being validated (speed cap, dead-code sweep, 250 Hz live view), each with its evidence |
 | `STATUS.md` | the problem board: what is wrong or missing right now, and what has been fixed |
 | `REVIEW.md` | state against the proposal, objective by objective; what each check proves |

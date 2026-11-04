@@ -1,5 +1,7 @@
 # Context: where the analysis side stands
 
+> **2026-11-05:** `observers/confidence.py` is gone (`DECISIONS.md` D6); the detector keeps one rule in `observers/pose_mask.py`, its "50 steps in a row" is now 50 ms, and the dashboard finds faults against a healthy reference pick (D7). Current state: `HANDOFF.md`.
+
 Read this first when picking the work up again. Status as of 2026-11-03. The changes
 themselves are listed in [changes.md](changes.md); what is waiting on dev is in
 [docs/NOTES_FOR_DEV.md](docs/NOTES_FOR_DEV.md).

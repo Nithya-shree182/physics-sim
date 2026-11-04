@@ -3,6 +3,7 @@
 A Franka Panda digital twin in NVIDIA Isaac Sim 6.0.1. The arm moves; we record what its joints actually did; an independent model
 (Pinocchio, built from the URDF) predicts what the torques should have been. The gap, `r = tau_applied - tau_model`, is the signal.
 Full proposal: the PDF in this folder; what the project now claims: `docs/PROPOSAL_AMENDMENTS.md`.
+**Where the project stands today: `docs/HANDOFF.md`. Why each choice was made, with the evidence: `DECISIONS.md`.**
 
 The repository holds both halves, merged on 2026-11-04 from two branches that had no common history:
 
@@ -15,6 +16,7 @@ The repository holds both halves, merged on 2026-11-04 from two branches that ha
 ## Run something
 
 ```bash
+./pal.sh                               # the live demo: Isaac Sim (250 Hz) and the dashboard, http://127.0.0.1:8050 (see docs/HANDOFF.md)
 tools/pal_suite.sh o5                  # one objective's tests, headless, then convert and check every run
 tools/pal_suite.sh o3,o4 --window      # several, drawn in an Isaac Sim window (slower: rendering) so you can watch the arm
 tools/pal_suite.sh pickphys --window   # a REAL pick: the fingers close on a physical cube and carry it across the table
@@ -75,7 +77,8 @@ All runs are **effort mode**: the arm is driven by explicit torques and `tau_app
 
 ## Read in this order
 
-1. `docs/REVIEW.md`: where the project stands against the proposal, what is proven and what is not. Start here.
+0. `docs/HANDOFF.md`, then `DECISIONS.md`: the current state, the open items, and every decision since the first review (D1 to D9).
+1. `docs/REVIEW.md`: where the project stands against the proposal, what is proven and what is not.
    Then `docs/PROPOSAL_AMENDMENTS.md` (what the project now claims), `docs/VALIDATION.md` (the push test) and
    `docs/DETECTION_RESULTS.md` (can the faults be found, with the analysis side's real code).
 2. `CONTEXT.md`: state, decisions already made, traps (read before touching the sim).

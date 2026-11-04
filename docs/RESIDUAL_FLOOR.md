@@ -1,5 +1,7 @@
 # The residual floor: two regimes, and where the measurement stops being physical
 
+> **2026-11-05:** the live view now runs at 250 Hz, which this table supports at or below 50% speed (`DECISIONS.md` D3). The wrist-joint residual at rest is static friction, not a model error (D8).
+
 The single most important result for O2, O4 and O5. Supersedes every earlier residual
 figure in this repo, including two conclusions that turned out to be wrong.
 

@@ -140,6 +140,8 @@ the same simulator.
 
 ### P4 — Telemetry cannot run at 1 kHz — **decided: keep 1 kHz, decimate M/J**
 
+> **Superseded 2026-11-05 for the live view** (`DECISIONS.md` D3): the "residual x5 at a lower rate" reasoning below came from a sweep later found wrong; at or below 50% speed the residual is the same at 250 to 2000 Hz. Recorded data stays at 1000 Hz; the live view runs at 250 Hz.
+
 Throughput and residual pull in opposite directions, and the residual wins because it is
 the measurement.
 

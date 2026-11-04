@@ -1,5 +1,7 @@
 # Setup: continuing the analysis side on another machine
 
+> **2026-11-05:** the confidence sweep command below no longer exists (O3 was removed, `DECISIONS.md` D6). For running the whole system see `docs/HANDOFF.md`.
+
 Written for: Nithya (Person B), picking the work up on a different laptop, and for any Claude
 Code session started there. Written 2026-11-03. Do this once, then read
 [docs/ANALYSIS_CONTEXT.md](docs/ANALYSIS_CONTEXT.md).
