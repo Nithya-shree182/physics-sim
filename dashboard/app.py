@@ -1,11 +1,10 @@
-"""PAL dashboard (objective O7), Plotly Dash.
+"""Physics Attestation Layer dashboard (objective O7), Plotly Dash.
 
-    conda activate pal
-    python dashboard/app.py            # then open http://127.0.0.1:8050
+    ./pal.sh                           # the whole system: Isaac Sim and this dashboard
+    python dashboard/app.py            # this page alone, on its stand-in plant: http://127.0.0.1:8050
 
-Follows docs/DASHBOARD_PLAN.md and the final design canvas. Nothing here is Isaac Sim yet: the page
-runs either on a stand-in plant (our Pinocchio model, stepped live) or on a loop of dev's real logs,
-and says which in the header. See engine.py for what is real and what is a stand-in.
+The page runs on the live Isaac Sim, on a stand-in plant (a Pinocchio model, stepped live) or on a loop of recorded
+logs, and says which in the toolbar. See engine.py for what is real and what is a stand-in.
 """
 from __future__ import annotations
 
@@ -29,16 +28,16 @@ DEMO = [
     dict(t="1 · Pick up an unknown object", len=16, reach=0.0, drawer="o4", chan="pay", ctl=dict(load=0.0, fault="none"), later=(3.0, dict(load=1.2)),
          d="A 1.2 kg load appears at the gripper after 3 s. The twin is never told: the residual rises on joints 2 and 4 and the estimate converges."),
     dict(t="2 · An inconsistent command", len=14, reach=0.0, drawer="alerts", chan="res", ctl=dict(fault="delay"),
-         d="Stand-in for a tampered waypoint (dev's attack runs are pending): a 50 ms command delay. The residual stays quiet; the tracking error raises the alert."),
+         d="A 50 ms command delay. Torque and motion stay consistent, so the residual stays quiet; the tracking error raises the alert."),
     dict(t="3 · Friction fault at joint 3", len=14, reach=0.0, drawer="alerts", chan="res", sel=2, ctl=dict(fault="friction", fault_joint=2),
          d="Friction is injected at joint 3 and identified by its torque signature: that joint stops fitting the load while the others still do."),
     dict(t="4 · Compare the trajectory styles", len=10, reach=0.0, drawer=None, tab="bench", ctl=dict(fault="none"),
-         d="Waits for dev: three movement styles between the same waypoints, with time, peak torque and energy."),
+         d="The Benchmark tab compares three movement styles on a real pick: cycle time, peak torque and energy."),
 ]
-DEF_UI = dict(tab="arm", drawer=None, chan="res", sel=3, more=False, brk=False, view=("stream" if os.environ.get("PAL_DASH_SOURCE") == "isaac" else "twin"), demo=dict(on=False, step=0, t0=0.0, later=False), nonce=0)
-PANELS = [("o1", "O1 Telemetry"), ("o4", "O4 Payload"), ("about", "About")]
+DEF_UI = dict(tab=os.environ.get("PAL_DASH_TAB", "arm"), drawer=os.environ.get("PAL_DASH_DRAWER") or None, chan="res", sel=3, more=False, brk=False, view=("stream" if os.environ.get("PAL_DASH_SOURCE") == "isaac" else "twin"), demo=dict(on=False, step=0, t0=0.0, later=False), nonce=0)
+PANELS = [("o1", "Telemetry"), ("o4", "Payload"), ("about", "About")]
 CHANS = [("res", "Residual"), ("tau", "Torque"), ("pay", "Payload")]
-TITLES = dict(o1="O1 Telemetry · current frame", o4="O4 Payload estimator", alerts="Alerts", about="About this view")
+TITLES = dict(o1="Telemetry · current frame", o4="Payload estimator", alerts="Alerts", about="About this view")
 
 
 def slider(id_, lo, hi, step, val):
@@ -61,21 +60,29 @@ SIM_URL = os.environ.get("PAL_LIVE_URL", "http://127.0.0.1:8765")
 def serve_layout():
     """Runs on every page load: the server has one engine, so a fresh page starts it afresh (stand-in plant,
     running, no fault) and the controls on screen always match what the engine is doing."""
-    E.use(DEFAULT_SOURCE)
+    if E.which == DEFAULT_SOURCE and DEFAULT_SOURCE == "isaac":      # the simulator and its recorded references live on: reload only the page
+        E.reset_controls()
+    else:
+        E.use(DEFAULT_SOURCE)
     E.playing = True
     return html.Div(className="page", children=[
         dcc.Store(id="ui", data=DEF_UI), dcc.Store(id="demo-ctl", data={}), dcc.Store(id="dummy"), dcc.Store(id="ctl-sync"),
         dcc.Interval(id="tick", interval=500), dcc.Interval(id="frame-tick", interval=350),
         html.Header(className="hdr", children=[
-            html.Div(className="brand", children=[html.B("PAL"), html.Span("Franka Panda #1", className="muted", style=dict(fontSize=13))]),
-            html.Div(id="pill", className="pill"),
-            dcc.RadioItems(id="source", className="radio", value=DEFAULT_SOURCE, inline=True,
-                           options=[dict(label="Isaac Sim (live)", value="isaac"), dict(label="Stand-in plant", value="live"), dict(label="Replay real 0 kg", value="0kg"), dict(label="Replay real 1 kg", value="1kg")]),
-            html.Span(id="hdr-t", className="num", style=dict(fontSize=13, minWidth=96)),
-            html.Button("Pause", id="play", n_clicks=0, className="btn", style=dict(minWidth=88)),
-            html.Button("Demo", id="demo-btn", n_clicks=0, className="btn", style=dict(minWidth=88)),
-            html.Button(id="bell", n_clicks=0, className="btn", style=dict(minWidth=76), **{"aria-label": "Alerts"}),
-        ]),
+            html.Div(className="brand", children=[html.Img(src="/assets/ntt_data_logo.png", className="logo", alt="NTT DATA")]),
+            html.Div(className="product", children=[html.Span("Physics Attestation Layer", className="product-name"),
+                                                    html.Span("Franka Panda · NVIDIA Isaac Sim", className="product-sub")])]),
+        html.Div(className="toolbar", children=[
+            html.Div(className="tb-left", children=[
+                dcc.RadioItems(id="source", className="seg", value=DEFAULT_SOURCE, inline=True,
+                               options=[dict(label="Isaac Sim (live)", value="isaac"), dict(label="Stand-in plant", value="live"),
+                                        dict(label="Replay · empty arm", value="0kg"), dict(label="Replay · 1 kg", value="1kg")]),
+                html.Div(id="pill", className="pill")]),
+            html.Div(className="tb-right", children=[
+                html.Span(id="hdr-t", style=dict(display="none")),
+                html.Button("Pause", id="play", n_clicks=0, className="btn"),
+                html.Button("Demo", id="demo-btn", n_clicks=0, className="btn"),
+                html.Button(id="bell", n_clicks=0, className="btn", **{"aria-label": "Alerts"})])]),
         html.Section(id="demo-banner", className="demo", style=dict(display="none"), children=[
             html.Div(style=dict(flex="1 1 420px", minWidth=0, display="flex", flexDirection="column", gap=4), children=[
                 html.Div(className="row", children=[html.Span("GUIDED DEMO", className="lbl", style=dict(color="#93c5fd")), html.Span(id="demo-title", style=dict(fontSize=14, fontWeight=700)),
@@ -87,40 +94,25 @@ def serve_layout():
                                                                   html.Button("Stop", id="demo-stop", n_clicks=0, className="btn btn-s")])]),
         html.Div(className="nav", children=[
             html.Nav(style=dict(display="flex", gap=4, flex="1 1 360px"), children=[
-                html.Button("O2 Arm & residual", id="tab-arm", n_clicks=0, className="tab"), html.Button("O6 Benchmark", id="tab-bench", n_clicks=0, className="tab")]),
+                html.Button("Arm & residual", id="tab-arm", n_clicks=0, className="tab"), html.Button("Benchmark", id="tab-bench", n_clicks=0, className="tab")]),
             html.Div(className="row", style=dict(gap="6px"), children=[html.Span("PANELS", className="lbl")] +
                      [html.Button(lbl, id=f"p-{k}", n_clicks=0, className="btn btn-s") for k, lbl in PANELS])]),
         html.Div(className="body", children=[
             html.Main(className="main", children=[
                 html.Div(id="main-arm", style=dict(display="flex", flexDirection="column", gap=20), children=[
-                    html.Section(className="card", children=[
-                        html.Div(className="spread", children=[html.H2("Arm twin", className="h2"),
-                            html.Div(style=dict(display="flex", gap=4), children=[html.Button("Twin", id="v-twin", n_clicks=0, className="btn btn-s"),
-                                                                                  html.Button("Isaac Sim stream", id="v-stream", n_clicks=0, className="btn btn-s")])]),
-                        html.Div(style=dict(display="flex", flexWrap="wrap", gap=16, alignItems="stretch"), children=[
-                            html.Div(style=dict(flex="3 1 420px", minWidth=0), children=[
-                                dcc.Graph(id="twin-graph", config=dict(displayModeBar=False, staticPlot=True), style=dict(height=380)),
-                                html.Div(id="stream", style=dict(display="none", aspectRatio="640 / 420", background="#05070a", border="1px dashed rgba(255,255,255,0.18)", borderRadius=6,
-                                                                 alignItems="center", justifyContent="center", flexDirection="column", gap=8, textAlign="center"),
-                                         children=[html.Img(id="sim-img", style=dict(width="100%", height="100%", objectFit="contain", display="block")),
-                                                   html.Div(id="sim-msg", className="muted", style=dict(fontSize=12, position="absolute", padding=8))]),
-                                html.Div(className="row", style=dict(marginTop=8, fontSize=11, color="#9ca3af", gap="6px 18px"), children=[
-                                    html.Span("Link tint: share of torque limit"),
-                                    html.Span(style=dict(display="flex", alignItems="center", gap=6), children=[
-                                        html.Span(style=dict(width=60, height=8, borderRadius=4, background="linear-gradient(90deg,#4b5563,#fab219,#f87171)")), "0 – 100%"])])]),
-                            html.Div(id="stats", style=dict(flex="1 1 200px", minWidth=0, display="flex", flexDirection="column", gap=10))])]),
-                    html.Section(id="task-card", className="card", style=dict(padding="14px 18px", display="none"), children=[
-                        html.Div(className="row", style=dict(gap="12px 24px", alignItems="center"), children=[
-                            html.Div(children=[html.Div("PICK STYLE", className="lbl"),
-                                               dcc.RadioItems(id="task-style", className="radio", value="s_curve", inline=True, options=[
-                                                   dict(label="Trapezoidal", value="trapezoidal"), dict(label="S-curve", value="s_curve"), dict(label="Torque-aware", value="torque_aware")])]),
-                            html.Button("Run pick", id="task-run", n_clicks=0, className="btn btn-on"),
-                            html.Button("Stop", id="task-stop", n_clicks=0, className="btn"),
-                            dcc.Checklist(id="task-loop", options=[dict(label=" repeat", value="loop")], value=[], className="radio"),
-                            dcc.Checklist(id="task-random", options=[dict(label=" random cube position", value="random")], value=[], className="radio"),
-                            html.Div(id="task-status", className="muted", style=dict(fontSize=13, flex="1 1 260px"))]),
-                        html.P("The load slider below is the cube's mass (0.2 to 3 kg). A fault chosen under More controls starts 0.4 s after the grasp, on the joint chosen there.",
-                               className="muted", style=dict(margin="8px 0 0", fontSize=12))]),
+                    html.Div(className="setup", children=[
+                    html.Section(id="task-card", className="card", style=dict(display="none"), children=[
+                            html.Div(className="row", style=dict(gap="10px 14px"), children=[
+                                html.Div(children=[html.Div("PICK STYLE", className="lbl", style=dict(marginBottom=4)),
+                                                   dcc.RadioItems(id="task-style", className="seg", value="s_curve", inline=True, options=[
+                                                       dict(label="Trapezoidal", value="trapezoidal"), dict(label="S-curve", value="s_curve"), dict(label="Torque-aware", value="torque_aware")])]),
+                                html.Button("Run pick", id="task-run", n_clicks=0, className="btn btn-on", style=dict(alignSelf="flex-end", minHeight=40, minWidth=96)),
+                                html.Button("Stop", id="task-stop", n_clicks=0, className="btn", style=dict(alignSelf="flex-end", minHeight=40)),
+                                dcc.Checklist(id="task-loop", options=[dict(label=" repeat", value="loop")], value=[], className="radio", style=dict(alignSelf="flex-end")),
+                                dcc.Checklist(id="task-random", options=[dict(label=" random cube position", value="random")], value=[], className="radio", style=dict(alignSelf="flex-end"))]),
+                            html.Div(id="task-status", className="muted", style=dict(fontSize=13)),
+                            html.P("The load slider sets the cube's mass (0.2 to 3 kg). A fault chosen under More controls starts 0.4 s after the grasp; "
+                                   "to find it the arm first records one healthy pick of the same task as a reference.", className="muted", style=dict(margin=0, fontSize=12))]),
                     html.Section(className="card", style=dict(padding="14px 18px"), children=[
                         html.Div(id="ctl-note"),
                         html.Div(id="ctl-wrap", children=[
@@ -129,7 +121,7 @@ def serve_layout():
                                     html.Div(className="spread", children=[html.Label("MOCK LOAD ON THE GRIPPER", htmlFor="load", className="lbl"), html.Span(id="load-txt", className="num", style=dict(fontSize=16))]),
                                     html.Div(style=dict(display="flex", alignItems="center", gap=8), children=[
                                         html.Button("−", id="load-dn", n_clicks=0, className="btn", style=dict(width=44, padding=0, fontSize=18), **{"aria-label": "Decrease load by 0.1 kilogram"}),
-                                        slider("load", 0, 3, 0.05, 0),
+                                        slider("load", 0, 3, 0.05, 1.0 if DEFAULT_SOURCE == "isaac" else 0),
                                         html.Button("+", id="load-up", n_clicks=0, className="btn", style=dict(width=44, padding=0, fontSize=18), **{"aria-label": "Increase load by 0.1 kilogram"})])]),
                                 html.Div(style=dict(flex="1 1 280px", minWidth=0, display="flex", flexDirection="column", gap=2), children=[
                                     html.Div(className="spread", children=[html.Label("JOINT SPEED, ALL JOINTS", htmlFor="spd-all", className="lbl"), html.Span(id="spd-txt", className="num", style=dict(fontSize=16))]),
@@ -146,7 +138,23 @@ def serve_layout():
                                                        dcc.RadioItems(id="fault-joint", className="radio", value=2, inline=True, options=[dict(label=str(i + 1), value=i) for i in range(7)])]),
                                     html.Button(f"Reset speeds to {BAR_DEFAULT}%", id="reset-speeds", n_clicks=0, className="btn")]),
                                 html.P("In the live product these are commands sent to Isaac Sim. The speed bars stop at half of each joint's velocity limit, "
-                                       "the range where the residual is trustworthy.", className="muted", style=dict(margin=0, fontSize=12))])])]),
+                                       "the range where the residual is trustworthy.", className="muted", style=dict(margin=0, fontSize=12))])])])]),
+                    html.Section(className="card", children=[
+                        html.Div(className="spread", children=[html.H2("Arm twin", className="h2"),
+                            html.Div(style=dict(display="flex", gap=4), children=[html.Button("Schematic", id="v-twin", n_clicks=0, className="btn btn-s"),
+                                                                                  html.Button("Isaac Sim", id="v-stream", n_clicks=0, className="btn btn-s")])]),
+                        html.Div(style=dict(display="flex", flexWrap="wrap", gap=16, alignItems="stretch"), children=[
+                            html.Div(style=dict(flex="0 1 760px", minWidth=0), children=[
+                                dcc.Graph(id="twin-graph", config=dict(displayModeBar=False, staticPlot=True), style=dict(height=380)),
+                                html.Div(id="stream", style=dict(display="none", aspectRatio="640 / 420", background="#05070a", border="1px dashed rgba(255,255,255,0.18)", borderRadius=6,
+                                                                 alignItems="center", justifyContent="center", flexDirection="column", gap=8, textAlign="center"),
+                                         children=[html.Img(id="sim-img", style=dict(width="100%", height="100%", objectFit="contain", display="block")),
+                                                   html.Div(id="sim-msg", className="muted", style=dict(fontSize=12, position="absolute", padding=8))]),
+                                html.Div(className="row", style=dict(marginTop=8, fontSize=11, color="#9ca3af", gap="6px 18px"), children=[
+                                    html.Span("Link tint: share of torque limit"),
+                                    html.Span(style=dict(display="flex", alignItems="center", gap=6), children=[
+                                        html.Span(style=dict(width=60, height=8, borderRadius=4, background="linear-gradient(90deg,#4b5563,#fab219,#f87171)")), "0 – 100%"])])]),
+                            html.Div(id="stats", className="side")])]),
                     html.Section(className="card", children=[
                         html.Div(className="spread", children=[html.H2(id="chart-title", className="h2"),
                             html.Div(className="row", style=dict(gap=4), children=[html.Button(l, id=f"ch-{k}", n_clicks=0, className="btn btn-s") for k, l in CHANS])]),
@@ -223,9 +231,15 @@ def source(which, ui):
               State("load", "value"), State("fault", "value"), State("fault-joint", "value"), State("spd-all", "value"), prevent_initial_call=True)
 def task_run(n, style, loop, rand, kg, fault, joint, spd):
     if E.source.kind == "isaac" and n:
-        E.source.last_reply = E.source.command(cmd="run", style=style, kg=max(0.2, float(kg or 1.0)), fault=fault or "none",
-                                               joint=int(joint if joint is not None else 3), loop=bool(loop), random=bool(rand),
-                                               speed=min(1.0, max(0.05, float(spd or BAR_DEFAULT) / 100)))      # the speed bar sets the pick's speed
+        kg = max(0.2, float(kg or 1.0))
+        speed = min(1.0, max(0.05, float(spd or BAR_DEFAULT) / 100))                                    # the speed bar sets the pick's speed
+        cmd = dict(cmd="run", style=style, kg=kg, fault=fault or "none", joint=int(joint if joint is not None else 3),
+                   loop=bool(loop), random=bool(rand), speed=speed)
+        key = (style, round(kg, 2), round(speed, 2), (0.45, -0.25))                                     # the fixed cube spot
+        if cmd["fault"] != "none" and not rand and key not in E.an.refs:
+            # faults are found by comparing with a healthy run of the same pick: record one first (DECISIONS.md D7)
+            E.source.command(**dict(cmd, fault="none", loop=False, reference=True))
+        E.source.last_reply = E.source.command(**cmd)
     return no_update
 
 
@@ -247,15 +261,6 @@ def tare(on, off):
         E.an.set_tare(False)
     return no_update
 
-
-@app.callback(Output("dummy", "data", allow_duplicate=True), Input({"type": "dismiss", "aid": ALL}, "n_clicks"), prevent_initial_call=True)
-def dismiss(clicks):
-    for t in ctx.triggered:
-        if t["value"]:
-            aid = json.loads(t["prop_id"].rsplit(".", 1)[0])["aid"]
-            if aid in E.an.alerts:
-                E.an.alerts[aid]["dismissed"] = True
-    return no_update
 
 
 # ── UI state, including the guided demo ─────────────────────────────────────────────────
@@ -364,7 +369,6 @@ def demo_to_controls(d):
 
 # ── render ──────────────────────────────────────────────────────────────────────────────
 _REAL = None
-_toast_sig = None
 
 
 def _task_status(src):
@@ -379,7 +383,8 @@ def _task_status(src):
         f = "" if st.get("fault", "none") == "none" else f" · fault: {st['fault']}" + (f" on joint {st['joint'] + 1}" if st.get("joint", -1) >= 0 else "")
         xy = st.get("pick_xy")
         where = f" at x {xy[0]:.2f}, y {xy[1]:.2f} m" if xy else ""
-        return f"Picking a {st['kg']:g} kg cube{where}, {st['style']} · {st['t']:.1f} of {st['duration']:.1f} s{f}" + (" · repeating" if st.get("loop") else ""), ""
+        ref = " · recording a healthy reference first" if st.get("reference") else ""
+        return f"Picking a {st['kg']:g} kg cube{where}, {st['style']} · {st['t']:.1f} of {st['duration']:.1f} s{f}{ref}" + (" · repeating" if st.get("loop") else ""), ""
     last = st.get("last")
     if last:
         verdict = "cube placed" if last["ok"] else ("stopped" if last["aborted"] else "PICK FAILED: cube not at the place point")
@@ -416,7 +421,6 @@ def _out(name):
 @app.callback([_out(o) for o in OUTS] + [Output({"type": "jb", "i": ALL}, "children"), Output({"type": "jbar", "i": ALL}, "className")],
               Input("tick", "n_intervals"), Input("ui", "data"))
 def render(_n, ui):
-    global _toast_sig
     snap = E.an.snapshot
     ctl = E.controls
     r = {}
@@ -432,20 +436,20 @@ def render(_n, ui):
     cal = an.cal
     kind = E.source.kind
     live = kind == "live"
-    active = [a for a in snap["alerts"].values() if a["sev"] > 0]
+    active = [a for aid, a in snap["alerts"].items() if a["sev"] > 0 and aid != "payload"]
     sel = ui["sel"]
     dm = ui["demo"]
     on = lambda cond, base: base + (" btn-on" if cond else "")   # noqa: E731
 
-    r["hdr-t"] = f"t = {snap['t']:.2f} s"
+    r["hdr-t"] = ""
     r["bell"] = f"Alerts {len(active)}"
     r["bell:cls"] = on(ui["drawer"] == "alerts", "btn")
     if kind == "isaac":
-        r["pill"] = [html.Span(className="dot", style=dict(background="#34d399")), "ISAAC SIM · live pick on the physical cube"]
+        r["pill"] = [html.Span(className="dot", style=dict(background="#34d399")), "Live · Isaac Sim, physical cube"]
     elif live:
-        r["pill"] = [html.Span(className="dot", style=dict(background="#fab219")), "STAND-IN · Pinocchio plant, not Isaac Sim"]
+        r["pill"] = [html.Span(className="dot", style=dict(background="#fab219")), "Stand-in · Pinocchio plant, not Isaac Sim"]
     else:
-        r["pill"] = [html.Span(className="dot", style=dict(background="#34d399")), f"REPLAY · dev's Isaac Sim log ({E.source.name.split('_')[2]}), looped"]
+        r["pill"] = [html.Span(className="dot", style=dict(background="#34d399")), f"Replay · recorded Isaac Sim log ({E.source.name.split('_')[2]}), looped"]
     r["pill:style"] = dict(color=("#fab219" if active else "#e5e7eb"))
     r["play"] = "Pause" if E.playing else "Resume"
     st = DEMO[dm["step"]]
@@ -463,11 +467,11 @@ def render(_n, ui):
                              flexDirection="column", gap=8, textAlign="center")
     r["v-twin:cls"] = on(ui["view"] == "twin", "btn btn-s")
     r["v-stream:cls"] = on(ui["view"] == "stream", "btn btn-s")
-    r["stats"] = V.stat_cards(snap, cal)
+    r["stats"] = V.stat_cards(snap, cal, E.source.status if kind == "isaac" else None, ctl)
     r["task-card:style"] = dict(padding="14px 18px", display="block" if kind == "isaac" else "none")
     r["task-status"], r["sim-msg"] = _task_status(E.source) if kind == "isaac" else ("", "")
     r["ctl-wrap:cls"] = "" if kind in ("live", "isaac") else "disabled"
-    r["ctl-note"] = [] if kind in ("live", "isaac") else html.Div("Replay of a real log: the load and speed are what dev recorded. Switch to the stand-in plant to use the controls.", className="banner", style=dict(marginBottom=10))
+    r["ctl-note"] = [] if kind in ("live", "isaac") else html.Div("Replay of a real log: the load and speed are what was recorded. Switch to the stand-in plant to use the controls.", className="banner", style=dict(marginBottom=10))
     r["more:style"] = dict(display="flex" if ui["more"] else "none", flexDirection="column", gap=14, paddingTop=12,
                            borderTop="1px solid rgba(255,255,255,0.12)", marginTop=12)
     r["more-btn"] = "Fewer controls" if ui["more"] else "More controls"
@@ -478,30 +482,17 @@ def render(_n, ui):
         r[f"spd-txt-{i}"] = f"{v / SPEED_SCALE:.0f}% · {v / 100 * V.QDM[i]:.2f} rad/s"
     hist = list(an.hist)
     fig, title, sub = V.chart_figure(hist, ui["chan"], sel, cal, snap)
-    r["chart-title"], r["chart-sub"], r["main-chart:fig"] = title + " · " + ("live" if live else "replay"), sub, fig
+    r["chart-title"], r["chart-sub"], r["main-chart:fig"] = title + " · " + ("live" if kind in ("live", "isaac") else "replay"), sub, fig
     jb_content, jb_cls = V.joint_bars(snap, sel, cal)
     r["brk-btn"] = f"{'Hide' if ui['brk'] else 'Show'} torque breakdown for joint {sel + 1}"
     r["brk"] = V.breakdown(snap, sel) if ui["brk"] else []
     snap_b = dict(snap)
-    snap_b["_err"] = [h["est"] - h["load"] for h in hist[-200:]]
+    snap_b["_err"] = [h["est"] - h["load"] for h in hist[-200:] if (not an.picks or h["load"] > 0)]       # picks: only while the cube is held
     r["main-bench"] = V.bench(snap_b, _real_pct(), ctl.speeds) if ui["tab"] == "bench" else no_update
     r["drawer:style"] = dict(display="flex" if ui["drawer"] else "none", flexDirection="column")
     r["drawer-title"] = TITLES.get(ui["drawer"], "")
     r["drawer-body"] = V.drawer_body(ui["drawer"], dict(snap, tare=an.tare), an, hist, snap["load"]) if ui["drawer"] else []
-    toasts = [(aid, a) for aid, a in snap["alerts"].items() if a["sev"] > 0 and not a["dismissed"] and snap["t"] - a["born"] < 8][:3]
-    sig = tuple((aid, a["born"]) for aid, a in toasts)
-    if sig == _toast_sig:
-        r["toasts"] = no_update
-    else:
-        _toast_sig = sig
-        r["toasts"] = [html.Div(className="toast", role="status", style=dict(borderColor=V.SEV_COLOR[a["sev"]]), children=[
-            html.Div(style=dict(display="flex", justifyContent="space-between", alignItems="flex-start", gap=8), children=[
-                html.Div(style=dict(display="flex", alignItems="center", gap=8, minWidth=0), children=[
-                    html.Span(className="dot", style=dict(background=V.SEV_COLOR[a["sev"]])), html.Span(a["title"], style=dict(fontSize=13, fontWeight=700))]),
-                html.Button("×", id={"type": "dismiss", "aid": aid}, n_clicks=0, **{"aria-label": "Dismiss alert"},
-                            style=dict(width=32, height=32, border=0, background="transparent", color="#9ca3af", fontSize=18, cursor="pointer"))]),
-            html.Div(f"{a['where']} · {a['cause']}", style=dict(fontSize=12, color=V.SEV_COLOR[a["sev"]])),
-            html.Div(a["lines"][0] if a["lines"] else "", className="line")]) for aid, a in toasts]
+    r["toasts"] = []                                      # alerts live in the Alerts card and the Alerts panel, not in pop-ups
     for k, _ in PANELS:
         r[f"p-{k}:cls"] = on(ui["drawer"] == k, "btn btn-s")
     for k, _ in CHANS:

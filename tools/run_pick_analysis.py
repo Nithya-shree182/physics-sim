@@ -96,7 +96,7 @@ def main(out, hz=1000):
         if ref_res is not None:
             modes.append(("healthy reference run", against_reference(base, ref_res), ref_run))
         for label, res, rr in modes:
-            e = evaluate(run, detect(run, res, reference_run=rr, consecutive=max(1, round(0.050 * hz))))     # 50 ms, whatever the row rate
+            e = evaluate(run, detect(run, res, reference_run=rr))
             print(f"{run.name.replace(suf, ''):<38}{label:>24}{str(e['detected']):>9}"
                   f"{(format(e['delay_s'], '.2f') if e['delay_s'] is not None else '-'):>9}{str(e['false_alarm']):>13}"
                   f"{str(e['suspected_joint'] or '-'):>7}  {e['channel'] or '-'}")

@@ -5,7 +5,7 @@ Every source produces the same kind of block (10 rows; 50 ms of 200 Hz rows for 
   LiveSource    a stand-in plant: our Pinocchio plant (link masses +-3%, friction x1.15, sensor
                 noise, optional payload / fault) driven by a joint-impedance controller, stepped in
                 real time while the user moves the load, speed and fault controls.
-                It is NOT Isaac Sim. Replace it with dev's HTTP feed when that exists.
+                It is NOT Isaac Sim; IsaacSource below is the live feed.
   ReplaySource  one of our reference runs (data/ref_matched_*, tracked in git), looped.
 
 Analyzer runs the repo's own analysis code on a sliding window of blocks: observers/residual.py
@@ -37,9 +37,9 @@ from pose_mask import FORCE_GAIN_MAX, force_noise_gain  # noqa: E402
 from detector import (CALIBRATION_S, FAULT_LABELS, FLOOR_RESIDUAL_NM, FLOOR_TRACKING_RAD,  # noqa: E402
                       Z_THRESHOLD)
 from payload import GRAVITY_VEC, MIN_D_NORM, PAYLOAD_OFFSET_M, TAU_S  # noqa: E402
-from pinocchio_model import load_panda  # noqa: E402
+from pinocchio_model import friction_sigmoid, load_panda  # noqa: E402
 from poses import HOME_JOINTS  # noqa: E402
-from residual import DEFAULT_CUTOFF_HZ, TIMING_FORWARD, Run, compute_residual  # noqa: E402
+from residual import DEFAULT_CUTOFF_HZ, TIMING_FORWARD, Run, compute_residual, lowpass  # noqa: E402
 from synth_log import (KD, KP, MASS_MISMATCH, NOISE_Q, NOISE_QD, NOISE_TAU, PLANT_FRICTION_SCALE,  # noqa: E402
                        QD_MAX, build_plant)
 
@@ -53,6 +53,10 @@ BAND = 0.5                       # trusted fraction of the velocity limit (dev, 
 CONSEC_TICKS = 3                 # [CHOICE] blocks in a row (150 ms at 50 ms blocks), as detector.CONSECUTIVE but per block; Analyzer.consec scales it to the block length
 LIVE_Z = Z_THRESHOLD
 PAYLOAD_ON_KG, PAYLOAD_OFF_KG = 0.20, 0.12
+PICK_FAULT_ONSET_S = 3.02        # s into a live pick when the simulator starts a fault (pal_suites.live_pick: grasp + 0.4 s)
+ABS_MIN_NM, ABS_MIN_FRAC = 0.10, 0.005   # an alarm also needs a residual this big: 0.10 N*m and 0.5% of the joint's limit, whichever is larger
+GLOBAL_JOINTS = 4                # this many joints off their baseline together reads as a delayed or inconsistent command, not one bad joint
+FIT_SD_NM = 0.3                  # N*m, per-joint spread assumed by the payload-signature fit when a reference run is in use
 AMP = np.array([0.4, 0.25, 0.4, 0.3, 0.5, 0.3, 0.5])         # rad, stand-in trajectory amplitudes
 # Dev's sweep (RESIDUAL_FLOOR.md): worst-joint RMS residual, % of limit, 1000 Hz position drive.
 FLOOR_TABLE = [(0.0, 0.0), (0.1, 0.43), (0.2, 0.86), (0.3, 1.27), (0.5, 2.05), (0.75, 8.79), (1.0, 30.21)]
@@ -84,6 +88,7 @@ class Block:
     tau: np.ndarray      # measured torque, mean over each decimation step
     q_cmd: np.ndarray
     truth: dict          # what the source knows and the analysis must not use
+    tau_applied: np.ndarray | None = None    # commanded torque; with it the fault channel sees friction (the measured torque cannot)
     dt: float = DT_ROW   # seconds between rows (the live simulator at 250 Hz sends 4 ms rows)
 
 
@@ -250,6 +255,12 @@ class IsaacSource:
         while len(self.pending) > 1500:                  # more than 7 s behind: skip ahead
             self.pending.popleft()
 
+    def task_key(self):
+        """What makes two picks the same task: style, cube mass, speed bar and cube position (a healthy run of it is the baseline)."""
+        st = self.status
+        return (st.get("style"), round(float(st.get("kg", 0.0)), 2), round(float(st.get("speed", 0.0)), 2),
+                tuple(round(float(c), 2) for c in (st.get("pick_xy") or (0.0, 0.0))))
+
     def command(self, **msg) -> dict:
         import urllib.request
         req = urllib.request.Request(f"{self.URL}/cmd", json.dumps(msg).encode(), {"Content-Type": "application/json"})
@@ -275,6 +286,7 @@ class IsaacSource:
         st = self.status
         return Block(t=float(a[-1, 0]), q=a[:, 1:8], qd=a[:, 8:15], tau=a[:, 15:22], q_cmd=a[:, 22:29],
                      truth={"load": held, "fault": st.get("fault", "none"), "fault_joint": st.get("joint", -1)},
+                     tau_applied=a[:, 29:36] if a.shape[1] >= 36 else None,
                      dt=1.0 / float(st.get("row_hz") or 1.0 / DT_ROW))
 
 
@@ -294,11 +306,17 @@ def payload_torque_per_kg(twin, q, qd=None, qdd=None) -> np.ndarray:
 class Analyzer:
     """Sliding-window residual, payload and alert logic."""
 
-    def __init__(self, twin, timing: str, detector: bool = True):
+    def __init__(self, twin, timing: str, detector: bool = True, picks: bool = False):
         self.twin, self.timing, self.use_detector = twin, timing, detector
+        self.picks = picks                           # picks from the live simulator: a fault starts a few seconds into the pick, and a
+        self.refs: dict = {}                         # healthy run of the same task is the baseline (key -> {"t", "u", "e"} arrays)
+        self.run_key, self.run_t0, self.cur_ref, self.recording, self.rec = None, 0.0, None, False, []
+        self.cal_until = PICK_FAULT_ONSET_S - 0.1
+        self.run_info, self.run_stats = {}, {"res": [], "held": [], "alerts": {}}
         self.limit = twin.effort_limit
         self.reset_window()
         self.tare = 0.0
+        self.auto_tare = 0.0
         self.hist = deque(maxlen=500)                # one entry per block (20-25 Hz): at least the last 20 s
         self.blk_s = BLOCK_STEPS * 1e-3             # seconds of data in a block; set from each block in feed()
         self.consec = CONSEC_TICKS
@@ -319,7 +337,7 @@ class Analyzer:
         self.fault_hold = False
 
     def reset_window(self):
-        self.buf = {k: deque(maxlen=WINDOW_ROWS) for k in ("t", "q", "qd", "tau", "qc")}
+        self.buf = {k: deque(maxlen=WINDOW_ROWS) for k in ("t", "q", "qd", "tau", "qc", "ta")}
 
     def _start_calibration(self):
         self.cal = {"u": [], "e": [], "lag": [], "ready": False, "mu_lag": 0.0, "sd_lag": 0.01, "mu_u": np.zeros(7), "sd_u": np.ones(7),
@@ -328,6 +346,25 @@ class Analyzer:
     def recalibrate(self):
         self._start_calibration()
         self.streak.clear()
+
+    def begin_run(self, key, t0: float, fault: str, onset_s: float | None = None, info: dict | None = None):
+        """A new pick starts. A healthy pick of a task with no reference yet is recorded as that task's reference; a pick of a task that
+        has one is compared against it (the 3 s window at the start of a pick does not represent the carry, DECISIONS.md D7)."""
+        self.end_run()
+        self.run_key, self.run_t0, self.rec = key, t0, []
+        self.cal_until = (onset_s if onset_s else PICK_FAULT_ONSET_S) - 0.1       # the baseline ends before any fault can start
+        self.alerts.clear()                                                        # a new pick starts with a clean board
+        self.run_info = dict(info or {})
+        self.auto_tare = 0.0
+        self.run_stats = {"res": [], "held": [], "alerts": {}}
+        self.cur_ref = self.refs.get(key)
+        self.recording = self.cur_ref is None and fault == "none"
+
+    def end_run(self):
+        if self.recording and len(self.rec) > 20 and self.run_key is not None:
+            self.refs[self.run_key] = {"t": np.array([x[0] for x in self.rec]), "u": np.array([x[1] for x in self.rec]),
+                                       "e": np.array([x[2] for x in self.rec])}
+        self.recording, self.rec, self.run_key = False, [], None
 
     def set_tare(self, on: bool):
         self.tare = self.m_est_prev if on else 0.0
@@ -340,7 +377,8 @@ class Analyzer:
         t_rows = blk.t - len(blk.q) * dt + dt * np.arange(len(blk.q))
         for i in range(len(blk.q)):
             self.buf["t"].append(t_rows[i])
-            for k, arr in (("q", blk.q), ("qd", blk.qd), ("tau", blk.tau), ("qc", blk.q_cmd)):
+            for k, arr in (("q", blk.q), ("qd", blk.qd), ("tau", blk.tau), ("qc", blk.q_cmd),
+                           ("ta", blk.tau_applied if blk.tau_applied is not None else blk.tau)):
                 self.buf[k].append(arr[i])
         while self.buf["t"][-1] - self.buf["t"][0] > WINDOW_S:
             for dq in self.buf.values():
@@ -354,13 +392,20 @@ class Analyzer:
                 df[f"{name}_{j}"] = a[:, j]
         man = {"timing": TIMING_FORWARD} if self.timing == "forward" else {"timing_convention": "after world.step() produced q[k]"}
         man["drive_mode"] = df["drive_mode"] = "torque" if self.timing == "forward" else "position_stiff"
+        if self.timing != "forward":
+            man["tau_measured_includes_friction"] = False       # the simulator's measured torque is the net torque (docs/REVIEW.md F2)
         res = compute_residual(Run(df, man, "live"), self.twin, cutoff_hz=DEFAULT_CUTOFF_HZ)
         ok = np.flatnonzero(res.valid)
         if len(ok) < 6:
             return self.snapshot
         sl = ok[-10:]                                   # last 50 ms of valid rows
         k = ok[-1]
-        r_now = res.r[sl].mean(axis=0)
+        rr = res.r
+        if blk.tau_applied is not None:
+            # the fault residual: the applied torque against the model with friction (the measured torque cannot show friction)
+            ta = lowpass(np.array(self.buf["ta"]), dt, DEFAULT_CUTOFF_HZ)
+            rr = ta - (res.tau_model + self.twin.friction_scale * friction_sigmoid(res.qd))
+        r_now = rr[sl].mean(axis=0)
         q, qd = res.q[k], res.qd[k]
         fng = force_noise_gain(res.J[k])
         gated_det = fng > FORCE_GAIN_MAX                   # the detector's pose mask: no alarms with the arm stretched far out
@@ -390,12 +435,35 @@ class Analyzer:
         n_eff = max(min(self.m_n, 2.0 / min(1.0, dt / TAU_S) - 1.0), 1.0)
         band = 2.0 * np.sqrt(self.m_var / n_eff)
         self.m_est_prev = m_est
-        mass = m_est - self.tare
+        if self.picks and self.run_key is not None and blk.truth.get("load", 0.0) == 0 and not self.run_stats["held"]:
+            self.auto_tare = m_est                       # before the grasp the gripper is empty: what the estimator reads then is its zero
+        mass = m_est - (self.tare if self.tare else (self.auto_tare if self.picks else 0.0))
 
         events = self._alerts(blk, controls, r_now, track, qd, tkg, mass, gated_det, running_s, fng) \
             if self.use_detector else {}
 
         nowpct = r_now / self.limit * 100
+        if self.picks and self.run_key is not None:                    # what the run summary reports
+            rs = self.run_stats
+            rs["res"].append(np.abs(nowpct))
+            if blk.truth.get("load", 0.0) > 0:
+                rs["held"].append(mass)
+            for aid, a in self.alerts.items():
+                if a["sev"] > 0 and aid != "payload":                       # the payload is what the demo is about, not a fault
+                    rs["alerts"][aid] = (a["where"], a["title"])
+        if self.picks:
+            peak = np.percentile(self.run_stats["res"], 95, axis=0) if self.run_stats["res"] else np.zeros(7)       # typical, not the one-block grasp spike
+        else:
+            peak = 100 * np.abs(np.array([h["r"] for h in self.hist] or [np.zeros(7)])).max(0) / self.limit
+        held = self.run_stats["held"]
+        carry = held[25:-8] if len(held) > 45 else held[25:]                # skip the first second of the carry and the release
+        carry_est = float(np.mean(carry)) if len(carry) >= 5 else None
+        summary = {"picks": self.picks, "info": dict(self.run_info), "running": self.run_key is not None,
+                   "elapsed": (blk.t - self.run_t0) if self.run_key is not None else None,
+                   "peak": (int(np.argmax(peak)), float(np.max(peak))),
+                   "carry_est": carry_est,
+                   "alerts": list(self.run_stats["alerts"].values()),
+                   "ref": "recorded" if self.recording else ("compared" if self.cur_ref is not None else "none")}
         comp = {"gravity": self.twin.g(q), "inertia": self.twin.M(q) @ res.qdd[k],
                 "coupling": self.twin.coriolis(q, qd), "friction": self.twin.friction(qd), "unexplained": r_now}
         entry = {"t": blk.t, "r": r_now.copy(), "tau_meas": res.tau[k].copy(), "tau_model": res.tau_model[k].copy(),
@@ -405,11 +473,12 @@ class Analyzer:
         self.snapshot = {
             "t": blk.t, "q": q, "qd": qd, "r": r_now, "r_pct": nowpct, "tau_meas": res.tau[k], "tau_model": res.tau_model[k],
             "track": track, "force_gain": fng, "gated_det": bool(gated_det),
-            "est": mass, "band": band, "raw_est": m_est, "load": blk.truth["load"], "tare": self.tare,
+            "est": mass, "band": band, "raw_est": m_est, "load": blk.truth["load"], "tare": self.tare, "summary": summary,
             "wrench": res.wrench[k], "comp": comp, "tkg": tkg, "geom": pts, "events": events,
             "alerts": self.alerts, "log": self.log[:8], "metrics": self.metrics,
             "calibrating": self.use_detector and not self.cal["ready"],
-            "cal_progress": min(1.0, (len(self.cal["u"]) * self.blk_s) / CALIBRATION_S),
+            "cal_progress": min(1.0, (blk.t - self.run_t0) / self.cal_until) if (self.picks and self.run_key is not None)
+            else min(1.0, (len(self.cal["u"]) * self.blk_s) / CALIBRATION_S),
             "truth": blk.truth, "n": len(self.hist),
         }
         return self.snapshot
@@ -427,30 +496,46 @@ class Analyzer:
         out: dict[str, dict] = {}
         J = lambda i: f"Joint {i + 1}"   # noqa: E731
         t = blk.t
+        if self.picks and self.run_key is None:      # between picks the arm sits at home: nothing to judge, and no pick baseline applies
+            self._set_alerts({}, blk.t, True)         # and whatever was raised during the last pick fades out
+            return {}
         # payload signature fit: which mass explains the residual pattern, ignoring joints it cannot explain
-        sd_u = self.cal["sd_u"] if self.cal["ready"] else np.ones(7)
+        if self.recording or self.cur_ref is not None:
+            sd_u = np.full(7, FIT_SD_NM)            # a reference run and the runs compared with it must define u the same way
+        else:
+            sd_u = self.cal["sd_u"] if self.cal["ready"] else np.ones(7)
         wgt = 1.0 / np.maximum(sd_u, FLOOR_RESIDUAL_NM) ** 2
         ex = np.zeros(7, bool)
         fit = 0.0
         for _ in range(4):
             den = float((wgt * tkg * tkg)[~ex].sum())
-            fit = float((wgt * r * tkg)[~ex].sum() / den) if den > 0 else 0.0
+            fit = float(np.clip((wgt * r * tkg)[~ex].sum() / den, -0.5, 5.0)) if den > 0 else 0.0   # kg; a jammed joint must not blow it up
             nx = np.abs(r - fit * tkg) > 6 * np.maximum(sd_u, FLOOR_RESIDUAL_NM) + 0.25
             if (nx == ex).all():
                 break
             ex = nx
         u = r - fit * tkg
         e = track
-        healthy = ctl.fault == "none" and ctl.load < 0.1
+        t_rel = blk.t - self.run_t0
+        if self.picks and self.run_key is not None:
+            if self.recording:
+                self.rec.append((t_rel, u.copy(), e.copy()))
+            if self.cur_ref is not None:                   # compare with the healthy run of the same task, at the same time into the pick
+                i = int(np.clip(np.searchsorted(self.cur_ref["t"], t_rel), 0, len(self.cur_ref["t"]) - 1))
+                u, e = u - self.cur_ref["u"][i], e - self.cur_ref["e"][i]
+        self.last_ue = (u.copy(), e.copy())
+        sel_fault = blk.truth.get("fault", "none") if self.picks else ctl.fault       # picks: the fault is chosen per pick, not live
+        healthy = sel_fault == "none" and (self.picks or ctl.load < 0.1)
         if not healthy:
             self._healthy_since = t
 
         if not self.cal["ready"]:
-            if not gated_det and ctl.fault == "none":
+            if not gated_det and (self.picks or ctl.fault == "none"):
                 self.cal["u"].append(u.copy())
                 self.cal["e"].append(e.copy())
                 self.cal["lag"].append(self._lag())
-                if len(self.cal["u"]) * self.blk_s >= CALIBRATION_S:
+                done = t_rel >= self.cal_until if (self.picks and self.run_key is not None) else len(self.cal["u"]) * self.blk_s >= CALIBRATION_S
+                if done and len(self.cal["u"]) >= 5:
                     U, E = np.array(self.cal["u"]), np.array(self.cal["e"])
                     self.cal.update(ready=True, mu_u=U.mean(0), sd_u=np.maximum(U.std(0), FLOOR_RESIDUAL_NM),
                                     mu_e=E.mean(0), sd_e=np.maximum(E.std(0), FLOOR_TRACKING_RAD),
@@ -461,6 +546,7 @@ class Analyzer:
         z_e = (e - self.cal["mu_e"]) / self.cal["sd_e"]
         lag = self._lag()
         z_lag = (lag - self.cal["mu_lag"]) / self.cal["sd_lag"]
+        self.last_z = {"u": z_u, "e": z_e, "lag": z_lag, "u_raw": u.copy(), "e_raw": e.copy()}              # kept for the tests and for tuning against simulator logs
 
         if gated_det:
             out["gate"] = dict(sev=0, where="Whole arm", title="Alarms held at this pose", cause="Arm stretched far out",
@@ -469,12 +555,25 @@ class Analyzer:
             self._set_alerts(out, t, healthy)
             return out
 
-        hit_u = np.abs(z_u) > LIVE_Z
+        big_enough = np.abs(u - self.cal["mu_u"]) >= np.maximum(ABS_MIN_NM, ABS_MIN_FRAC * self.limit)
+        hit_u = (np.abs(z_u) > LIVE_Z) & big_enough
         for i in range(7):
             self.streak[f"u{i}"] = self.streak.get(f"u{i}", 0) + 1 if hit_u[i] else 0
             self.streak[f"e{i}"] = self.streak.get(f"e{i}", 0) + 1 if abs(z_e[i]) > LIVE_Z else 0
         self.streak["lag"] = self.streak.get("lag", 0) + 1 if z_lag > LIVE_Z and lag - self.cal["mu_lag"] > 0.02 else 0
         rj = [i for i in range(7) if self.streak[f"u{i}"] >= self.consec]
+        if rj:                                                          # a fault on one joint disturbs its neighbours: report the dominant ones
+            zm = max(abs(z_u[i]) for i in rj)
+            rj = [i for i in rj if abs(z_u[i]) >= 0.4 * zm]
+        judged = (not self.picks) or self.cur_ref is not None       # picks without a healthy reference are not judged for faults
+        if not judged:
+            rj = []
+        # a delay disturbs most joints at once (and can shake the arm so the lag estimate fails); friction or a jam disturbs one or two
+        jam = any(a.startswith("stuck") for a in self.alerts)                     # a jam shakes the whole arm afterwards; it is still a jam
+        delayed = judged and ("delay" in self.alerts or (not jam and (len(rj) >= GLOBAL_JOINTS or (self.streak["lag"] >= self.consec and not rj))))
+        rj_all = rj
+        if delayed:
+            rj = []
         seized = [i for i in rj if abs(qd[i]) < 0.02 and self.streak[f"e{i}"] >= self.consec]
         faultOn = False
         if seized:                                   # a jam disturbs the other joints too: name the worst one
@@ -489,12 +588,13 @@ class Analyzer:
                 out[f"fric{i}"] = dict(sev=2, where=J(i), title=FAULT_LABELS["friction"], cause="Friction beyond the model",
                     lines=[f"Unexplained torque {u[i]:+.2f} N·m while moving ({abs(u[i]) / self.limit[i] * 100:.1f}% of limit), z = {z_u[i]:+.0f}.",
                            f"The other joints fit a {fit:.2f} kg load; this one does not, so it is not gravity."])
-        if self.streak["lag"] >= self.consec and not rj:
+        if delayed:
             faultOn = True
             out["delay"] = dict(sev=3, where="All joints", title="Command delay / inconsistent command",
-                cause="Tracking channel only; the residual cannot see it",
-                lines=[f"Tracking error leads the motion by {lag * 1000:.0f} ms (baseline {self.cal['mu_lag'] * 1000:.0f} ms).",
-                       "Torque and motion stay consistent, so the residual is quiet: only the tracking channel sees it."])
+                cause="Many joints disturbed at once" if len(rj_all) >= GLOBAL_JOINTS else "Tracking channel only; the residual cannot see it",
+                lines=[f"{len(rj_all)} joints are off their baseline at the same time." if len(rj_all) >= GLOBAL_JOINTS else
+                       f"Tracking error leads the motion by {lag * 1000:.0f} ms (baseline {self.cal['mu_lag'] * 1000:.0f} ms).",
+                       "A single worn or jammed joint disturbs one or two joints; a delayed command disturbs them all."])
         self.fault_hold = faultOn
         for i in range(7):
             if abs(self.tau_now(i)) > 0.9 * self.limit[i]:
@@ -562,6 +662,7 @@ class Engine:
         self.playing = True
         self.cost_ms = 0.0
         self.block_s = BLOCK_STEPS * 1e-3            # seconds of data per block; the live simulator sets it from its row rate
+        self.refs = {}                               # healthy reference picks; they survive a page reload and a switch of source
         self.use("live")
         self._stop = False
         self.thread = threading.Thread(target=self._loop, daemon=True)
@@ -576,7 +677,8 @@ class Engine:
             elif which == "isaac":
                 self.source = IsaacSource()
                 self.twin = load_panda()
-                self.an = Analyzer(self.twin, "backward", detector=True)
+                self.an = Analyzer(self.twin, "backward", detector=True, picks=True)
+                self.an.refs = self.refs
             else:
                 path = REPO / "data" / f"ref_matched_{which}_1000hz.parquet"      # our tracked reference runs
                 self.twin = load_panda()
@@ -584,6 +686,12 @@ class Engine:
                 self.an = Analyzer(self.twin, "backward", detector=False)
             self.which = which
             self.t_run = 0.0
+
+    def reset_controls(self):
+        """The page was reloaded: its controls are back at their defaults, so the engine's must be too (the analysis keeps running)."""
+        self.source.c.load = 1.0 if self.source.kind == "isaac" else 0.0
+        self.source.c.fault, self.source.c.fault_joint = "none", 3 if self.source.kind == "isaac" else 2
+        self.source.c.speeds = [30.0] * 7
 
     @property
     def controls(self) -> Controls:
@@ -621,11 +729,16 @@ class Engine:
                             self.source.new_run = False
                             self.an.reset_window()
                             self.an.recalibrate()
+                            if self.source.kind == "isaac" and self.source.status.get("state") == "running":
+                                self.an.begin_run(self.source.task_key(), blk.t - len(blk.q) * blk.dt, self.source.status.get("fault", "none"),
+                                                  self.source.status.get("fault_onset"), dict(self.source.status))
                         self.block_s = len(blk.q) * blk.dt
                         self.t_run += self.block_s
                         if self.source.kind == "replay" and getattr(self.source, "wrapped", False):
                             self.an.reset_window()
                         self.an.feed(blk, self.controls, self.t_run)
+                        if self.source.kind == "isaac" and self.source.status.get("state") == "idle":
+                            self.an.end_run()
                     except _NoBlock:
                         pass
                     except Exception as exc:                      # keep the loop alive; the UI shows the error

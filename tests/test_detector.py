@@ -38,3 +38,12 @@ def test_command_delay_is_caught_by_tracking_not_residual(twin):
 
 def test_friction_label_always_names_both_classes():
     assert FAULT_LABELS["friction"] == "friction (stiction / bearing wear)"
+
+
+def test_consecutive_rule_is_a_duration_not_a_row_count():
+    import numpy as np
+    from detector import consecutive_rows
+    assert consecutive_rows(np.arange(100) * 0.001) == 50           # 1 kHz: 50 rows
+    assert consecutive_rows(np.arange(100) * 0.004) == 12           # 250 Hz: 12 rows, still about 50 ms
+    assert consecutive_rows(np.arange(100) * 0.005) == 10           # 200 Hz
+    assert consecutive_rows(np.arange(100) * 0.004, consecutive=7) == 7      # an explicit row count wins

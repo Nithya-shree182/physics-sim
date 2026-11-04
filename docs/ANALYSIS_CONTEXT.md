@@ -120,7 +120,7 @@ python observers/detector.py data/synthetic/*.parquet
   Synthetic: exact without mismatch; with the ±3% mass mismatch about ±25–35 g phantom mass;
   a tare from the empty gripper at the same pose removes it at rest (1 kg → 1.0012 kg), but
   not during motion (1 kg excitation → 0.965 kg).
-- **Detector:** 3 s fault-free calibration window, |z| > 8 for 50 consecutive steps, gated by
+- **Detector:** 3 s fault-free calibration window, |z| > 8 for 50 ms (it was 50 rows, which is 50 ms only at 1 kHz), masked by
   pose. Thresholds were set on the same synthetic data they are tested on; **re-tune on real
   logs**.
 

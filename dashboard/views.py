@@ -1,6 +1,9 @@
 """Pure functions: snapshot in, Dash components or Plotly figures out. No state here."""
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import numpy as np
 import plotly.graph_objects as go
 from dash import dcc, html
@@ -63,12 +66,12 @@ def twin_figure(snap, alerts, load):
                                  textposition="top right", textfont=dict(color=SEV_COLOR[sv] if sv else "#c7cbd1", size=12, family=MONO),
                                  hoverinfo="skip", showlegend=False))
     fig.update_layout(_base_layout(height=380, margin=dict(l=0, r=0, t=0, b=0)),
-                      xaxis=dict(range=[-0.35, 0.95], visible=False, scaleanchor="y"), yaxis=dict(range=[-0.08, 1.2], visible=False))
+                      xaxis=dict(range=[-0.3, 0.9], visible=False, scaleanchor="y"), yaxis=dict(range=[-0.05, 1.0], visible=False))
     return fig
 
 
 def _base_layout(**kw):
-    return go.Layout(paper_bgcolor="#0d0f13", plot_bgcolor="#0d0f13", font=dict(color="#9ca3af", family=MONO, size=11),
+    return go.Layout(paper_bgcolor="#0e1218", plot_bgcolor="#0e1218", font=dict(color="#9ca3af", family="Inter, system-ui, sans-serif", size=11),
                      uirevision="keep", **kw)
 
 
@@ -123,21 +126,103 @@ def track(v, scale, color):
     return html.Span(className="track", children=[html.I(style=dict(left=f"{left}%", width=f"{w}%", background=color)), html.U()])
 
 
-def stat_cards(snap, cal):
-    worst = int(np.argmax(np.abs(snap["r_pct"])))
-    state_col = "#34d399"
-    if any(a.startswith(("fric", "stuck", "delay")) for a in snap["alerts"]):
-        state, state_col = "unreliable, fault active", "#fab219"
+STYLE_NAME = {"trapezoidal": "Trapezoidal", "s_curve": "S-curve", "torque_aware": "Torque-aware"}
+FAULT_NAME = {"none": "None", "friction": "Friction ×8", "stuck_joint": "Locked joint", "delay": "Command delay 50 ms"}
+
+
+def _kv(k, v, tone=None):
+    return html.Div(className="kv", children=[html.Span(k, className="k"), html.Span(v, className="v", style=dict(color=tone) if tone else None)])
+
+
+def _chip(text, kind):
+    return html.Span(text, className=f"chip chip-{kind}")
+
+
+def summary_card(snap, status, ctl):
+    """What this run is doing and what came out of it, in plain words; it stays on screen after the pick ends."""
+    sm = snap["summary"]
+    info, rows = sm["info"], []
+    j, pk = sm["peak"]
+    grp = {}
+    for w, t in sm["alerts"]:
+        grp.setdefault(t, []).append(w.replace("Joint ", ""))
+    alerts = [f"{t} ({'joint ' if all(x.isdigit() for x in ws) else ''}{', '.join(sorted(ws))})" for t, ws in grp.items()]
+    if sm["picks"]:
+        st = (status or {})
+        running = sm["running"] and st.get("state") == "running"
+        last = st.get("last") if not running else None
+        chip = _chip("RUNNING", "run") if running else (_chip("FINISHED", "ok") if (info and last) else _chip("READY", "idle"))
+        if info:
+            xy = info.get("pick_xy")
+            rows += [_kv("Task", f"{STYLE_NAME.get(info.get('style'), '—')} · {info.get('kg', 0):g} kg cube · speed {round(100 * info.get('speed', 0))}%"),
+                     _kv("Cube position", f"x {xy[0]:.2f} m, y {xy[1]:.2f} m" if xy else "—"),
+                     _kv("Fault", FAULT_NAME.get(info.get("fault", "none"), "None") + (f" on joint {info['joint'] + 1}" if info.get("fault", "none") not in ("none", "delay") else ""))]
+            dur = info.get("duration") or 0
+            if running and dur:
+                rows.append(html.Div(className="kv", children=[html.Span("Progress", className="k"),
+                    html.Div(className="prog", children=[html.Div(className="prog-track", children=html.Div(className="prog-bar", style=dict(width=f"{min(100, 100 * (sm['elapsed'] or 0) / dur):.0f}%"))),
+                                                         html.Span(f"{min(sm['elapsed'] or 0, dur):.1f} / {dur:.1f} s", className="num", style=dict(whiteSpace="nowrap"))])]))
+            ce = sm["carry_est"]
+            if ce is not None:
+                rows.append(_kv("Payload", f"set {info.get('kg', 0):.2f} kg · estimated {ce:.2f} kg ({ce - info.get('kg', 0):+.2f})" + (" · a fault was active, so this is unreliable" if alerts else ""),
+                                "#34d399" if (abs(ce - info.get("kg", 0)) <= max(0.05 * info.get("kg", 1), 0.06) and not alerts) else "#fab219"))
+            else:
+                rows.append(_kv("Payload", "estimated once the cube is lifted" if running else "—"))
+            rows.append(_kv("Typical peak residual", f"J{j + 1} · {pk:.1f}% of its torque limit"))
+            rows.append(_kv("Alarms", "None" if not alerts else "; ".join(alerts), "#34d399" if not alerts else "#fb923c"))
+            det = {"recorded": "Healthy run: saved as the reference for this pick",
+                   "compared": "Compared with the healthy reference for this pick",
+                   "none": "No healthy reference for this pick: fault alarms are off"}[sm["ref"]]
+            rows.append(_kv("Fault detection", det))
+            if last:
+                verdict = ("Cube placed, %.0f mm from the target" % (last["placed_error_m"] * 1000)) if last["ok"] else ("Stopped" if last["aborted"] else "Pick failed: cube not at the target")
+                rows.append(_kv("Result", verdict, "#34d399" if last["ok"] else "#f87171"))
+        else:
+            rows.append(html.Div("Press Run pick. The task, the payload estimate, the largest residual and every alarm are summarised here as the pick runs.", className="muted"))
     else:
-        state = "estimating"
+        chip = _chip("LIVE", "run")
+        est = snap["est"]
+        rows += [_kv("Mock load", f"set {ctl.load:.2f} kg · estimated {est:.2f} kg ({est - ctl.load:+.2f})" if ctl else "—"),
+                 _kv("Joint speed", f"{round(np.mean(ctl.speeds) / 0.5 / 5) * 5}% of the speed bar" if ctl else "—"),
+                 _kv("Test fault", FAULT_NAME.get(ctl.fault, "None") if ctl else "—"),
+                 _kv("Peak residual (20 s)", f"J{j + 1} · {pk:.1f}% of its torque limit"),
+                 _kv("Alarms", "None" if not alerts else " · ".join(alerts), "#34d399" if not alerts else "#fb923c")]
+    return html.Div(className="panel", children=[
+        html.Div(className="spread", children=[html.Span("RUN SUMMARY", className="lbl"), chip]), html.Div(className="kvs", children=rows)])
+
+
+def alerts_card(snap):
+    active = sorted([a for aid, a in snap["alerts"].items() if a["sev"] > 0 and aid != "payload"], key=lambda a: (-a["sev"], a["born"]))
+    groups = {}
+    for a in active:
+        groups.setdefault((a["title"], a["sev"]), []).append(a["where"].replace("Joint ", "").replace(" carries most of it", ""))
+    rows = [html.Div(className="arow", children=[html.Span(className="dot", style=dict(background=SEV_COLOR[sv])),
+                                                 html.Span(t, className="atitle"), html.Span(("joint " if all(w.isdigit() for w in ws) else "") + ", ".join(ws), className="awhere")])
+            for (t, sv), ws in list(groups.items())[:4]]
+    return html.Div(className="panel", children=[
+        html.Div(className="spread", children=[html.Span("ALERTS", className="lbl"), _chip(f"{len(active)}", "bad" if active else "ok")]),
+        html.Div(className="kvs", children=rows or [html.Div(className="arow", children=[html.Span(className="dot", style=dict(background="#34d399")),
+                                                                                         html.Span("No active alerts", className="atitle")])])])
+
+
+def stat_cards(snap, cal, status=None, ctl=None):
+    worst = int(np.argmax(np.abs(snap["r_pct"])))
+    fault_active = any(a.startswith(("fric", "stuck", "delay")) for a in snap["alerts"])
+    holding = snap["load"] > 0
+    state, state_col = ("fault alarm active: the estimate may be off", "#fab219") if fault_active else (
+        ("holding the cube" if holding else "gripper empty") if snap["summary"]["picks"] else ("estimating", "#9ca3af")[0], "#9ca3af")
     return [
-        html.Div(className="stat", children=[html.Span("PAYLOAD ESTIMATE", className="lbl"),
-            html.Span(f"{snap['est']:.3f} kg", className="num big"),
-            html.Span(f"± {snap['band']:.3f} · {state}", className="muted", style=dict(fontSize=12, color=state_col))]),
-        html.Div(className="stat", children=[html.Span("WORST RESIDUAL", className="lbl"),
-            html.Span(f"J{worst + 1} · {f2(snap['r_pct'][worst], 1)}%", className="num big"),
-            html.Span(f"of its torque limit · {f2(snap['r'][worst])} N·m", className="muted", style=dict(fontSize=12))]),
-    ]
+        html.Div(className="kpis", children=[
+            html.Div(className="kpi", children=[html.Span("PAYLOAD ESTIMATE", className="lbl"),
+                *( [html.Span("—", className="num big"), html.Span("kg", className="unit"),
+                    html.Span("run a pick to estimate the carried mass", className="sub")]
+                   if (snap["summary"]["picks"] and not snap["summary"]["running"]) else
+                   [html.Span(f"{snap['est']:.2f}", className="num big"), html.Span("kg", className="unit"),
+                    html.Span(f"± {snap['band']:.2f} kg · {state}", className="sub", style=dict(color=state_col))])]),
+            html.Div(className="kpi", children=[html.Span("LARGEST RESIDUAL", className="lbl"),
+                html.Span(f"J{worst + 1} · {abs(snap['r_pct'][worst]):.1f}%", className="num big"),
+                html.Span(f"of its torque limit · {f2(snap['r'][worst])} N·m", className="sub")])]),
+        summary_card(snap, status, ctl), alerts_card(snap)]
 
 
 def joint_bars(snap, sel, cal):
@@ -178,14 +263,14 @@ def drawer_body(kind, snap, an, hist, load_truth):
                     html.Div([html.Div("FRAME", className="lbl"), html.Div(f"{snap['n']} · display 2 Hz", className="num")]),
                     html.Div([html.Div("ANALYSIS", className="lbl"), html.Div("1.2 s window, 20 Hz filter")]),
                     html.Div([html.Div("SCHEMA", className="lbl"), html.Div("telemetry v0")]),
-                    html.Div([html.Div("FEED HEALTH", className="lbl"), html.Div("[latency, drops from dev]")])])]
+                    html.Div([html.Div("FEED HEALTH", className="lbl"), html.Div("not reported")])])]
     if kind == "o4":
         err = snap["est"] - load_truth
         fig, _, _ = chart_figure(hist, "pay", 0, an.cal, snap, height=200)
         bars = [html.Div(style=dict(display="grid", gridTemplateColumns="28px minmax(0,1fr) 60px", alignItems="center", gap=8, fontSize=12), children=[
                     html.Span(f"J{i + 1}"), track(snap["tkg"][i] * snap["est"] / TL[i], 9, C_LOAD),
                     html.Span(f2(snap["tkg"][i] * snap["est"]), className="num", style=dict(textAlign="right"))]) for i in range(7)]
-        state = ("UNRELIABLE · a fault alarm is active" if any(a.startswith(("fric", "stuck", "delay")) for a in snap["alerts"]) else "Estimating")
+        state = ("Fault alarm active: the estimate may be off" if any(a.startswith(("fric", "stuck", "delay")) for a in snap["alerts"]) else "Estimating")
         return [html.Div(style=dict(display="grid", gridTemplateColumns="1fr 1fr", gap=10), children=[
                     html.Div([html.Div("ESTIMATE", className="lbl"), html.Div(f"{snap['est']:.3f} kg", className="num", style=dict(fontSize=24)),
                               html.Div(f"± {snap['band']:.3f} kg", className="muted", style=dict(fontSize=12))]),
@@ -212,13 +297,15 @@ def drawer_body(kind, snap, an, hist, load_truth):
     b = lambda h, t: html.P([html.B(h + " ", style=dict(color="#e5e7eb")), t], className="muted", style=dict(margin=0))   # noqa: E731
     return [b("Independent twin.", "Pinocchio 7-DOF Panda from the empty-arm URDF (gripper 0.93 kg included), armature 0.0061, Gaz friction. "
                                    "Residual r = τ measured − τ model. The twin is never told the payload."),
-            b("Where the numbers come from.", "Stand-in mode: our own Pinocchio plant (link masses ±3%, friction ×1.15, sensor noise) driven by a joint "
-                                              "impedance controller, stepped live. Replay mode: dev's real Isaac Sim slow-reference logs, looped. "
-                                              "Analysis is the repo's own code on a sliding 1.2 s window."),
-            b("Tests.", "65 pass, including 35 physics and proposal-objective tests. Gravity self-test 10 of 10."),
-            b("First real logs.", "Empty arm: under 0.26% of limit on joints 1–4, 1.4–1.8% on joints 5–7. 1 kg reads 0.972 kg raw, 1.000 kg after the empty-gripper tare."),
-            b("Honest limits.", "Stand-in numbers are not Isaac Sim's. The URDF parameters make twin and plant agree; they are not the real Panda's. "
-                                "Detector thresholds are tuned on synthetic data: re-tune on Isaac Sim logs. Live, the residual lags by 0.15 s (filter edge)."),
+            b("Where the numbers come from.", "Stand-in mode: a Pinocchio plant (link masses ±3%, friction ×1.15, sensor noise) driven by a joint "
+                                              "impedance controller, stepped live. Replay mode: recorded Isaac Sim slow-reference logs, looped. "
+                                              "Analysis runs on a sliding 1.2 s window."),
+            b("Checks.", "The twin matches the simulator's gravity torque to under 0.15 N·m at every probe pose."),
+            b("Reference logs.", "Empty arm, matched twin, no noise, 22% of the speed limit: 0.01% of limit on joints 1–4 and 0.08% on joints 5–6. 1 kg reads 1.000 kg. "
+                                 "With the plant's deliberate 5% mass mismatch the elbow (joint 4) shows a steady 0.8 N·m, and a wrist joint that barely moves can show "
+                                 "up to its static friction, about 0.2 N·m, which is 1.7% of its 12 N·m limit."),
+            b("Limits.", "Stand-in numbers are not Isaac Sim's. The URDF parameters make twin and plant agree; they are not a real Panda's. "
+                                "Faults are found by comparing a pick with a healthy run of the same pick. Live, the residual lags by 0.15 s (filter edge)."),
             b("Why the speed bar tops out at half speed.", "The bar runs from 0 to 100%, and 100% on the bar is half of each joint's maximum velocity. "
                              "In this range the torque the model predicts and the torque the arm applies agree to within about 2% of a joint's limit, "
                              "and that agreement does not depend on any simulator setting. A clean residual means any change in it has a physical cause: "
@@ -226,6 +313,64 @@ def drawer_body(kind, snap, an, hist, load_truth):
 
 
 # ── benchmark tab ───────────────────────────────────────────────────────────────────────
+_STYLE_COL = {"trapezoidal": "#60a5fa", "s_curve": "#34d399", "torque_aware": "#fab219"}
+
+
+def _o6_data():
+    try:
+        return json.loads((Path(__file__).resolve().parents[1] / "docs" / "o6pick_summary.json").read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def _style_figure(runs, kg):
+    fig = go.Figure()
+    for st in ("trapezoidal", "s_curve", "torque_aware"):
+        rr = sorted([r for r in runs if r["style"] == st and r["payload_kg"] == kg], key=lambda r: r["cycle_time_s"])
+        fig.add_trace(go.Scatter(x=[100 * r["peak_torque_frac"] for r in rr], y=[r["cycle_time_s"] for r in rr], mode="lines+markers", name=STYLE_NAME[st],
+                                 line=dict(color=_STYLE_COL[st], width=2), marker=dict(size=9),
+                                 customdata=[[round(100 * r["speed_fraction"]), r["energy_drawn_J"]] for r in rr],
+                                 hovertemplate="%{y:.1f} s · peak %{x:.0f}% · top speed %{customdata[0]}% · %{customdata[1]:.0f} J<extra>" + STYLE_NAME[st] + "</extra>"))
+    fig.update_layout(height=270, margin=dict(l=48, r=12, t=28, b=44), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                      title=dict(text=("Empty gripper" if kg == 0 else f"{kg:g} kg payload"), x=0.0, font=dict(size=13, color="#e5e7eb")),
+                      font=dict(color="#9ca3af", size=11), legend=dict(orientation="h", y=-0.28, x=0),
+                      xaxis=dict(title="Peak torque, % of limit", gridcolor="rgba(255,255,255,0.06)", zeroline=False),
+                      yaxis=dict(title="Cycle time, s", gridcolor="rgba(255,255,255,0.06)", zeroline=False, rangemode="tozero"))
+    return fig
+
+
+def _o6_section():
+    d = _o6_data()
+    if not d:
+        return html.Section(className="card", children=[html.H2("Movement styles", className="h2"),
+                                                        html.P("The benchmark results file (docs/o6pick_summary.json) is not available.", className="muted")])
+    runs = d["runs"]
+    budget_rows = []
+    for b in d["shortest_under_budget"]:
+        vals = {k: b[k] for k in STYLE_NAME}
+        best = min([v for v in vals.values() if v is not None], default=None)
+        budget_rows.append(html.Tr([html.Td(f"{b['payload_kg']:g} kg"), html.Td(f"{round(100 * b['budget'])}%")] + [
+            html.Td("—" if v is None else f"{v:.2f} s", style=dict(color="#34d399", fontWeight=600) if (v is not None and v == best) else None) for v in vals.values()]))
+    run_rows = [html.Tr([html.Td(STYLE_NAME[r["style"]]), html.Td(f"{r['payload_kg']:g} kg"), html.Td(f"{round(100 * r['speed_fraction'])}%"),
+                         html.Td(f"{r['cycle_time_s']:.2f} s"), html.Td(f"{100 * r['peak_torque_frac']:.0f}%"), html.Td(f"{r['energy_drawn_J']:.0f} J"),
+                         html.Td(f"{r['track_err_max_rad']:.2f} rad")])
+                for r in sorted(runs, key=lambda r: (r["payload_kg"], r["style"], r["cycle_time_s"]))]
+    return html.Section(className="card", children=[
+        html.Div(children=[html.H2("Movement styles", className="h2"),
+                           html.P("One pick-and-place cycle in three trajectory styles, each at three speeds, with an empty gripper and with 2 kg. "
+                                  "Lower and further left is better: a shorter cycle for less peak torque. These runs go faster than the 50% speed band "
+                                  "the live demo stays in, so they are used for time, torque and energy only, never for fault detection.", className="muted", style=dict(margin="4px 0 0"))]),
+        html.Div(className="grid2", children=[dcc.Graph(figure=_style_figure(runs, kg), config=dict(displayModeBar=False)) for kg in (0.0, 2.0)]),
+        html.Div(className="grid2", children=[
+            html.Div(children=[html.Span("FASTEST CYCLE UNDER A PEAK-TORQUE BUDGET", className="lbl"),
+                               html.Table(className="tbl", children=[html.Thead(html.Tr([html.Th(h) for h in ("Payload", "Budget", "Trapezoidal", "S-curve", "Torque-aware")])),
+                                                                     html.Tbody(budget_rows)]),
+                               html.Span("Green is the fastest style that stays under the budget; a dash means none does.", className="muted", style=dict(fontSize=12))]),
+            html.Div(children=[html.Span("ALL 18 RUNS", className="lbl"),
+                               html.Div(style=dict(maxHeight=250, overflowY="auto"), children=html.Table(className="tbl", children=[
+                                   html.Thead(html.Tr([html.Th(h) for h in ("Style", "Payload", "Top speed", "Cycle", "Peak torque", "Energy", "Max tracking error")])), html.Tbody(run_rows)]))])])])
+
+
 def bench(snap, real_pct, speeds):
     spd = np.array(speeds) / 100
     regimes = [(0.1, "physical"), (0.2, "physical"), (0.3, "physical"), (0.5, "physical, knee"), (0.75, "drive artifact"), (1.0, "drive artifact")]
@@ -241,26 +386,17 @@ def bench(snap, real_pct, speeds):
              ("FAULT DETECTION DELAY", "—" if m["delay_fault"] is None else f"{m['delay_fault']:.2f} s", m["fault_kind"] or "inject a fault to measure"),
              ("FALSE ALARMS", str(m["false_alarms"]), "no load, no fault, speeds ≤ 50%")]
     return [
+        _o6_section(),
         html.Section(className="card", children=[
-            html.H2("O6 · Compare the movement styles", className="h2"),
-            html.P("Same waypoints, three trajectory styles: cycle time, peak torque and energy per pick. This waits for dev: the three styles and the "
-                   "pick-and-place runs do not exist yet. O6 may run faster than the 50% band and is reported separately from detection.", className="muted", style=dict(margin=0)),
-            html.Div(style=dict(display="grid", gridTemplateColumns="repeat(auto-fit,minmax(220px,1fr))", gap=12), children=[
-                html.Div(className="stat dark", children=[html.Span(n, className="lbl")] + [
-                    html.Div(style=dict(display="flex", justifyContent="space-between", fontSize=12), children=[html.Span(k, className="muted"), html.Span("—", className="num")])
-                    for k in ("Cycle time", "Peak torque", "Energy per pick")]) for n in ("TRAPEZOIDAL", "S-CURVE (JERK-LIMITED)", "TORQUE-AWARE")]),
-            html.Div("[time · peak torque · energy chart, when dev's runs arrive]", className="muted",
-                     style=dict(border="1px dashed rgba(255,255,255,0.18)", borderRadius=6, padding=40, textAlign="center", background="#0d0f13"))]),
-        html.Section(className="card", children=[
-            html.H2("Evaluation of this session", className="h2"),
-            html.P("Scores what you are doing right now against the load and fault you set. Stand-in numbers are optimistic: the plant and the twin share a URDF.", className="muted", style=dict(margin=0)),
+            html.H2("This session", className="h2"),
+            html.P("How this session is doing against the load and fault you set. Stand-in numbers are optimistic: the plant and the twin share a URDF.", className="muted", style=dict(margin=0)),
             html.Div(style=dict(display="grid", gridTemplateColumns="repeat(auto-fit,minmax(190px,1fr))", gap=12), children=[
                 html.Div(className="stat dark", children=[html.Span(a, className="lbl"), html.Span(b_, className="num", style=dict(fontSize=22, fontWeight=500)),
                                                           html.Span(c_, className="muted", style=dict(fontSize=12))]) for a, b_, c_ in tiles]),
-            html.H3("Residual floor against speed (dev's sweep, 1000 Hz)", className="h2", style=dict(fontSize=13)),
+            html.H3("Why the demo stays at or below half speed: the residual floor against speed", className="h2", style=dict(fontSize=13)),
             html.Div(style=dict(overflowX="auto"), children=html.Table(className="tbl", children=[
                 html.Thead(html.Tr([html.Th(h) for h in ("Speed", "Worst-joint RMS, % of limit", "Regime", "Joints now in this band")])), html.Tbody(rows)])),
-            html.H3("Real empty-arm log (slow reference): RMS residual, % of limit", className="h2", style=dict(fontSize=13)),
+            html.H3("Empty-arm reference log: RMS residual, % of limit", className="h2", style=dict(fontSize=13)),
             html.Div(className="num", style=dict(display="grid", gridTemplateColumns="repeat(7,minmax(0,1fr))", gap=8, fontSize=12, textAlign="center"), children=[
                 html.Div(style=dict(background="#0d0f13", borderRadius=6, padding="8px 4px"), children=[html.Div(f"J{i + 1}", className="lbl"), html.Div(f"{v:.2f}%")])
                 for i, v in enumerate(real_pct)])])]

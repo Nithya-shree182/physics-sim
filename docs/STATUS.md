@@ -21,7 +21,7 @@ Written for: both people. One line per problem; what is fixed is listed so nobod
 | 12 | Detecting faults in a pick needs a healthy reference run of the same task (the default calibration false-alarms on a non-repeating task) | a real deployment must record one | `--reference`; `against_reference` |
 | 13 | Windowed runs match headless to ~0.04 N*m, not bit for bit; single-process suites differ from per-scenario runs by ~1e-3 N*m in logged gravity | "regenerated = identical" is not strictly true in a long process | a scenario run alone reproduces the old data exactly |
 | 14 | Multisine runs start 0.044 rad off the home pose: the settle phase demands the trajectory's t = 0 velocity while holding its t = 0 position | a startup transient in every multisine run | known; changing it would regenerate all data |
-| 15 | The dashboard's live detector raises no friction alert on a live Isaac Sim pick (friction x8 on joint 4): the residual channel stays under its threshold while the tracking channel builds up but cannot alert alone. Same at 250 Hz and at 1000 Hz | thresholds were tuned on the synthetic stand-in | re-tune on simulator fault logs; the offline detector finds the same faults |
+| 15 | The dashboard's live detector found no friction on a live pick | fixed 2026-11-05 for the fixed cube spot: faults are compared with a healthy run of the same pick (`DECISIONS.md` D7). Random cube positions have no reference, so friction is not found there | run faults at the fixed spot; a one-shot reference is recorded automatically |
 
 ## Decisions already made (do not reopen)
 Faults, not attacks. Fault data in effort mode, with the applied torque as the fault signal. 50% speed regime for detection data.

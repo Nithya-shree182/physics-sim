@@ -5,6 +5,8 @@ payload estimate follows. About 15 s. Stand-in numbers prove the pipeline works;
 """
 import sys
 
+import numpy as np
+
 import pytest
 
 from conftest import REPO_ROOT
@@ -64,3 +66,23 @@ def test_speed_is_capped_at_the_trusted_band():
     Engine.set_controls(stub, speeds=[10.0, 50.0, 70.0, 100.0, 5.0, 0.0, 49.0])
     assert max(stub.controls.speeds) <= BAND * 100
     assert stub.controls.speeds[2] == stub.controls.speeds[3] == BAND * 100
+
+
+def test_a_healthy_pick_is_recorded_as_the_reference_and_the_same_pick_matches_it():
+    from engine import Controls
+    key = ("s_curve", 1.0, 0.6, (0.45, -0.25))
+    an = Analyzer(LiveSource().twin, "forward", picks=True)
+    ctl = Controls()
+    def run(src):
+        an.reset_window(); an.recalibrate(); an.begin_run(key, 0.0, "none")
+        for _ in range(int(6.0 / 0.05)):
+            blk = src.next_block()
+            blk.truth = dict(blk.truth, fault="none")
+            an.feed(blk, ctl, 0.0)
+        mode = (an.recording, an.cur_ref is not None)
+        an.end_run()
+        return mode
+    assert run(LiveSource(seed=1)) == (True, False)             # first time: recorded
+    assert key in an.refs and len(an.refs[key]["t"]) > 20
+    assert run(LiveSource(seed=1)) == (False, True)             # second time: compared with it
+    assert float(np.abs(an.last_ue[0]).max()) < 1e-9            # the same pick leaves nothing

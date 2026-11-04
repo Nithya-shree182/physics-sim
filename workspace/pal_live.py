@@ -8,7 +8,7 @@ What it does: builds the gripper plant (table, physical cube, fingers), then loo
 when the dashboard sends a command it runs that pick (style, cube mass, optional fault) in real time. Everything it does is served on
 http://127.0.0.1:$PAL_LIVE_PORT (default 8765, host networking):
 
-  GET  /state?since=N   {"seq": last row number, "rows": [[t, q*7, qd*7, tau_measured*7, q_cmd*7, held_kg, run_id], ...] after row N, "status": {...}}
+  GET  /state?since=N   {"seq": last row number, "rows": [[t, q*7, qd*7, tau_measured*7, q_cmd*7, tau_applied*7, held_kg, run_id], ...] after row N, "status": {...}}
   GET  /frame.png       the latest viewport picture (windowed runs only)
   POST /cmd             {"cmd": "run", "style": "s_curve", "kg": 1.0, "fault": "none"|"friction"|"stuck_joint"|"delay", "joint": 3, "loop": false, "speed": 0.7, "random": false, "pick_xy": [x, y]}
                         (random: put the cube at a random reachable spot a little away from the fixed one, a new one for each repeat;
@@ -164,22 +164,25 @@ def grab_frame():
     frame_n += 1
 
 
-state = {"run_id": 0, "t_base": 0.0, "tau_acc": np.zeros(7), "n_acc": 0, "wall0": 0.0, "sim0": 0.0, "held": 0.0, "rt_wall": time.time(), "rt_sim": 0.0}
+state = {"run_id": 0, "t_base": 0.0, "tau_acc": np.zeros(7), "app_acc": np.zeros(7), "n_acc": 0, "wall0": 0.0, "sim0": 0.0, "held": 0.0, "rt_wall": time.time(), "rt_sim": 0.0}
 
 
-def emit(t_local, qd, q_des):
+def emit(t_local, qd, q_des, tau_applied):
     """Called after every physics step: accumulate torque, publish a row every DECIM steps, pace to real time, draw frames."""
     state["tau_acc"] += np.asarray(art.get_measured_joint_efforts()).flatten()[:7]
+    state["app_acc"] += np.asarray(tau_applied).flatten()[:7]          # what the controller commanded (shows friction and faults)
     state["n_acc"] += 1
     if state["n_acc"] < DECIM:
         return
     tau = state["tau_acc"] / DECIM + rng.normal(0, sig["tau"], 7)
+    tau_app = state["app_acc"] / DECIM + rng.normal(0, sig["tau"], 7)
     q = np.asarray(art.get_joint_positions()).flatten()[:7] + rng.normal(0, sig["q"], 7)
     qd = np.asarray(qd).flatten()[:7] + rng.normal(0, sig["qd"], 7)
     state["tau_acc"][:] = 0.0
+    state["app_acc"][:] = 0.0
     state["n_acc"] = 0
     t = state["t_base"] + t_local
-    HUB.push([round(t, 4)] + [round(float(x), 6) for x in np.concatenate([q, qd, tau, np.asarray(q_des).flatten()[:7]])]
+    HUB.push([round(t, 4)] + [round(float(x), 6) for x in np.concatenate([q, qd, tau, np.asarray(q_des).flatten()[:7], tau_app])]
              + [state["held"], state["run_id"]])
     HUB.set(t=round(t_local, 3), cube=[round(float(x), 4) for x in cell.position()])
     wall = time.time()
@@ -202,7 +205,7 @@ def hold_step(q_hold, k):
     tau, qs, qds, _ = runner._command(lambda t: (q_hold, np.zeros(7), np.zeros(7)), 0.0, KP_NORMAL, KD_NORMAL, True)
     runner._apply(tau)
     plant.world.step(render=bool(render_every) and k % render_every == 0)
-    emit(k / HZ, np.asarray(art.get_joint_velocities()).flatten()[:7], q_hold)
+    emit(k / HZ, np.asarray(art.get_joint_velocities()).flatten()[:7], q_hold, tau)
 
 
 def run_pick(msg):
@@ -215,13 +218,13 @@ def run_pick(msg):
     begin(state["run_id"])
     f = sc.fault
     HUB.set(state="running", run=sc.name, style=msg.get("style", "s_curve"), kg=sc.cube_kg, fault=f.type, joint=f.joint if f.type != "none" else -1,
-            loop=bool(msg.get("loop")), duration=round(sc.duration_s, 2), t=0.0, pick_xy=[round(float(c), 3) for c in sc.task.pick_xy])
+            loop=bool(msg.get("loop")), duration=round(sc.duration_s, 2), t=0.0, speed=round(float(msg.get('speed', 0.7)), 2), reference=bool(msg.get('reference')), fault_onset=(round(f.onset_s, 2) if f.type != 'none' else None), pick_xy=[round(float(c), 3) for c in sc.task.pick_xy])
 
     def on_step(k, t, st):
         state["held"] = sc.cube_kg if task.t_close <= t < task.t_open else 0.0
         if HUB.stop_flag:
             raise Abort()
-        emit(t, st["qd"], st["q_des"])
+        emit(t, st["qd"], st["q_des"], st["tau"])
 
     aborted = False
     try:

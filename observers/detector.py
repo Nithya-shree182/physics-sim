@@ -9,8 +9,8 @@
 
 Each channel is standardised per joint against a calibration window at the start of the run
 (assumed fault-free): z = (x - mean) / max(std, floor). An alarm needs |z| > Z_THRESHOLD for
-CONSECUTIVE steps in a row, and is suppressed where the pose fails the detector gate
-(observers/confidence.py). The joint that alarms first is reported as the suspected joint.
+CONSECUTIVE_S seconds in a row (counted in rows from the run's own row spacing, so 1 kHz and 250 Hz logs behave alike), and is
+suppressed where the pose fails the detector's pose mask (observers/pose_mask.py). The joint that alarms first is reported as the suspected joint.
 
 Reporting rule (dev's decision A1): the friction fault class is always named
 "friction (stiction / bearing wear)", never one of the two alone.
@@ -47,7 +47,7 @@ FAULT_LABELS = {
 
 CALIBRATION_S = 3.0          # [CHOICE] fault-free window at the start of each run
 Z_THRESHOLD = 8.0            # [CHOICE] standard deviations
-CONSECUTIVE = 50             # [CHOICE] steps in a row (50 ms at 1 kHz)
+CONSECUTIVE_S = 0.050         # [CHOICE] how long the z-score must stay over the threshold, in seconds (was 50 rows, which is 50 ms only at 1 kHz)
 FLOOR_RESIDUAL_NM = 0.02     # [CHOICE] minimum std, N*m, so a quiet joint cannot alarm on noise
 FLOOR_TRACKING_RAD = 2e-4    # [CHOICE] minimum std, rad
 
@@ -57,7 +57,7 @@ class Detection:
     t: np.ndarray
     z_residual: np.ndarray       # (n, 7)
     z_tracking: np.ndarray       # (n, 7)
-    alarm: np.ndarray            # (n,) bool, after the consecutive-steps rule and the gate
+    alarm: np.ndarray            # (n,) bool, after the consecutive-time rule and the pose mask
     gated: np.ndarray            # (n,) bool, pose failed the detector gate
     first_alarm_t: float | None
     first_alarm_channel: str | None
@@ -182,8 +182,15 @@ def against_reference(res: Residual, reference: Residual, smooth_s: float = 0.2)
     return dataclasses.replace(res, r=r)
 
 
+def consecutive_rows(t: np.ndarray, consecutive_s: float = CONSECUTIVE_S, consecutive: int | None = None) -> int:
+    """Rows that make `consecutive_s` seconds at this log's row spacing; an explicit row count wins."""
+    if consecutive is not None:
+        return max(1, int(consecutive))
+    return max(1, int(round(consecutive_s / float(np.median(np.diff(t))))))
+
+
 def detect(run: Run, res: Residual, calibration_s: float = CALIBRATION_S, z_threshold: float = Z_THRESHOLD,
-           consecutive: int = CONSECUTIVE, force_gain_max: float = FORCE_GAIN_MAX, baseline: str = "none",
+           consecutive_s: float = CONSECUTIVE_S, consecutive: int | None = None, force_gain_max: float = FORCE_GAIN_MAX, baseline: str = "none",
            reference_run: Run | None = None) -> Detection:
     res = recalibrate_baseline(res, baseline, calibration_s)
     t = res.t
@@ -207,8 +214,9 @@ def detect(run: Run, res: Residual, calibration_s: float = CALIBRATION_S, z_thre
     over_e[gated] = False
     over_r[calib] = False
     over_e[calib] = False
-    hit_r = _run_length(over_r) >= consecutive
-    hit_e = _run_length(over_e) >= consecutive
+    rows = consecutive_rows(t, consecutive_s, consecutive)
+    hit_r = _run_length(over_r) >= rows
+    hit_e = _run_length(over_e) >= rows
     alarm = hit_r.any(axis=1) | hit_e.any(axis=1)
 
     first_t = first_ch = first_j = None
@@ -255,7 +263,8 @@ def main() -> int:
     ap.add_argument("--reference", type=Path, default=None,
                     help="a known-healthy run of the same task (same timeline): calibrate against it instead of the first seconds")
     ap.add_argument("--z", type=float, default=Z_THRESHOLD)
-    ap.add_argument("--consecutive", type=int, default=CONSECUTIVE)
+    ap.add_argument("--consecutive-s", type=float, default=CONSECUTIVE_S, help="seconds the z-score must stay over the threshold")
+    ap.add_argument("--consecutive", type=int, default=None, help="the same in rows (overrides --consecutive-s)")
     args = ap.parse_args()
 
     model = load_panda()
@@ -269,7 +278,7 @@ def main() -> int:
         if args.reference:
             ref_run = load_run(args.reference)
             res = against_reference(res, compute_residual(ref_run, model, torque=torque, cutoff_hz=args.cutoff))
-        det = detect(run, res, z_threshold=args.z, consecutive=args.consecutive, baseline=args.baseline,
+        det = detect(run, res, z_threshold=args.z, consecutive_s=args.consecutive_s, consecutive=args.consecutive, baseline=args.baseline,
                      reference_run=ref_run if args.reference else None)
         e = evaluate(run, det)
         delay = f"{e['delay_s']:.3f}" if e["delay_s"] is not None else "-"

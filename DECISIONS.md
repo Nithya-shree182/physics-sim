@@ -249,3 +249,85 @@ Applied: `observers/confidence.py` and `tests/test_confidence.py` are deleted; `
 `run_confidence_check.py` and `run_far_check.py` are deleted (their results are in D4); the guided demo has four steps.
 Tests: all 163 tests pass. Live check: random-cube picks at 1.0 of real time with no engine errors. After a restart, refresh the dashboard
 tab: a tab loaded before the change asks for outputs that no longer exist and fills the log with errors.
+
+---
+
+## D7. Faults in the live dashboard are found against a healthy run of the same pick
+
+Status: applied 2026-11-05. Four changes:
+
+1. **Detector row count.** `observers/detector.py` now asks for 50 ms in a row (`CONSECUTIVE_S`), not 50 rows. At 250 Hz 50 rows was
+   200 ms. Results at 1000 Hz are unchanged.
+2. **Applied torque for faults.** The live simulator streams the commanded torque too (`tau_applied`, a new column after `q_cmd`).
+   The dashboard uses it for the fault channel and keeps the measured torque for the payload estimate, as `fault_torque()` and
+   REVIEW F2 prescribe. It also stops subtracting friction from the measured (net) torque.
+3. **A healthy reference per pick.** A healthy pick of a task with no reference is recorded as that task's reference (task = style,
+   cube mass, speed bar, cube position). A pick of a task that has one is compared with it at the same time into the pick. Choosing a fault
+   with no reference makes the dashboard run a healthy reference pick first. Random cube positions have no reference, so they fall back to
+   the old 3 s baseline, which cannot find friction (see below).
+4. **Smaller fixes found on the way.** The baseline now ends 0.1 s before the fault can start (it used to run 0.4 s into the fault).
+   A selected fault no longer blocks calibration. Between picks the arm is not judged. The payload-signature fit is clipped to
+   -0.5 to 5 kg (a jammed joint made it explode to 10^16). Four or more joints off their baseline at once reads as a delayed
+   or inconsistent command, not as four bad joints.
+
+Why a reference: with the old baseline (the first 3 s of the pick) friction x8 on joint 4 scored 6 to 7 standard deviations against a threshold
+of 8, while a healthy carry scored up to 9 on joint 6. Against a healthy run the same fault scores 17 to 30.
+
+Result, 7 live recordings replayed through the analyzer (`healthy1` as the reference; 3 healthy, 4 faults):
+
+| Run | Result |
+|---|---|
+| healthy x2 (compared with the reference) | no fault alert |
+| friction x8, joint 4 | joint 4 flagged after 0.30 s (joint 2 flagged with it, coupling; also labelled "stuck": joint 4 barely moves on this path) |
+| friction x8, joint 6 | joint 6 flagged after 0.30 s |
+| joint 1 locked | joint 1 flagged after 0.30 s as stuck |
+| 50 ms delay | flagged as a delay after 0.82 s |
+
+Through the dashboard's real engine and the live simulator: healthy picks raise no fault alert and the same faults are flagged on the
+right joints after 0.4 to 0.8 s. One of two live passes showed a stray extra alert before the fault starts; not explained.
+
+Still open: random cube positions cannot use a reference, so friction cannot be found there; run faults at the fixed spot.
+
+## D8. The wrist-joint residual is static friction, not a model error (finding, nothing to fix)
+
+The "1.4 to 1.8% on joints 5 to 7" figure in the dashboard's About text came from the old wrong-plant logs; it is replaced.
+Measured on the current data:
+
+| Case | Wrist joints 5 to 7 | Why |
+|---|---|---|
+| Matched empty-arm reference (no mismatch, no noise) | 0.08% of limit on joints 5 and 6, 0 on joint 7 | the model and the plant agree |
+| Fault-test runs (5% mass mismatch) | 0.6 to 1.07% of limit | joint 7 never moves yet reads 0.13 N·m |
+
+- Joint 7 barely moves (under 0.01 rad/s for the whole run). A joint at rest can carry any torque inside its static friction
+  band (+-0.24 N*m); the model's friction at zero speed is exactly 0. A uniform spread over the band has a standard deviation of 0.14 N*m;
+  the measured 0.126. 80% of the residual energy is below 1 Hz.
+- Joint 5 reads 0.15 to 0.22 N*m below 0.1 rad/s and 0.011 N*m above 0.3 rad/s.
+- Joint 4 has a steady +0.83 N*m: the 5% mass mismatch on 22.9 N*m of gravity. Scaling the model's masses to x1.03 to 1.04 removes most
+  of it on joints 2 to 4, but does nothing for joints 5 and 7, which confirms the split.
+- The payload estimate is not affected (it uses the measured, friction-free torque). The fault detector sees it as baseline spread
+  and calibrates around it.
+
+Because the cause is physical, there is nothing to correct in the model. If wrist joints must be quieter at rest, the options are to
+mask a joint's residual while it is almost still, or to widen its floor to its static friction. Neither is done.
+
+---
+
+## D9. Dashboard redesign (applied 2026-11-05)
+
+What the old screens showed (`docs/screens/dashboard_before_redesign.png`): pop-up alerts covering the header, friction alarms at
+"0.0% of limit", a "fault active / unreliable" payload card driven by those alarms, no run summary, a benchmark tab of placeholders,
+and developer names in the text.
+
+- **Alarms.** Pop-ups are gone; alerts are one compact card (grouped by type, at most four rows) and the Alerts panel. An alarm now also
+  needs a residual of at least 0.10 N*m and 0.5% of the joint's limit, picks without a healthy reference are not judged for faults, one fault
+  reports its dominant joints only, and stale alarms fade when the arm is idle. The "unreliable" state was the payload card reading the fake
+  alarms; it now says "fault alarm active: the estimate may be off" only for a real one.
+- **Run summary.** A card beside the picture says what is running (style, cube mass, position, speed, fault), progress, the carried-mass
+  estimate against the mass set, the typical peak residual, alarms, whether the pick was recorded as, or compared with, a healthy
+  reference, and the result. It stays after the pick ends. The payload estimate is zeroed before the grasp (the empty gripper is its zero).
+- **Layout.** NTT DATA logo left, "Physics Attestation Layer" right; the elapsed time is removed; the source switch moved down to the
+  toolbar with Pause, Demo and Alerts; the run controls sit above the picture so a run can be set up and watched without scrolling.
+- **Benchmark.** Real results from `docs/o6pick_summary.json`: cycle time against peak torque for the three styles at 0 and 2 kg, the fastest
+  style under each torque budget, and all 18 runs.
+- **References to the developers** removed from the dashboard text and code comments.
+- A page reload no longer resets the engine or the recorded references.
