@@ -51,3 +51,14 @@ Faults start at 3 s into each 6 s run. Speed is 20% of the velocity limit.
 | Sensor noise on logged values, seeded per run | false-positive rates need runs that differ | `workspace/pal_sensors.py` |
 | O3 confidence is the analysis side's rescaled score, not raw sigma_min / sigma_max | the proposal's ratio mixes linear and angular rows (units) | analysis side, `observers/confidence.py` |
 | O2 pass is reported both as % of torque limit and as % of the joint's own torque | s9 gives no denominator | `tools/check_run.py` |
+
+## 5. O3 (pose confidence) is removed (DECISIONS.md D6, 2026-11-05)
+
+| Proposal text | Now reads |
+|---|---|
+| s4 O3: "A 0 to 1 confidence score that flags singular and near-singular poses" | Not delivered. There is no score, no panel and no payload gate. |
+| s4 O4: "paused when confidence is low" | The payload estimate is not paused. It is valid while a cube is held and the arm is away from the straight-up elbow-extended pose, which the demo never visits (without the pause, a moving pass through that pose reads 22% low). |
+| s4 O5 / s9: "with and without the confidence gate" | The detector keeps one rule, `observers/pose_mask.py`: no alarms where the force noise gain at the hand exceeds 10 N per N*m (the arm stretched to about 0.78 m). Results with and without it are in DECISIONS.md D4. |
+
+Reason: in every pick the demo makes (the fixed spot and the random cubes, 0.53 to 0.65 m out) neither gate ever closes, so the
+score changed nothing on screen. Limit to state: do not use the payload estimate or the detector with the arm stretched far out.

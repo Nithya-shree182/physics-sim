@@ -61,6 +61,7 @@ sleep 1
 if [ "$MODE" != dash ]; then
   command -v docker >/dev/null || { echo "docker not found"; exit 1; }
   if [ "$MODE" = window ]; then export HEADLESS=0; else export HEADLESS=1; fi
+  export PAL_PHYSICS_HZ="${PAL_PHYSICS_HZ:-250}"      # live view only: 250 Hz keeps up with real time (DECISIONS.md D3); data runs stay at 1000 Hz
   export PAL_RUN_TIMEOUT=604800 PAL_BOOT_TIMEOUT="${PAL_BOOT_TIMEOUT:-900}"
   export PAL_GIT_COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo uncommitted)"
   nohup "$ROOT/tools/run_sim.sh" pal_live.py "$ROOT/logs/pal_live.log" >"$ROOT/logs/pal_sim_launcher.log" 2>&1 &

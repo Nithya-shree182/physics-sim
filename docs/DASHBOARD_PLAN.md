@@ -72,8 +72,8 @@ fault controls and opening the matching drawer. Next, Back and Stop are always a
   Round 4 of `docs/NOTES_FOR_DEV.md` mentions the control channel as a heads-up; the feed itself
   is still dev's to define. Wait for it before building the live parts.
 - **50% of the velocity limit is the trusted band** (dev's measurement; confirmed for O2, O4 and
-  O5 in Round 4). Above it, residual alarms and the load estimate are held and an over-speed
-  notice is shown. `speed_fraction` in the manifest lets the UI apply the band automatically.
+  O5 in Round 4). (Superseded by `DECISIONS.md` D1: the dashboard's speed bars now stop at the band,
+  so the over-speed state no longer exists.) `speed_fraction` in the manifest still records the speed of every run.
 - O3 and O4 are separate panels. O5 Detection is **not** a view: alerts only.
 - Time scale is fine. No run picker or time slider (the view is live).
 - **Theme: Physyk AI's UI theme only** (github.com/Devv-262/Physyk_AI, look and feel and nothing

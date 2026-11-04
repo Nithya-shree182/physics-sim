@@ -8,7 +8,7 @@ import pal_suites as S  # noqa: E402
 
 BUILT = {name: mk() for name, (_, mk) in S.SUITES.items()}          # built once: the ellipse IK is the slow part
 COUNTS = {"reference": 2, "o3": 12, "o4": 19, "o5": 26, "clean": 9, "fast": 10, "extra": 24, "push": 24, "o6": 26, "pick": 14,
-          "o6pick": 18, "pickphys": 15}
+          "o6pick": 18, "pickphys": 15, "pickfar": 9}
 
 
 class Suites(unittest.TestCase):
@@ -58,7 +58,7 @@ class Suites(unittest.TestCase):
             self.assertLess(sc.task.t_attach, sc.task.t_open)
 
     def test_only_the_physical_suite_needs_the_gripper_plant(self):
-        self.assertEqual(S.NEEDS_GRIPPER, {"pickphys"})
+        self.assertEqual(S.NEEDS_GRIPPER, {"pickphys", "pickfar"})
 
     def test_modelled_picks_do_not_use_a_cube(self):
         for sc in BUILT['pick'] + BUILT['o6pick']:
@@ -91,3 +91,52 @@ def test_live_pick_builds_and_validates():
         except ValueError:
             continue
         raise AssertionError(bad)
+
+
+def test_live_picks_stay_inside_the_trusted_speed_band():
+    for style in ("trapezoidal", "s_curve", "torque_aware"):
+        assert S.peak_speed_fraction(S.live_pick(style).task) <= S.LIVE_SPEED_CAP
+
+
+def test_live_pick_speed_follows_the_speed_bar_and_never_passes_the_cap():
+    for style in ("trapezoidal", "s_curve", "torque_aware"):
+        peaks = [S.peak_speed_fraction(S.live_pick(style, speed=sp).task) for sp in (0.05, 0.3, 0.6, 1.0)]
+        assert peaks == sorted(peaks) and peaks[0] < peaks[-1] / 4, (style, peaks)
+        assert max(peaks) <= S.LIVE_SPEED_CAP
+    for bad in (0.0, 1.5):
+        try:
+            S.live_pick("s_curve", speed=bad)
+        except ValueError:
+            continue
+        raise AssertionError("an out-of-range speed was accepted")
+
+
+def test_random_cube_positions_are_reachable_a_little_away_and_inside_the_speed_cap():
+    import numpy as np
+    seen = set()
+    for seed in range(40):
+        xy = S.random_pick_xy(np.random.default_rng(seed))
+        seen.add(xy)
+        reach = float(np.hypot(*xy))
+        assert 0.52 < reach <= 0.66 and xy[0] >= 0.35 and xy[1] <= 0.01, (seed, xy, reach)
+    assert len(seen) > 30                                    # genuinely different spots
+    for seed in range(0, 40, 8):
+        xy = S.random_pick_xy(np.random.default_rng(seed))
+        for style in ("trapezoidal", "s_curve", "torque_aware"):
+            sc = S.live_pick(style, 1.0, "none", pick_xy=xy)
+            assert tuple(sc.task.pick_xy) == xy and S.peak_speed_fraction(sc.task) <= S.LIVE_SPEED_CAP
+
+
+def test_random_cube_picks_never_close_the_detector_mask():
+    import numpy as np
+    root = Path(__file__).resolve().parents[1]
+    sys.path[:0] = [str(root / "observers"), str(root / "model")]
+    from pose_mask import FORCE_GAIN_MAX, force_noise_gain
+    from pinocchio_model import load_panda
+    model = load_panda()
+    worst_f = 0.0
+    for seed in range(60):
+        task = S.live_pick("s_curve", pick_xy=S.random_pick_xy(np.random.default_rng(seed))).task
+        for t in np.arange(0.0, task.duration, 0.1):                   # the whole pick, not just the grasp pose
+            worst_f = max(worst_f, force_noise_gain(model.jacobian(task.traj(t)[0])))
+    assert worst_f < FORCE_GAIN_MAX, worst_f

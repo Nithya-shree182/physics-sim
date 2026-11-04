@@ -32,7 +32,7 @@ import numpy as np
 
 HERE = Path(__file__).resolve().parent
 sys.path[:0] = [str(HERE), str(HERE.parent / "model")]
-from confidence import FORCE_GAIN_MAX, conditioning  # noqa: E402
+from pose_mask import FORCE_GAIN_MAX, force_noise_gain  # noqa: E402
 from pinocchio_model import load_panda  # noqa: E402
 from payload import estimate_payload, payload_torque_per_kg                                  # noqa: E402
 from residual import DEFAULT_CUTOFF_HZ, Residual, Run, compute_residual, fault_torque, load_run  # noqa: E402
@@ -188,7 +188,7 @@ def detect(run: Run, res: Residual, calibration_s: float = CALIBRATION_S, z_thre
     res = recalibrate_baseline(res, baseline, calibration_s)
     t = res.t
     calib = (t - t[0]) < calibration_s
-    gated = np.array([conditioning(J)["force_noise_gain"] > force_gain_max for J in res.J])
+    gated = np.array([force_noise_gain(J) > force_gain_max for J in res.J])
 
     z_r = _standardise(res.r, calib & res.valid, FLOOR_RESIDUAL_NM)
     track = run.arr("q_cmd") - run.arr("q")

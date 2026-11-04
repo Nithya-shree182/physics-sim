@@ -222,8 +222,8 @@ Controls: solver iterations change nothing (4 vs 128), armature changes nothing 
 *is* inside the reported `M`). Residual rises with drive stiffness for the same reason.
 
 **O5 detection thresholds must sit above this floor, and it must be reported alongside
-any detection rate.** It is also why `PHYSICS_HZ` stays at 1000 despite telemetry not
-streaming in real time there.
+any detection rate.** `PHYSICS_HZ` stays at 1000 for recorded data. The live view runs at 250 Hz so it keeps up with
+real time (`DECISIONS.md` D3).
 
 ## What is left
 

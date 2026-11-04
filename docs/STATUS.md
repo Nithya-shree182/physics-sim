@@ -11,7 +11,7 @@ Written for: both people. One line per problem; what is fixed is listed so nobod
 | 3 | The friction baseline (finds x3) is opt-in because it false-alarms when the calibration window does not cover the motion | a hidden precondition | `recalibrate_baseline` docstring; a pick-and-place cycle or a repeated reference satisfies it |
 | 4 | Sensor noise levels are representative, not measured | cannot claim a real-arm figure | detection barely moves with noise (noisy vs `out/clean`), so low priority; recorded in every manifest |
 | 5 | The physical grasp is open-loop and timed (the fingers close at a scheduled moment, no force or slip feedback), and the cube's centre sits 0.09 m from the hand while the analysis side assumes 0.1034 m | a real cell would sense the grasp | `docs/PICK_AND_GRIPPER.md`; the modelled-payload suites remain the exact-mass ground truth |
-| 6 | No live feed or control channel from the simulator to the dashboard; no in-simulator panel | O7 as written is "live" | the dashboard replays references and runs a stand-in plant; the windowed runner now exists (`pal_suite.sh --window`) and `Runner.run(on_step=...)` is the hook a live feed would use |
+| 6 | No in-simulator panel | O7 as written has a streamed dashboard and an in-sim panel | the live feed exists (`pal.sh`: `workspace/pal_live.py` serves rows over HTTP at 250 Hz, the dashboard polls them and sends picks back); the in-simulator panel is not built |
 | 7 | No impact/collision injector | the analysis side's C7, spike detection | not built |
 | 8 | `TORQUE_CONVENTION` is still "unverified" | user's decision to leave it | evidence is in the manifests (`tau_measured_includes_friction: false`, net torque, no gearbox modelled) |
 | 9 | Reproducibility depends on files outside the repo | a fresh clone cannot run the simulator | `../Physyk_AI-master/.isaac-cache`, Isaac's asset server, the NGC image; REVIEW F8 |
@@ -21,6 +21,7 @@ Written for: both people. One line per problem; what is fixed is listed so nobod
 | 12 | Detecting faults in a pick needs a healthy reference run of the same task (the default calibration false-alarms on a non-repeating task) | a real deployment must record one | `--reference`; `against_reference` |
 | 13 | Windowed runs match headless to ~0.04 N*m, not bit for bit; single-process suites differ from per-scenario runs by ~1e-3 N*m in logged gravity | "regenerated = identical" is not strictly true in a long process | a scenario run alone reproduces the old data exactly |
 | 14 | Multisine runs start 0.044 rad off the home pose: the settle phase demands the trajectory's t = 0 velocity while holding its t = 0 position | a startup transient in every multisine run | known; changing it would regenerate all data |
+| 15 | The dashboard's live detector raises no friction alert on a live Isaac Sim pick (friction x8 on joint 4): the residual channel stays under its threshold while the tracking channel builds up but cannot alert alone. Same at 250 Hz and at 1000 Hz | thresholds were tuned on the synthetic stand-in | re-tune on simulator fault logs; the offline detector finds the same faults |
 
 ## Decisions already made (do not reopen)
 Faults, not attacks. Fault data in effort mode, with the applied torque as the fault signal. 50% speed regime for detection data.

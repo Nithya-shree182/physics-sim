@@ -1,0 +1,12 @@
+attempt 1: script started after 28s
+done -> /home/thinkspace/Desktop/Physics_Based_RoboArm/logs/pal_run_suite.log
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/pickphys/pickphys_trapezoidal_0p5kg_250hz.parquet
+3b FRICTION FAIL   healthy rows: RMS(tau_applied - net) per joint [N*m]: [0.349, 1.104, 0.278, 0.543, 0.173, 0.161, 0.216]  vs allowed [0.75, 0.75, 0.59, 0.99, 0.77, 0.53, 0.67]
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/pickphys/pickphys_trapezoidal_1kg_250hz.parquet
+3b FRICTION FAIL   healthy rows: RMS(tau_applied - net) per joint [N*m]: [0.339, 1.093, 0.269, 0.548, 0.167, 0.164, 0.211]  vs allowed [0.75, 0.75, 0.59, 0.99, 0.76, 0.53, 0.67]
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/pickphys/pickphys_trapezoidal_2kg_250hz.parquet
+3b FRICTION FAIL   healthy rows: RMS(tau_applied - net) per joint [N*m]: [0.343, 1.088, 0.282, 0.553, 0.12, 0.167, 0.212]  vs allowed [0.75, 0.75, 0.59, 0.99, 0.76, 0.53, 0.67]
+OVERALL FAIL
+== pickphys (out/pickphys): 30 runs, 3 failed checks

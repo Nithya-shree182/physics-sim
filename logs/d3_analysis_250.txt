@@ -1,0 +1,33 @@
+PAYLOAD                            known kg  tare kg carried est  error kg  error %  settles in s  paused
+pickphys_s_curve_0p5kg                  0.5    0.296       0.784    -0.012    -2.4%           2.9      0%
+pickphys_s_curve_1kg                      1    0.297       1.285    -0.012    -1.2%         never      0%
+pickphys_s_curve_1kg_ref                  1    0.299       1.284    -0.015    -1.5%         never      0%
+pickphys_s_curve_2kg                      2    0.295       2.170    -0.125    -6.2%         never      0%   <-- outside tolerance
+pickphys_torque_aware_0p5kg             0.5    0.285       0.783    -0.002    -0.3%           2.9      0%
+pickphys_torque_aware_1kg                 1    0.283       1.283    +0.000     0.0%           3.6      0%
+pickphys_torque_aware_2kg                 2    0.285       2.220    -0.065    -3.2%           4.6      0%   <-- outside tolerance
+pickphys_trapezoidal_0p5kg              0.5    0.294       0.785    -0.010    -1.9%           2.8      0%
+pickphys_trapezoidal_1kg                  1    0.295       1.285    -0.011    -1.1%         never      0%
+pickphys_trapezoidal_2kg                  2    0.290       2.204    -0.086    -4.3%         never      0%   <-- outside tolerance
+
+  10 runs scored | PAYLOAD (picks and ellipse) FAIL
+
+FAULT (applied torque)                             calibration detected  delay s  false alarm  joint  channel
+pickphys_fault_delay_all_50ms_1kg      first 3 s (the default)     True     0.15        False      4  tracking
+pickphys_fault_delay_all_50ms_1kg                payload-aware     True     0.15        False      4  tracking
+pickphys_fault_delay_all_50ms_1kg        healthy reference run     True     0.10        False      4  tracking
+pickphys_fault_friction_j3_8_1kg       first 3 s (the default)     True     0.16        False      4  tracking
+pickphys_fault_friction_j3_8_1kg                 payload-aware     True     0.16        False      4  tracking
+pickphys_fault_friction_j3_8_1kg         healthy reference run     True     0.09        False      4  tracking
+pickphys_fault_friction_j5_8_1kg       first 3 s (the default)     True     0.12        False      4  tracking
+pickphys_fault_friction_j5_8_1kg                 payload-aware     True     0.12        False      4  tracking
+pickphys_fault_friction_j5_8_1kg         healthy reference run     True     0.05        False      6  residual
+pickphys_fault_stuck_joint_j0_200_1kg  first 3 s (the default)     True     0.03        False      1  residual
+pickphys_fault_stuck_joint_j0_200_1kg            payload-aware     True     0.04        False      1  residual
+pickphys_fault_stuck_joint_j0_200_1kg    healthy reference run     True     0.03        False      1  residual
+pickphys_fault_stuck_joint_j3_200_1kg  first 3 s (the default)     True     0.15        False      4  tracking
+pickphys_fault_stuck_joint_j3_200_1kg            payload-aware     True     0.15        False      4  tracking
+pickphys_fault_stuck_joint_j3_200_1kg    healthy reference run     True     0.09        False      6  tracking
+pickphys_s_curve_1kg                   first 3 s (the default)     None        -         True      1  residual
+pickphys_s_curve_1kg                             payload-aware     None        -         True      7  tracking
+pickphys_s_curve_1kg                     healthy reference run     None        -        False      -  -

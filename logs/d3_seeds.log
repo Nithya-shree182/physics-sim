@@ -1,0 +1,7 @@
+attempt 1: script started after 31s
+done -> /home/thinkspace/Desktop/Physics_Based_RoboArm/logs/pal_run_suite.log
+== pickphys (out/pickphys): 33 runs, 0 failed checks
+attempt 1: no script output in 420s — genuine boot hang, killing
+attempt 2: script started after 28s
+done -> /home/thinkspace/Desktop/Physics_Based_RoboArm/logs/pal_run_suite.log
+== pickphys (out/pickphys): 36 runs, 0 failed checks

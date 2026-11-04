@@ -28,19 +28,17 @@ app = Dash(__name__, suppress_callback_exceptions=True, title="PAL dashboard")
 DEMO = [
     dict(t="1 · Pick up an unknown object", len=16, reach=0.0, drawer="o4", chan="pay", ctl=dict(load=0.0, fault="none"), later=(3.0, dict(load=1.2)),
          d="A 1.2 kg load appears at the gripper after 3 s. The twin is never told: the residual rises on joints 2 and 4 and the estimate converges."),
-    dict(t="2 · Carry it through a near-singular pose", len=20, reach=1.0, drawer="o3", chan="conf", ctl={},
-         d="The elbow stretches out. Confidence dips, the gate closes and the estimate is held instead of drifting."),
-    dict(t="3 · An inconsistent command", len=14, reach=0.0, drawer="alerts", chan="res", ctl=dict(fault="delay"),
+    dict(t="2 · An inconsistent command", len=14, reach=0.0, drawer="alerts", chan="res", ctl=dict(fault="delay"),
          d="Stand-in for a tampered waypoint (dev's attack runs are pending): a 50 ms command delay. The residual stays quiet; the tracking error raises the alert."),
-    dict(t="4 · Friction fault at joint 3", len=14, reach=0.0, drawer="alerts", chan="res", sel=2, ctl=dict(fault="friction", fault_joint=2),
+    dict(t="3 · Friction fault at joint 3", len=14, reach=0.0, drawer="alerts", chan="res", sel=2, ctl=dict(fault="friction", fault_joint=2),
          d="Friction is injected at joint 3 and identified by its torque signature: that joint stops fitting the load while the others still do."),
-    dict(t="5 · Compare the trajectory styles", len=10, reach=0.0, drawer=None, tab="bench", ctl=dict(fault="none"),
+    dict(t="4 · Compare the trajectory styles", len=10, reach=0.0, drawer=None, tab="bench", ctl=dict(fault="none"),
          d="Waits for dev: three movement styles between the same waypoints, with time, peak torque and energy."),
 ]
 DEF_UI = dict(tab="arm", drawer=None, chan="res", sel=3, more=False, brk=False, view=("stream" if os.environ.get("PAL_DASH_SOURCE") == "isaac" else "twin"), demo=dict(on=False, step=0, t0=0.0, later=False), nonce=0)
-PANELS = [("o1", "O1 Telemetry"), ("o3", "O3 Confidence"), ("o4", "O4 Payload"), ("about", "About")]
-CHANS = [("res", "Residual"), ("tau", "Torque"), ("conf", "Confidence"), ("pay", "Payload")]
-TITLES = dict(o1="O1 Telemetry · current frame", o3="O3 Pose confidence", o4="O4 Payload estimator", alerts="Alerts", about="About this view")
+PANELS = [("o1", "O1 Telemetry"), ("o4", "O4 Payload"), ("about", "About")]
+CHANS = [("res", "Residual"), ("tau", "Torque"), ("pay", "Payload")]
+TITLES = dict(o1="O1 Telemetry · current frame", o4="O4 Payload estimator", alerts="Alerts", about="About this view")
 
 
 def slider(id_, lo, hi, step, val):
@@ -48,10 +46,13 @@ def slider(id_, lo, hi, step, val):
     return d.Input(id=id_, type="range", min=lo, max=hi, step=step, value=val, className="rng", debounce=False)
 
 
+SPEED_SCALE = BAND                 # the speed bars read 0-100%; 100% on a bar is 50% of the joint velocity limit (DECISIONS.md D1)
+BAR_DEFAULT = 60                   # 60 on the bar = 30% of the velocity limit
+
 layout_joint_speeds = [html.Div(style=dict(display="flex", flexDirection="column"), children=[
     html.Div(style=dict(display="flex", justifyContent="space-between", fontSize=12), children=[
         html.Label(f"Joint {i + 1}", htmlFor=f"spd-{i}"), html.Span(id=f"spd-txt-{i}", className="num")]),
-    slider(f"spd-{i}", 5, 100, 5, 30)]) for i in range(7)]
+    slider(f"spd-{i}", 5, 100, 5, BAR_DEFAULT)]) for i in range(7)]
 
 DEFAULT_SOURCE = os.environ.get("PAL_DASH_SOURCE", "live")       # pal.sh sets "isaac"
 SIM_URL = os.environ.get("PAL_LIVE_URL", "http://127.0.0.1:8765")
@@ -106,8 +107,7 @@ def serve_layout():
                                 html.Div(className="row", style=dict(marginTop=8, fontSize=11, color="#9ca3af", gap="6px 18px"), children=[
                                     html.Span("Link tint: share of torque limit"),
                                     html.Span(style=dict(display="flex", alignItems="center", gap=6), children=[
-                                        html.Span(style=dict(width=60, height=8, borderRadius=4, background="linear-gradient(90deg,#4b5563,#fab219,#f87171)")), "0 – 100%"]),
-                                    html.Span("Dashed ellipse: how freely the hand can move (flat = near singular)")])]),
+                                        html.Span(style=dict(width=60, height=8, borderRadius=4, background="linear-gradient(90deg,#4b5563,#fab219,#f87171)")), "0 – 100%"])])]),
                             html.Div(id="stats", style=dict(flex="1 1 200px", minWidth=0, display="flex", flexDirection="column", gap=10))])]),
                     html.Section(id="task-card", className="card", style=dict(padding="14px 18px", display="none"), children=[
                         html.Div(className="row", style=dict(gap="12px 24px", alignItems="center"), children=[
@@ -117,6 +117,7 @@ def serve_layout():
                             html.Button("Run pick", id="task-run", n_clicks=0, className="btn btn-on"),
                             html.Button("Stop", id="task-stop", n_clicks=0, className="btn"),
                             dcc.Checklist(id="task-loop", options=[dict(label=" repeat", value="loop")], value=[], className="radio"),
+                            dcc.Checklist(id="task-random", options=[dict(label=" random cube position", value="random")], value=[], className="radio"),
                             html.Div(id="task-status", className="muted", style=dict(fontSize=13, flex="1 1 260px"))]),
                         html.P("The load slider below is the cube's mass (0.2 to 3 kg). A fault chosen under More controls starts 0.4 s after the grasp, on the joint chosen there.",
                                className="muted", style=dict(margin="8px 0 0", fontSize=12))]),
@@ -132,7 +133,7 @@ def serve_layout():
                                         html.Button("+", id="load-up", n_clicks=0, className="btn", style=dict(width=44, padding=0, fontSize=18), **{"aria-label": "Increase load by 0.1 kilogram"})])]),
                                 html.Div(style=dict(flex="1 1 280px", minWidth=0, display="flex", flexDirection="column", gap=2), children=[
                                     html.Div(className="spread", children=[html.Label("JOINT SPEED, ALL JOINTS", htmlFor="spd-all", className="lbl"), html.Span(id="spd-txt", className="num", style=dict(fontSize=16))]),
-                                    slider("spd-all", 5, 100, 5, 30)]),
+                                    slider("spd-all", 5, 100, 5, BAR_DEFAULT)]),
                                 html.Button("More controls", id="more-btn", n_clicks=0, className="btn")]),
                             html.Div(id="more", style=dict(display="none", flexDirection="column", gap=14, paddingTop=12, borderTop="1px solid rgba(255,255,255,0.12)", marginTop=12), children=[
                                 html.Div(style=dict(display="grid", gridTemplateColumns="repeat(auto-fit,minmax(140px,1fr))", gap="8px 16px"), children=layout_joint_speeds),
@@ -143,9 +144,9 @@ def serve_layout():
                                                            dict(label="Stuck joint", value="stuck_joint"), dict(label="Command delay 50 ms", value="delay")])]),
                                     html.Div(children=[html.Div("ON JOINT", className="lbl"),
                                                        dcc.RadioItems(id="fault-joint", className="radio", value=2, inline=True, options=[dict(label=str(i + 1), value=i) for i in range(7)])]),
-                                    html.Button("Reset speeds to 30%", id="reset-speeds", n_clicks=0, className="btn")]),
-                                html.P("In the live product these are commands sent to Isaac Sim. Above 50% of a joint's velocity limit the reported torque is mostly drive artifact, "
-                                       "so residual alarms and the load estimate are held.", className="muted", style=dict(margin=0, fontSize=12))])])]),
+                                    html.Button(f"Reset speeds to {BAR_DEFAULT}%", id="reset-speeds", n_clicks=0, className="btn")]),
+                                html.P("In the live product these are commands sent to Isaac Sim. The speed bars stop at half of each joint's velocity limit, "
+                                       "the range where the residual is trustworthy.", className="muted", style=dict(margin=0, fontSize=12))])])]),
                     html.Section(className="card", children=[
                         html.Div(className="spread", children=[html.H2(id="chart-title", className="h2"),
                             html.Div(className="row", style=dict(gap=4), children=[html.Button(l, id=f"ch-{k}", n_clicks=0, className="btn btn-s") for k, l in CHANS])]),
@@ -176,9 +177,9 @@ app.layout = serve_layout
     [Input("load", "value"), Input("fault", "value"), Input("fault-joint", "value")] + [Input(f"spd-{i}", "value") for i in range(7)])
 def controls(load, fault, fjoint, *spd):
     if E.source.kind == "live":
-        E.set_controls(load=float(load or 0), speeds=[float(v or 30) for v in spd], fault=fault or "none",
+        E.set_controls(load=float(load or 0), speeds=[float(v or BAR_DEFAULT) * SPEED_SCALE for v in spd], fault=fault or "none",
                        fault_joint=int(fjoint if fjoint is not None else 2))
-    elif E.source.kind == "isaac":                                  # speeds are set by the pick style; these three apply to the next pick
+    elif E.source.kind == "isaac":                                  # the speed bar is sent with "Run pick"; these three apply to the next pick
         E.set_controls(load=float(load or 0), fault=fault or "none", fault_joint=int(fjoint if fjoint is not None else 3))
     return no_update
 
@@ -191,13 +192,13 @@ def load_buttons(_dn, _up, load):
 
 @app.callback([Output(f"spd-{i}", "value") for i in range(7)], Input("spd-all", "value"), prevent_initial_call=True)
 def speed_all(v):
-    return [float(v or 30)] * 7
+    return [float(v or BAR_DEFAULT)] * 7
 
 
 @app.callback([Output("spd-all", "value", allow_duplicate=True)] + [Output(f"spd-{i}", "value", allow_duplicate=True) for i in range(7)],
               Input("reset-speeds", "n_clicks"), prevent_initial_call=True)
 def reset_speeds(_):
-    return [30.0] * 8
+    return [float(BAR_DEFAULT)] * 8
 
 
 @app.callback(Output("dummy", "data"), Input("play", "n_clicks"), prevent_initial_call=True)
@@ -214,16 +215,17 @@ def source(which, ui):
     E.use(which)
     ui = dict(ui, view="stream" if which == "isaac" else "twin")
     if which == "isaac":
-        return E.controls.load, 30, "none", 3, ui
-    return (E.controls.load, 30, "none", 2, ui) if which == "live" else (E.controls.load, no_update, "none", no_update, ui)
+        return E.controls.load, BAR_DEFAULT, "none", 3, ui
+    return (E.controls.load, BAR_DEFAULT, "none", 2, ui) if which == "live" else (E.controls.load, no_update, "none", no_update, ui)
 
 
-@app.callback(Output("dummy", "data", allow_duplicate=True), Input("task-run", "n_clicks"), State("task-style", "value"), State("task-loop", "value"),
-              State("load", "value"), State("fault", "value"), State("fault-joint", "value"), prevent_initial_call=True)
-def task_run(n, style, loop, kg, fault, joint):
+@app.callback(Output("dummy", "data", allow_duplicate=True), Input("task-run", "n_clicks"), State("task-style", "value"), State("task-loop", "value"), State("task-random", "value"),
+              State("load", "value"), State("fault", "value"), State("fault-joint", "value"), State("spd-all", "value"), prevent_initial_call=True)
+def task_run(n, style, loop, rand, kg, fault, joint, spd):
     if E.source.kind == "isaac" and n:
         E.source.last_reply = E.source.command(cmd="run", style=style, kg=max(0.2, float(kg or 1.0)), fault=fault or "none",
-                                               joint=int(joint if joint is not None else 3), loop=bool(loop))
+                                               joint=int(joint if joint is not None else 3), loop=bool(loop), random=bool(rand),
+                                               speed=min(1.0, max(0.05, float(spd or BAR_DEFAULT) / 100)))      # the speed bar sets the pick's speed
     return no_update
 
 
@@ -347,7 +349,7 @@ def _advance(ui, k):
 
 
 def _start_demo(ui):
-    return dict(_demo_apply(ui, 0), speeds=30)
+    return dict(_demo_apply(ui, 0), speeds=BAR_DEFAULT)
 
 
 @app.callback(
@@ -375,7 +377,9 @@ def _task_status(src):
         return f"Command refused: {reply.get('error')}", ""
     if st.get("state") == "running":
         f = "" if st.get("fault", "none") == "none" else f" · fault: {st['fault']}" + (f" on joint {st['joint'] + 1}" if st.get("joint", -1) >= 0 else "")
-        return f"Picking a {st['kg']:g} kg cube, {st['style']} · {st['t']:.1f} of {st['duration']:.1f} s{f}" + (" · repeating" if st.get("loop") else ""), ""
+        xy = st.get("pick_xy")
+        where = f" at x {xy[0]:.2f}, y {xy[1]:.2f} m" if xy else ""
+        return f"Picking a {st['kg']:g} kg cube{where}, {st['style']} · {st['t']:.1f} of {st['duration']:.1f} s{f}" + (" · repeating" if st.get("loop") else ""), ""
     last = st.get("last")
     if last:
         verdict = "cube placed" if last["ok"] else ("stopped" if last["aborted"] else "PICK FAILED: cube not at the place point")
@@ -468,11 +472,10 @@ def render(_n, ui):
                            borderTop="1px solid rgba(255,255,255,0.12)", marginTop=12)
     r["more-btn"] = "Fewer controls" if ui["more"] else "More controls"
     r["load-txt"] = f"{ctl.load:.2f} kg"
-    mx = max(ctl.speeds)
-    r["spd-txt"] = f"{round(np.mean(ctl.speeds) / 5) * 5}%" + (" · above band" if mx > BAND * 100 else "")
+    r["spd-txt"] = f"{round(np.mean(ctl.speeds) / SPEED_SCALE / 5) * 5}%"
     for i in range(7):
-        v = ctl.speeds[i]
-        r[f"spd-txt-{i}"] = f"{v:.0f}% · {v / 100 * V.QDM[i]:.2f} rad/s" + (" · above band" if v > 50 else "")
+        v = ctl.speeds[i]                                    # real % of the velocity limit; the bar shows it doubled
+        r[f"spd-txt-{i}"] = f"{v / SPEED_SCALE:.0f}% · {v / 100 * V.QDM[i]:.2f} rad/s"
     hist = list(an.hist)
     fig, title, sub = V.chart_figure(hist, ui["chan"], sel, cal, snap)
     r["chart-title"], r["chart-sub"], r["main-chart:fig"] = title + " · " + ("live" if live else "replay"), sub, fig

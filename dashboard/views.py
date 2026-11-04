@@ -5,7 +5,7 @@ import numpy as np
 import plotly.graph_objects as go
 from dash import dcc, html
 
-from engine import BAND, FLOOR_TABLE, LIVE_Z, floor_pct
+from engine import LIVE_Z, floor_pct
 
 TL = np.array([87, 87, 87, 87, 12, 12, 12.0])
 QDM = np.array([2.175, 2.175, 2.175, 2.175, 2.61, 2.61, 2.61])
@@ -37,15 +37,6 @@ def twin_figure(snap, alerts, load):
         s = abs(snap["tau_meas"][j]) / TL[j] * 1.6
         fig.add_trace(go.Scatter(x=[pts[k][0], pts[k + 1][0]], y=[pts[k][2], pts[k + 1][2]], mode="lines",
                                  line=dict(color=_tint(s), width=11), hoverinfo="skip", showlegend=False))
-    e = g["ell"]
-    th = np.linspace(0, 2 * np.pi, 60)
-    ex, ez = max(e["a"] * 0.3, 0.012) * np.cos(th), max(e["b"] * 0.3, 0.012) * np.sin(th)
-    c, s_ = np.cos(e["ang"]), np.sin(e["ang"])
-    gx, gz = g["hand"][0] + c * ex - s_ * ez, g["hand"][2] + s_ * ex + c * ez
-    ecol = "#fab219" if snap["gated_det"] else "#60a5fa"
-    fig.add_trace(go.Scatter(x=gx, y=gz, mode="lines", line=dict(color=ecol, width=1.5, dash="dash"),
-                             fill="toself", fillcolor="rgba(250,178,25,0.14)" if snap["gated_det"] else "rgba(96,165,250,0.14)",
-                             hoverinfo="skip", showlegend=False))
     if load > 0.04:
         p = g["hand"] + np.array([0, 0, 0.0])
         fig.add_trace(go.Scatter(x=[p[0]], y=[p[2] - 0.05], mode="markers",
@@ -111,11 +102,6 @@ def chart_figure(hist, chan, sel, cal, snap, height=240):
         fig.add_trace(go.Scatter(x=t - t1, y=y1, mode="lines", name="measured", line=dict(color=C_MEAS, width=2)))
         fig.add_trace(go.Scatter(x=t - t1, y=y2, mode="lines", name="model (Pinocchio)", line=dict(color=C_PIN, width=2)))
         title, sub, yr = f"Joint {sel + 1} torque", "N·m", None
-    elif chan == "conf":
-        t, y = _series(hist, lambda h: h["cn"])
-        fig.add_trace(go.Scatter(x=t - t1, y=y, mode="lines", name="confidence c", line=dict(color=C_MEAS, width=2)))
-        fig.add_hrect(y0=0, y1=0.35, fillcolor="#fab219", opacity=0.14, line_width=0)
-        title, sub, yr = "Pose confidence", f"now {hist[-1]['cn']:.2f} · shaded = low trust", [0, 1]
     else:
         t, y = _series(hist, lambda h: h["est"])
         _, ld = _series(hist, lambda h: h["load"])
@@ -138,13 +124,9 @@ def track(v, scale, color):
 
 
 def stat_cards(snap, cal):
-    c = snap["conf"]
-    gated = snap["gated_det"]
     worst = int(np.argmax(np.abs(snap["r_pct"])))
-    over, state_col = snap["over"], "#34d399"
-    if snap["gated_pay"] or over:
-        state, state_col = "held, low trust" if snap["gated_pay"] else "held, over-speed", "#fab219"
-    elif any(a.startswith(("fric", "stuck", "delay")) for a in snap["alerts"]):
+    state_col = "#34d399"
+    if any(a.startswith(("fric", "stuck", "delay")) for a in snap["alerts"]):
         state, state_col = "unreliable, fault active", "#fab219"
     else:
         state = "estimating"
@@ -152,12 +134,6 @@ def stat_cards(snap, cal):
         html.Div(className="stat", children=[html.Span("PAYLOAD ESTIMATE", className="lbl"),
             html.Span(f"{snap['est']:.3f} kg", className="num big"),
             html.Span(f"± {snap['band']:.3f} · {state}", className="muted", style=dict(fontSize=12, color=state_col))]),
-        html.Div(className="stat", children=[html.Span("POSE CONFIDENCE", className="lbl"),
-            html.Span(f"{c['c_norm']:.2f}", className="num big"),
-            html.Div(style=dict(height=6, background="#1a1d23", borderRadius=3), children=[
-                html.Div(style=dict(height=6, width=f"{round(c['c_norm'] * 100)}%", background="#fab219" if gated else "#34d399", borderRadius=3))]),
-            html.Span("low trust: detector gated" if gated else "trusted pose", className="muted",
-                      style=dict(fontSize=12, color="#fab219" if gated else "#34d399"))]),
         html.Div(className="stat", children=[html.Span("WORST RESIDUAL", className="lbl"),
             html.Span(f"J{worst + 1} · {f2(snap['r_pct'][worst], 1)}%", className="num big"),
             html.Span(f"of its torque limit · {f2(snap['r'][worst])} N·m", className="muted", style=dict(fontSize=12))]),
@@ -200,29 +176,16 @@ def drawer_body(kind, snap, an, hist, load_truth):
                     html.Thead(html.Tr([html.Th(h) for h in ("Joint", "q (rad)", "qd", "τ meas", "τ model", "resid")])), html.Tbody(rows)])),
                 html.Div(style=dict(display="grid", gridTemplateColumns="1fr 1fr", gap=10, fontSize=12), children=[
                     html.Div([html.Div("FRAME", className="lbl"), html.Div(f"{snap['n']} · display 2 Hz", className="num")]),
-                    html.Div([html.Div("ANALYSIS", className="lbl"), html.Div("200 Hz window, 20 Hz filter")]),
+                    html.Div([html.Div("ANALYSIS", className="lbl"), html.Div("1.2 s window, 20 Hz filter")]),
                     html.Div([html.Div("SCHEMA", className="lbl"), html.Div("telemetry v0")]),
                     html.Div([html.Div("FEED HEALTH", className="lbl"), html.Div("[latency, drops from dev]")])])]
-    if kind == "o3":
-        c = snap["conf"]
-        col = "#fab219" if snap["gated_det"] else "#34d399"
-        fig, _, _ = chart_figure(hist, "conf", 0, an.cal, snap, height=200)
-        return [html.Div(style=dict(display="grid", gridTemplateColumns="1fr 1fr 1fr", gap=10), children=[
-                    html.Div([html.Div("CONFIDENCE", className="lbl"), html.Div(f"{c['c_norm']:.2f}", className="num", style=dict(fontSize=22))]),
-                    html.Div([html.Div("FORCE GAIN", className="lbl"), html.Div(f"{c['force_noise_gain']:.1f}", className="num", style=dict(fontSize=22))]),
-                    html.Div([html.Div("VERTICAL GAIN", className="lbl"), html.Div(f"{c['vertical_noise_gain']:.1f}", className="num", style=dict(fontSize=22))])]),
-                html.Span(("DETECTOR GATED · near singularity" if snap["gated_det"] else "gates open") + " · gates close above 10 N per N·m",
-                          className="muted", style=dict(fontSize=12, color=col)),
-                dcc.Graph(figure=fig, config=dict(displayModeBar=False), style=dict(height=200))]
     if kind == "o4":
         err = snap["est"] - load_truth
         fig, _, _ = chart_figure(hist, "pay", 0, an.cal, snap, height=200)
         bars = [html.Div(style=dict(display="grid", gridTemplateColumns="28px minmax(0,1fr) 60px", alignItems="center", gap=8, fontSize=12), children=[
                     html.Span(f"J{i + 1}"), track(snap["tkg"][i] * snap["est"] / TL[i], 9, C_LOAD),
                     html.Span(f2(snap["tkg"][i] * snap["est"]), className="num", style=dict(textAlign="right"))]) for i in range(7)]
-        state = ("GATED · estimate held (near singularity)" if snap["gated_pay"] else
-                 "HELD · a joint is above the trusted speed band" if snap["over"] else
-                 "UNRELIABLE · a fault alarm is active" if any(a.startswith(("fric", "stuck", "delay")) for a in snap["alerts"]) else "Estimating")
+        state = ("UNRELIABLE · a fault alarm is active" if any(a.startswith(("fric", "stuck", "delay")) for a in snap["alerts"]) else "Estimating")
         return [html.Div(style=dict(display="grid", gridTemplateColumns="1fr 1fr", gap=10), children=[
                     html.Div([html.Div("ESTIMATE", className="lbl"), html.Div(f"{snap['est']:.3f} kg", className="num", style=dict(fontSize=24)),
                               html.Div(f"± {snap['band']:.3f} kg", className="muted", style=dict(fontSize=12))]),
@@ -256,8 +219,10 @@ def drawer_body(kind, snap, an, hist, load_truth):
             b("First real logs.", "Empty arm: under 0.26% of limit on joints 1–4, 1.4–1.8% on joints 5–7. 1 kg reads 0.972 kg raw, 1.000 kg after the empty-gripper tare."),
             b("Honest limits.", "Stand-in numbers are not Isaac Sim's. The URDF parameters make twin and plant agree; they are not the real Panda's. "
                                 "Detector thresholds are tuned on synthetic data: re-tune on Isaac Sim logs. Live, the residual lags by 0.15 s (filter edge)."),
-            b("Over-speed.", "Above 50% of a joint's velocity limit dev's position drive reports mostly artifact. The stand-in imitates that from dev's table; "
-                             "residual alarms and the load estimate are held.")]
+            b("Why the speed bar tops out at half speed.", "The bar runs from 0 to 100%, and 100% on the bar is half of each joint's maximum velocity. "
+                             "In this range the torque the model predicts and the torque the arm applies agree to within about 2% of a joint's limit, "
+                             "and that agreement does not depend on any simulator setting. A clean residual means any change in it has a physical cause: "
+                             "a payload, extra friction or a stuck joint. Keeping the arm here keeps every reading on the dashboard trustworthy.")]
 
 
 # ── benchmark tab ───────────────────────────────────────────────────────────────────────

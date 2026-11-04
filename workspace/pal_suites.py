@@ -199,17 +199,76 @@ def pickphys(masses=(0.5, 1.0, 2.0)):
     return runs
 
 
+FAR_PICKS = [(0.74, -0.25), (0.78, 0.0)]       # base-frame xy of a cube near the end of the arm's reach: the detector's pose gate closes there
+
+
+def pickfar(masses=(0.5, 1.0, 2.0)):
+    """A real-cube pick with the cube at the far end of the table, so the arm is stretched at the grasp (force noise gain 16 against
+    a gate of 10; the payload gate, on the vertical gain, stays open). Same recipe as pickphys(): s_curve, grasp, carry, release."""
+    runs = []
+    for xy, kgs in ((FAR_PICKS[0], masses), (FAR_PICKS[1], (2.0,))):
+        task = K.pick_place("s_curve", physical=True, pick_xy=xy)
+        for kg in kgs:
+            runs.append(Scenario(name=f"pickfar_x{round(xy[0] * 100)}y{round(xy[1] * 100):+d}_{_kg(kg)}".replace("+", "p").replace("-", "m"),
+                                 traj=task.traj, traj_type="pick", duration_s=task.duration + 0.5, payload_physical=True,
+                                 payload_events=((task.t_attach, kg), (task.t_open, 0.0)), cube_kg=kg, noise_seed=5300, task=task))
+    # faults at the far spot, for the detector's gate: a healthy reference (another noise seed) and faults after the grasp; the 1 kg run
+    # above (same seed 5300) is their healthy twin
+    task = K.pick_place("s_curve", physical=True, pick_xy=FAR_PICKS[0])
+    onset = task.t_attach + 0.4
+    base = dict(traj=task.traj, traj_type="pick", duration_s=task.duration + 0.5, payload_physical=True,
+                payload_events=((task.t_attach, 1.0), (task.t_open, 0.0)), cube_kg=1.0, task=task)
+    runs.append(Scenario(name="pickfar_x74ym25_1kg_ref", noise_seed=5301, **base))
+    for f in (FaultSpec("friction", 3, 8.0, onset), FaultSpec("friction", 5, 8.0, onset),
+              FaultSpec("stuck_joint", 0, 200.0, onset), FaultSpec("delay", 0, 0.050, onset)):
+        runs.append(Scenario(name=f"pickfar_fault_{f.tag}_1kg", noise_seed=5300, fault=f, **base))
+    return runs
+
+
+LIVE_SPEED_CAP = 0.5                                                                        # fraction of each joint's velocity limit
+
+
+def peak_speed_fraction(task, step_s=0.02):
+    """Highest joint speed of a task's trajectory, as a fraction of that joint's velocity limit."""
+    ts = np.arange(0.0, task.duration, step_s)
+    return float(max(np.max(np.abs(task.traj(t)[1]) / cfg.QD_MAX) for t in ts))
+
+
 LIVE_FAULTS = {"friction": 8.0, "stuck_joint": 200.0, "delay": 0.050}       # what the dashboard's fault choices mean in the simulator
 
 
-def live_pick(style="s_curve", kg=1.0, fault="none", joint=3, name="live_pick"):
+def random_pick_xy(rng, tries=60):
+    """A random cube position on the table that is a little away from the fixed demo spot (0.51 m from the base) but well short of the
+    arm's reach: 0.53-0.65 m out, on the side away from the place point, kept only if the IK solves. Never stretched far enough to
+    close the confidence gates (tests/test_suites.py checks it over the whole pick)."""
+    for _ in range(tries):
+        r, th = rng.uniform(0.53, 0.65), rng.uniform(np.radians(-65.0), 0.0)
+        xy = (round(float(r * np.cos(th)), 3), round(float(r * np.sin(th)), 3))
+        if xy[0] < 0.35:
+            continue
+        try:
+            K.waypoints(pick_xy=xy, offset=K.GRASP_TOOL_OFFSET, lift=K.GRASP_LIFT)
+        except ValueError:
+            continue
+        return xy
+    return tuple(K.PICK_XY)
+
+
+def live_pick(style="s_curve", kg=1.0, fault="none", joint=3, name="live_pick", speed=0.7, pick_xy=None):
     """One real pick for the live dashboard: the physical cube at `kg`, the given style, and optionally a fault that starts 0.4 s after the grasp.
-    Same scenario recipe as pickphys(), without sensor noise (the live server adds its own to what it streams)."""
+    Same scenario recipe as pickphys(), without sensor noise (the live server adds its own to what it streams).
+    `speed` is the dashboard's speed bar as a fraction (1.0 = the bar's 100% = LIVE_SPEED_CAP of the velocity limit); 0.7 is the original 35%."""
     if style not in ("trapezoidal", "s_curve", "torque_aware"):
         raise ValueError(f"unknown style {style!r}")
     if not 0.2 <= kg <= 3.0:
         raise ValueError("cube mass must be 0.2-3 kg")
-    task = K.pick_place(style, physical=True)
+    if not 0.05 <= speed <= 1.0:
+        raise ValueError("speed must be 0.05-1.0 of the speed bar")
+    v = LIVE_SPEED_CAP * speed * 0.99                 # 1% under the cap: an s-curve overshoots its nominal peak by a hair
+    task = K.pick_place(style, physical=True, vscale=v, ascale=v, tfac=2.5 * 0.35 / v, **({"pick_xy": tuple(pick_xy)} if pick_xy else {}))
+    peak = peak_speed_fraction(task)
+    if peak > LIVE_SPEED_CAP:                      # the live demo stays in the trusted regime (DECISIONS.md D1)
+        raise ValueError(f"{style} pick peaks at {peak:.0%} of the velocity limit; the live cap is {LIVE_SPEED_CAP:.0%}")
     f = FaultSpec() if fault == "none" else FaultSpec(fault, 0 if fault == "delay" else int(joint), LIVE_FAULTS[fault], task.t_attach + 0.4)
     return Scenario(name=name, traj=task.traj, traj_type="pick", duration_s=task.duration + 0.5, payload_physical=True,
                     payload_events=((task.t_attach, kg), (task.t_open, 0.0)), cube_kg=kg, task=task, fault=f)
@@ -234,7 +293,7 @@ def o6pick():
 SUITES = {"reference": ("data", reference), "o3": ("out/o3", o3), "o4": ("out/o4", o4), "o5": ("out/o5", o5),
           "clean": ("out/clean", clean), "fast": ("out/fast", fast), "extra": ("out/extra", extra),
           "push": ("out/push", push), "o6": ("out/o6", o6), "pick": ("out/pick", pick), "o6pick": ("out/o6pick", o6pick),
-          "pickphys": ("out/pickphys", pickphys)}
-ORDER = ["reference", "o3", "o4", "o5", "clean", "fast", "extra", "push", "o6", "pick", "o6pick", "pickphys"]
-NEEDS_GRIPPER = {"pickphys"}       # suites that need the gripper asset variant, finger drives and a physical cube; they cannot share
+          "pickphys": ("out/pickphys", pickphys), "pickfar": ("out/pickfar", pickfar)}
+ORDER = ["reference", "o3", "o4", "o5", "clean", "fast", "extra", "push", "o6", "pick", "o6pick", "pickphys", "pickfar"]
+NEEDS_GRIPPER = {"pickphys", "pickfar"}       # suites that need the gripper asset variant, finger drives and a physical cube; they cannot share
                                    # a process with the others (a different asset variant would change the other suites' physics)

@@ -54,6 +54,10 @@ import numpy as np
 # decimate the expensive readbacks instead: M (49 floats) and J (42) are 57% of the frame
 # and dominate its cost, while both change very little in one millisecond. The analysis
 # side has proposed encoding that as a held last value plus an `mj_fresh` flag.
+#
+# UPDATE 2026-11-04 (DECISIONS.md D3): that sweep rebuilt the World per rate and was later found wrong
+# (docs/RESIDUAL_FLOOR.md). At or below 50% of the velocity limit the residual is the same at 250-2000 Hz.
+# Data runs keep 1000 Hz; the LIVE view runs at 250 Hz (pal.sh), which keeps up with real time.
 PHYSICS_HZ = 1000.0
 RENDER_HZ = 30.0                      # [CHOICE] rendering is for the human, not the math
 

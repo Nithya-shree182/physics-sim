@@ -19,7 +19,7 @@ import pandas as pd
 import pytest
 
 from conftest import REPO_ROOT
-from confidence import conditioning, gates
+from pose_mask import FORCE_GAIN_MAX, force_noise_gain
 from detector import detect, evaluate
 from payload import estimate_payload
 from poses import PROBE_POSES
@@ -86,24 +86,13 @@ def test_o2_calibration_gate_on_synthetic_matched_plant(twin):
     assert (np.sqrt(np.nanmean(res.r ** 2, axis=0)) / LIMITS).max() < 0.005
 
 
-# ── O3: confidence ─────────────────────────────────────────────────────────────────────
-def test_o3_confidence_is_a_zero_to_one_ratio_of_singular_values(twin):
-    for name, q in PROBE_POSES.items():
-        c = conditioning(twin.jacobian(q))
-        assert 0.0 <= c["c"] <= 1.0, name
-    # the proposal's definition: c = sigma_min / sigma_max
-    s = np.linalg.svd(twin.jacobian(PROBE_POSES["home"]), compute_uv=False)
-    assert s.min() / s.max() <= 1.0
+# ── detector pose mask (all that is left of O3, DECISIONS.md D6) ───────────────────────
+def test_mask_closes_at_the_straight_arm_pose_and_is_open_at_home(twin):
+    assert force_noise_gain(twin.jacobian(PROBE_POSES["home"])) < FORCE_GAIN_MAX
+    assert force_noise_gain(twin.jacobian(PROBE_POSES["near_singular_extended"])) > FORCE_GAIN_MAX
 
 
-def test_o3_singular_pose_is_gated_and_healthy_pose_is_not(twin):
-    ok = gates(conditioning(twin.jacobian(PROBE_POSES["home"])))
-    bad = gates(conditioning(twin.jacobian(PROBE_POSES["near_singular_extended"])))
-    assert ok["detector_ok"] and ok["payload_ok"]
-    assert not bad["detector_ok"] and not bad["payload_ok"]
-
-
-def test_o3_detector_never_alarms_on_a_gated_row(twin):
+def test_detector_never_alarms_on_a_masked_row(twin):
     run = run_from_frame(*generate(traj="excitation", duration=8.0, fault="friction", fault_joint=2,
                                    fault_onset=4.0, seed=3))
     det = detect(run, compute_residual(run, twin, cutoff_hz=DEFAULT_CUTOFF_HZ))
@@ -128,15 +117,6 @@ def test_o4_real_one_kg_within_tolerance_after_tare(twin):
     m0, _ = estimate_payload(compute_residual(load_run(REAL_RUNS[0]), twin), twin).final
     m1, _ = estimate_payload(compute_residual(load_run(REAL_RUNS[1]), twin), twin, tare_kg=m0).final
     assert abs(m1 - 1.0) <= 0.03
-
-
-def test_o4_unobservable_pose_is_flagged_not_reported(twin):
-    """Near the elbow-singular pose the vertical force cannot be separated from torque
-    noise: the payload gate must close so the estimator holds instead of reporting."""
-    q = PROBE_POSES["near_singular_extended"]
-    assert conditioning(twin.jacobian(q))["vertical_noise_gain"] > 10
-    assert not gates(conditioning(twin.jacobian(q)))["payload_ok"]
-
 
 # ── O5: detection and false-positive rate, with and without the confidence gate ────────
 FAULT_SET = [("friction", 2), ("friction", 5), ("stuck_joint", 3), ("delay", 0)]

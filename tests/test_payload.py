@@ -1,4 +1,3 @@
-import numpy as np
 import pytest
 
 from payload import estimate_payload
@@ -33,16 +32,3 @@ def test_tare_removes_the_phantom_mass(twin):
     run = run_from_frame(*generate("hold", 2.0, payload_kg=1.0, seed=5))
     est = estimate_payload(compute_residual(run, twin, cutoff_hz=DEFAULT_CUTOFF_HZ), twin, tare_kg=empty)
     assert est.final[0] == pytest.approx(1.0, abs=0.01)
-
-
-def test_estimate_is_held_while_gated(twin):
-    est = _estimate(twin, traj="hold", duration=1.0, payload_kg=1.0, mismatch=False, noise=False)
-    from confidence import conditioning
-    vg = conditioning(twin.jacobian(np.array([0.0, 0.30, 0.0, -0.20, 0.0, 1.00, 0.785])))["vertical_noise_gain"]
-    est2 = estimate_payload(  # a gate so strict nothing passes: estimate must stay undefined
-        compute_residual(run_from_frame(*generate("hold", 0.5, payload_kg=1.0, mismatch=False, noise=False)), twin),
-        twin, vertical_gain_max=0.0)
-    assert vg > 10.0                       # the elbow-singular pose fails the real gate
-    assert est2.gated.all() or np.isnan(est2.m_raw).all()
-    assert np.isnan(est2.m_est).all()
-    assert not est.gated.any()

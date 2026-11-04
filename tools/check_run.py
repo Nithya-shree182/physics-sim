@@ -96,7 +96,7 @@ def main():
     lo = int(0.1 * n)
     noisy = "sensor_noise" in man
     if noisy:                                    # zero-phase 20 ms boxcar, as the analysis side filters
-        w = 20
+        w = max(1, round(0.020 / dt))      # a 20 ms boxcar at any physics rate (a fixed 20 rows smeared 80 ms at 250 Hz)
         qd_s = np.stack([np.convolve(qd[:, j], np.ones(w) / w, mode="same") for j in range(ARM)], axis=1)
     else:
         qd_s = qd

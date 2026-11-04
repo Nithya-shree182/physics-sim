@@ -10,10 +10,13 @@ http://127.0.0.1:$PAL_LIVE_PORT (default 8765, host networking):
 
   GET  /state?since=N   {"seq": last row number, "rows": [[t, q*7, qd*7, tau_measured*7, q_cmd*7, held_kg, run_id], ...] after row N, "status": {...}}
   GET  /frame.png       the latest viewport picture (windowed runs only)
-  POST /cmd             {"cmd": "run", "style": "s_curve", "kg": 1.0, "fault": "none"|"friction"|"stuck_joint"|"delay", "joint": 3, "loop": false}
+  POST /cmd             {"cmd": "run", "style": "s_curve", "kg": 1.0, "fault": "none"|"friction"|"stuck_joint"|"delay", "joint": 3, "loop": false, "speed": 0.7, "random": false, "pick_xy": [x, y]}
+                        (random: put the cube at a random reachable spot a little away from the fixed one, a new one for each repeat;
+                        pick_xy: an explicit base-frame position, m)
+                        (speed: the dashboard speed bar as a fraction, 0.05-1.0; 1.0 is half the velocity limit)
                         {"cmd": "stop"}  (abort the current pick and stay at home, cancels repeat)
 
-Rows are 200 Hz (every 5th physics step; the torque is the mean of the 5), with the same sensor noise the data runs use. Time is pace-limited to real time.
+Rows are HZ/DECIM per second (250 Hz at the default 250 Hz physics: every step; 200 Hz at 1000 Hz: every 5th step, torque the mean of the 5), with the same sensor noise the data runs use. Time is pace-limited to real time.
 """
 import json
 import os
@@ -36,10 +39,11 @@ from pal_sensors import DEFAULT_SIGMA
 
 PORT = int(os.environ.get("PAL_LIVE_PORT", "8765"))
 HZ = float(os.environ.get("PAL_PHYSICS_HZ", cfg.PHYSICS_HZ))
-DECIM = 5
+DECIM = max(1, round(HZ / 200))           # one row per DECIM steps: 250 Hz rows at 250 Hz physics, 200 Hz rows at 1000 Hz (the dashboard reads row_hz)
+RENDER_HZ = float(os.environ.get("PAL_LIVE_RENDER_HZ", "10"))   # frames drawn per second; the picture is saved about 3 times a second, so 10 is enough (0 = never)
 REALTIME = os.environ.get("PAL_LIVE_REALTIME", "1") != "0"
 FRAME_EVERY_S = 0.3
-KEEP_ROWS = 6000                       # 30 s of 200 Hz rows
+KEEP_ROWS = 6000                       # 24 s of 250 Hz rows
 
 
 class Abort(Exception):
@@ -75,6 +79,7 @@ class Hub:
 
 
 HUB = Hub()
+HUB.set(hz=HZ, row_hz=HZ / DECIM)                 # the dashboard reads the row rate from here
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -111,7 +116,9 @@ class Handler(BaseHTTPRequestHandler):
         try:
             msg = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
             if msg.get("cmd") == "run":
-                S.live_pick(msg.get("style", "s_curve"), float(msg.get("kg", 1.0)), msg.get("fault", "none"), int(msg.get("joint", 3)))   # validate now
+                S.live_pick(msg.get("style", "s_curve"), float(msg.get("kg", 1.0)), msg.get("fault", "none"), int(msg.get("joint", 3)),
+                            speed=float(msg.get("speed", 0.7)),
+                            pick_xy=tuple(msg["pick_xy"]) if msg.get("pick_xy") else None)   # validate now
                 with HUB.lock:
                     HUB.cmds.append(msg)
                     HUB.stop_flag = False
@@ -132,11 +139,11 @@ print(f"[PAL] live server on http://127.0.0.1:{PORT}  ({'headless' if HEADLESS e
 
 # The scene is drawn and the viewport captured even without a window: the dashboard shows the picture.
 plant = build_plant(HZ, scene=True, gripper=True)
-runner = Runner(plant, "/workspace/out/live", mj_every=10, render_every=33)
+render_every = max(1, round(HZ / RENDER_HZ)) if RENDER_HZ > 0 else 0
+runner = Runner(plant, "/workspace/out/live", mj_every=10, render_every=render_every)
 art, cell = plant.art, plant.cell
 rng = np.random.default_rng(0)
 sig = DEFAULT_SIGMA
-render_every = 33
 
 if True:
     from omni.kit.viewport.utility import capture_viewport_to_file, get_active_viewport
@@ -157,7 +164,7 @@ def grab_frame():
     frame_n += 1
 
 
-state = {"run_id": 0, "t_base": 0.0, "tau_acc": np.zeros(7), "n_acc": 0, "wall0": 0.0, "sim0": 0.0, "held": 0.0}
+state = {"run_id": 0, "t_base": 0.0, "tau_acc": np.zeros(7), "n_acc": 0, "wall0": 0.0, "sim0": 0.0, "held": 0.0, "rt_wall": time.time(), "rt_sim": 0.0}
 
 
 def emit(t_local, qd, q_des):
@@ -175,6 +182,10 @@ def emit(t_local, qd, q_des):
     HUB.push([round(t, 4)] + [round(float(x), 6) for x in np.concatenate([q, qd, tau, np.asarray(q_des).flatten()[:7]])]
              + [state["held"], state["run_id"]])
     HUB.set(t=round(t_local, 3), cube=[round(float(x), 4) for x in cell.position()])
+    wall = time.time()
+    if wall - state["rt_wall"] >= 2.0:                       # how fast the simulation really runs, shown in status
+        HUB.set(rt=round((t - state["rt_sim"]) / (wall - state["rt_wall"]), 2), hz=HZ)
+        state["rt_wall"], state["rt_sim"] = wall, t
     if REALTIME:
         ahead = (t - state["sim0"]) - (time.time() - state["wall0"])
         if ahead > 0:
@@ -195,15 +206,16 @@ def hold_step(q_hold, k):
 
 
 def run_pick(msg):
+    xy = tuple(msg["pick_xy"]) if msg.get("pick_xy") else (S.random_pick_xy(np.random.default_rng(msg.get("seed"))) if msg.get("random") else None)
     sc = S.live_pick(msg.get("style", "s_curve"), float(msg.get("kg", 1.0)), msg.get("fault", "none"), int(msg.get("joint", 3)),
-                     name=f"live_{msg.get('style', 's_curve')}")
+                     name=f"live_{msg.get('style', 's_curve')}", speed=float(msg.get("speed", 0.7)), pick_xy=xy)
     task = sc.task
     state["run_id"] += 1
     state["t_base"] += 0.5                      # a visible gap between picks; the dashboard restarts its window at each new run id
     begin(state["run_id"])
     f = sc.fault
     HUB.set(state="running", run=sc.name, style=msg.get("style", "s_curve"), kg=sc.cube_kg, fault=f.type, joint=f.joint if f.type != "none" else -1,
-            loop=bool(msg.get("loop")), duration=round(sc.duration_s, 2), t=0.0)
+            loop=bool(msg.get("loop")), duration=round(sc.duration_s, 2), t=0.0, pick_xy=[round(float(c), 3) for c in sc.task.pick_xy])
 
     def on_step(k, t, st):
         state["held"] = sc.cube_kg if task.t_close <= t < task.t_open else 0.0

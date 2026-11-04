@@ -1,6 +1,6 @@
 """Data engine behind the dashboard: a source of telemetry blocks, and the analysis on top.
 
-Two sources produce the same kind of block (50 ms of 1 kHz physics, decimated to 200 Hz):
+Every source produces the same kind of block (10 rows; 50 ms of 200 Hz rows for the stand-in and replays, and the live simulator's own row rate, 250 Hz by default):
 
   LiveSource    a stand-in plant: our Pinocchio plant (link masses +-3%, friction x1.15, sensor
                 noise, optional payload / fault) driven by a joint-impedance controller, stepped in
@@ -9,7 +9,7 @@ Two sources produce the same kind of block (50 ms of 1 kHz physics, decimated to
   ReplaySource  one of our reference runs (data/ref_matched_*, tracked in git), looped.
 
 Analyzer runs the repo's own analysis code on a sliding window of blocks: observers/residual.py
-(compute_residual, 20 Hz zero-phase filter), observers/confidence.py (conditioning, gates) and the
+(compute_residual, 20 Hz zero-phase filter), observers/pose_mask.py (the detector's pose mask) and the
 payload formula of observers/payload.py. The decisions on top (payload vs fault, which joint) are
 a live version of observers/detector.py: same constants, same standardised z-score rule, but with a
 calibration window taken from the live session. Offline it is exact; live it lags by the 0.15 s of
@@ -33,7 +33,7 @@ REPO = Path(__file__).resolve().parents[1]
 for sub in ("model", "observers", "schema"):
     sys.path.insert(0, str(REPO / sub))
 
-from confidence import FORCE_GAIN_MAX, VERTICAL_GAIN_MAX, conditioning  # noqa: E402
+from pose_mask import FORCE_GAIN_MAX, force_noise_gain  # noqa: E402
 from detector import (CALIBRATION_S, FAULT_LABELS, FLOOR_RESIDUAL_NM, FLOOR_TRACKING_RAD,  # noqa: E402
                       Z_THRESHOLD)
 from payload import GRAVITY_VEC, MIN_D_NORM, PAYLOAD_OFFSET_M, TAU_S  # noqa: E402
@@ -46,10 +46,11 @@ from synth_log import (KD, KP, MASS_MISMATCH, NOISE_Q, NOISE_QD, NOISE_TAU, PLAN
 BLOCK_STEPS = 50                 # physics steps per block (50 ms at 1 kHz)
 DECIM = 5                        # analysis rows are every 5th step: 200 Hz
 DT_ROW = DECIM * 1e-3
-WINDOW_ROWS = 240                # 1.2 s of 200 Hz rows
+WINDOW_S = 1.2                   # length of the sliding analysis window; rows are trimmed by time, so any row rate works
+WINDOW_ROWS = 300                # room for 1.2 s of rows up to 250 Hz
 EDGE_S = 0.15                    # rows dropped by compute_residual at each end (3 filter time constants)
 BAND = 0.5                       # trusted fraction of the velocity limit (dev, RESIDUAL_FLOOR.md)
-CONSEC_TICKS = 3                 # [CHOICE] blocks in a row (150 ms), as detector.CONSECUTIVE but per block
+CONSEC_TICKS = 3                 # [CHOICE] blocks in a row (150 ms at 50 ms blocks), as detector.CONSECUTIVE but per block; Analyzer.consec scales it to the block length
 LIVE_Z = Z_THRESHOLD
 PAYLOAD_ON_KG, PAYLOAD_OFF_KG = 0.20, 0.12
 AMP = np.array([0.4, 0.25, 0.4, 0.3, 0.5, 0.3, 0.5])         # rad, stand-in trajectory amplitudes
@@ -83,6 +84,7 @@ class Block:
     tau: np.ndarray      # measured torque, mean over each decimation step
     q_cmd: np.ndarray
     truth: dict          # what the source knows and the analysis must not use
+    dt: float = DT_ROW   # seconds between rows (the live simulator at 250 Hz sends 4 ms rows)
 
 
 class LiveSource:
@@ -105,7 +107,6 @@ class LiveSource:
         self.t = 0.0
         self.fifo = deque(maxlen=60)
         self.q_stuck = None
-        self.artifact = False
 
     def _build_plant(self, load: float):
         rng = np.random.default_rng(self.seed)
@@ -148,12 +149,6 @@ class LiveSource:
             if fault == "friction":
                 self.plant.friction_scale[fj] *= 3.0
             tau_meas = tau + self.rng.normal(0, NOISE_TAU, 7)
-            if max(c.speeds) > BAND * 100:
-                # Above ~50% of the velocity limit dev's position drive reports torque that is mostly
-                # artifact (RESIDUAL_FLOOR.md). The stand-in imitates it from dev's table, per joint.
-                s = np.array(c.speeds) / 100.0
-                amp_pct = np.array([floor_pct(v) for v in s]) * (s > BAND)
-                tau_meas = tau_meas + amp_pct / 100 * self.plant.effort_limit * 1.4 * np.sin(self.phase)
             if fault == "stuck_joint":
                 if self.q_stuck is None:
                     self.q_stuck = self.q[fj]
@@ -212,7 +207,8 @@ class ReplaySource:
 
 class IsaacSource:
     """The live Isaac Sim (workspace/pal_live.py, started by pal.sh): rows come over HTTP, the dashboard commands picks back.
-    Rows are 200 Hz; a block is 10 of them (50 ms). A new `run_id` means a new pick: the window and the detector restart."""
+    Rows come at the simulator's row rate (status `row_hz`: 250 Hz when it runs at 250 Hz, 200 Hz at 1000 Hz); a block is 10 of them.
+    A new `run_id` means a new pick: the window and the detector restart."""
     kind = "isaac"
     timing = "backward"
     URL = os.environ.get("PAL_LIVE_URL", "http://127.0.0.1:8765")
@@ -278,7 +274,8 @@ class IsaacSource:
         held = float(rows[-1][-2])
         st = self.status
         return Block(t=float(a[-1, 0]), q=a[:, 1:8], qd=a[:, 8:15], tau=a[:, 15:22], q_cmd=a[:, 22:29],
-                     truth={"load": held, "fault": st.get("fault", "none"), "fault_joint": st.get("joint", -1)})
+                     truth={"load": held, "fault": st.get("fault", "none"), "fault_joint": st.get("joint", -1)},
+                     dt=1.0 / float(st.get("row_hz") or 1.0 / DT_ROW))
 
 
 # ── analysis ────────────────────────────────────────────────────────────────────────────
@@ -295,14 +292,16 @@ def payload_torque_per_kg(twin, q, qd=None, qdd=None) -> np.ndarray:
 
 
 class Analyzer:
-    """Sliding-window residual, confidence, payload and alert logic."""
+    """Sliding-window residual, payload and alert logic."""
 
     def __init__(self, twin, timing: str, detector: bool = True):
         self.twin, self.timing, self.use_detector = twin, timing, detector
         self.limit = twin.effort_limit
         self.reset_window()
         self.tare = 0.0
-        self.hist = deque(maxlen=400)                # one entry per block (20 Hz): last 20 s
+        self.hist = deque(maxlen=500)                # one entry per block (20-25 Hz): at least the last 20 s
+        self.blk_s = BLOCK_STEPS * 1e-3             # seconds of data in a block; set from each block in feed()
+        self.consec = CONSEC_TICKS
         self.alerts: dict[str, dict] = {}
         self.log: list[dict] = []
         self.snapshot: dict = {}
@@ -335,15 +334,20 @@ class Analyzer:
 
     # --- one block in, one snapshot out ---
     def feed(self, blk: Block, controls: Controls, running_s: float) -> dict:
-        t_rows = blk.t - BLOCK_STEPS * 1e-3 + DT_ROW * np.arange(1, len(blk.q) + 1) - DT_ROW
+        dt = blk.dt
+        self.blk_s = len(blk.q) * dt
+        self.consec = max(1, round(0.15 / self.blk_s))      # 150 ms of blocks in a row, whatever the row rate
+        t_rows = blk.t - len(blk.q) * dt + dt * np.arange(len(blk.q))
         for i in range(len(blk.q)):
             self.buf["t"].append(t_rows[i])
             for k, arr in (("q", blk.q), ("qd", blk.qd), ("tau", blk.tau), ("qc", blk.q_cmd)):
                 self.buf[k].append(arr[i])
-        if len(self.buf["t"]) < int(2.5 * EDGE_S / DT_ROW):
+        while self.buf["t"][-1] - self.buf["t"][0] > WINDOW_S:
+            for dq in self.buf.values():
+                dq.popleft()
+        if len(self.buf["t"]) < int(2.5 * EDGE_S / dt):
             return self.snapshot
-        n = len(self.buf["t"])
-        df = pd.DataFrame({"t": list(self.buf["t"]), "dt": DT_ROW})
+        df = pd.DataFrame({"t": list(self.buf["t"]), "dt": dt})
         for key, name in (("q", "q"), ("qd", "qd"), ("tau", "tau_measured")):
             a = np.array(self.buf[key])
             for j in range(7):
@@ -358,27 +362,24 @@ class Analyzer:
         k = ok[-1]
         r_now = res.r[sl].mean(axis=0)
         q, qd = res.q[k], res.qd[k]
-        cs = conditioning(res.J[k])
-        gated_det, gated_pay = cs["force_noise_gain"] > FORCE_GAIN_MAX, cs["vertical_noise_gain"] > VERTICAL_GAIN_MAX
+        fng = force_noise_gain(res.J[k])
+        gated_det = fng > FORCE_GAIN_MAX                   # the detector's pose mask: no alarms with the arm stretched far out
         qc = np.array(self.buf["qc"])[k]
         track = qc - np.array(self.buf["q"])[k]
         tkg = payload_torque_per_kg(self.twin, q, qd, res.qdd[k])
-        over = [j for j, v in enumerate(controls.speeds) if v > BAND * 100] if self.use_detector else []
 
         # payload: running mean of the per-row estimate over the rows not yet used
         new = [i for i in ok if res.t[i] > self.last_row_t]
         for i in new:
-            if conditioning(res.J[i])["vertical_noise_gain"] > VERTICAL_GAIN_MAX:
-                continue
             d = GRAVITY_VEC - self.twin.point_acceleration(res.q[i], res.qd[i], res.qdd[i], PAYLOAD_OFFSET_M)
-            if np.linalg.norm(d) < MIN_D_NORM or over or self.fault_hold:
+            if np.linalg.norm(d) < MIN_D_NORM or self.fault_hold:
                 continue
             m_raw = float(res.wrench[i, :3] @ d / (d @ d))
             self.m_n += 1
             if self.m_mean is None:
                 self.m_mean, self.m_var = m_raw, 0.0
             else:
-                alpha = min(1.0, DT_ROW / TAU_S)
+                alpha = min(1.0, dt / TAU_S)
                 w = max(alpha, 1.0 / self.m_n)
                 diff = m_raw - self.m_mean
                 self.m_mean += w * diff
@@ -386,29 +387,29 @@ class Analyzer:
         if new:
             self.last_row_t = res.t[new[-1]]
         m_est = self.m_mean if self.m_mean is not None else 0.0
-        n_eff = max(min(self.m_n, 2.0 / min(1.0, DT_ROW / TAU_S) - 1.0), 1.0)
+        n_eff = max(min(self.m_n, 2.0 / min(1.0, dt / TAU_S) - 1.0), 1.0)
         band = 2.0 * np.sqrt(self.m_var / n_eff)
         self.m_est_prev = m_est
         mass = m_est - self.tare
 
-        events = self._alerts(blk, controls, r_now, track, qd, tkg, mass, gated_det, gated_pay, over, running_s, cs) \
+        events = self._alerts(blk, controls, r_now, track, qd, tkg, mass, gated_det, running_s, fng) \
             if self.use_detector else {}
 
         nowpct = r_now / self.limit * 100
         comp = {"gravity": self.twin.g(q), "inertia": self.twin.M(q) @ res.qdd[k],
                 "coupling": self.twin.coriolis(q, qd), "friction": self.twin.friction(qd), "unexplained": r_now}
         entry = {"t": blk.t, "r": r_now.copy(), "tau_meas": res.tau[k].copy(), "tau_model": res.tau_model[k].copy(),
-                 "cn": cs["c_norm"], "est": mass, "load": blk.truth["load"], "track": track.copy(), "gated": gated_det}
+                 "est": mass, "load": blk.truth["load"], "track": track.copy(), "gated": gated_det}
         self.hist.append(entry)
         pts = self._geometry(q)
         self.snapshot = {
             "t": blk.t, "q": q, "qd": qd, "r": r_now, "r_pct": nowpct, "tau_meas": res.tau[k], "tau_model": res.tau_model[k],
-            "track": track, "conf": cs, "gated_det": bool(gated_det), "gated_pay": bool(gated_pay),
+            "track": track, "force_gain": fng, "gated_det": bool(gated_det),
             "est": mass, "band": band, "raw_est": m_est, "load": blk.truth["load"], "tare": self.tare,
             "wrench": res.wrench[k], "comp": comp, "tkg": tkg, "geom": pts, "events": events,
-            "alerts": self.alerts, "log": self.log[:8], "over": over, "metrics": self.metrics,
+            "alerts": self.alerts, "log": self.log[:8], "metrics": self.metrics,
             "calibrating": self.use_detector and not self.cal["ready"],
-            "cal_progress": min(1.0, (len(self.cal["u"]) * 0.05) / CALIBRATION_S),
+            "cal_progress": min(1.0, (len(self.cal["u"]) * self.blk_s) / CALIBRATION_S),
             "truth": blk.truth, "n": len(self.hist),
         }
         return self.snapshot
@@ -419,15 +420,10 @@ class Analyzer:
         tw.ee_pose(q)
         origins = [np.zeros(3)] + [tw.data.oMi[j].translation.copy() for j in range(1, 8)]
         hand = tw.ee_position(q)
-        J = tw.jacobian(q)
-        S = J[[0, 2]] @ J[[0, 2]].T
-        w, v = np.linalg.eigh(S)
-        return {"joints": origins[1:], "base": origins[0], "hand": hand,
-                "ell": {"a": float(np.sqrt(max(w[1], 0))), "b": float(np.sqrt(max(w[0], 0))),
-                        "ang": float(np.arctan2(v[1, 1], v[0, 1]))}}
+        return {"joints": origins[1:], "base": origins[0], "hand": hand}
 
     # --- decisions ---
-    def _alerts(self, blk, ctl, r, track, qd, tkg, mass, gated_det, gated_pay, over, running_s, cs):
+    def _alerts(self, blk, ctl, r, track, qd, tkg, mass, gated_det, running_s, fng):
         out: dict[str, dict] = {}
         J = lambda i: f"Joint {i + 1}"   # noqa: E731
         t = blk.t
@@ -445,16 +441,16 @@ class Analyzer:
             ex = nx
         u = r - fit * tkg
         e = track
-        healthy = ctl.fault == "none" and ctl.load < 0.1 and max(ctl.speeds) <= BAND * 100
+        healthy = ctl.fault == "none" and ctl.load < 0.1
         if not healthy:
             self._healthy_since = t
 
         if not self.cal["ready"]:
-            if not over and not gated_det and ctl.fault == "none":
+            if not gated_det and ctl.fault == "none":
                 self.cal["u"].append(u.copy())
                 self.cal["e"].append(e.copy())
                 self.cal["lag"].append(self._lag())
-                if len(self.cal["u"]) * 0.05 >= CALIBRATION_S:
+                if len(self.cal["u"]) * self.blk_s >= CALIBRATION_S:
                     U, E = np.array(self.cal["u"]), np.array(self.cal["e"])
                     self.cal.update(ready=True, mu_u=U.mean(0), sd_u=np.maximum(U.std(0), FLOOR_RESIDUAL_NM),
                                     mu_e=E.mean(0), sd_e=np.maximum(E.std(0), FLOOR_TRACKING_RAD),
@@ -466,18 +462,9 @@ class Analyzer:
         lag = self._lag()
         z_lag = (lag - self.cal["mu_lag"]) / self.cal["sd_lag"]
 
-        if over:
-            for i in over:
-                out[f"speed{i}"] = dict(sev=2, where=J(i), title="Speed above the trusted band",
-                    cause="Position-drive floor, not a fault",
-                    lines=[f"{J(i)} is at {ctl.speeds[i]:.0f}% of its velocity limit.",
-                           f"Reported-torque floor about {floor_pct(ctl.speeds[i] / 100):.1f}% of limit. "
-                           "Residual alarms and the load estimate are held until it is back in band."])
-            self._set_alerts(out, t, healthy)
-            return out
         if gated_det:
-            out["gate"] = dict(sev=0, where="Whole arm", title="Detector gated at this pose", cause="Near a singularity",
-                               lines=[f"Force noise gain {cs['force_noise_gain']:.1f} N per N·m is above {FORCE_GAIN_MAX:.0f}; "
+            out["gate"] = dict(sev=0, where="Whole arm", title="Alarms held at this pose", cause="Arm stretched far out",
+                               lines=[f"Force noise gain {fng:.1f} N per N·m is above {FORCE_GAIN_MAX:.0f}; "
                                       "residual alarms are held."])
             self._set_alerts(out, t, healthy)
             return out
@@ -487,8 +474,8 @@ class Analyzer:
             self.streak[f"u{i}"] = self.streak.get(f"u{i}", 0) + 1 if hit_u[i] else 0
             self.streak[f"e{i}"] = self.streak.get(f"e{i}", 0) + 1 if abs(z_e[i]) > LIVE_Z else 0
         self.streak["lag"] = self.streak.get("lag", 0) + 1 if z_lag > LIVE_Z and lag - self.cal["mu_lag"] > 0.02 else 0
-        rj = [i for i in range(7) if self.streak[f"u{i}"] >= CONSEC_TICKS]
-        seized = [i for i in rj if abs(qd[i]) < 0.02 and self.streak[f"e{i}"] >= CONSEC_TICKS]
+        rj = [i for i in range(7) if self.streak[f"u{i}"] >= self.consec]
+        seized = [i for i in rj if abs(qd[i]) < 0.02 and self.streak[f"e{i}"] >= self.consec]
         faultOn = False
         if seized:                                   # a jam disturbs the other joints too: name the worst one
             i = max(seized, key=lambda j: abs(z_u[j]))
@@ -502,7 +489,7 @@ class Analyzer:
                 out[f"fric{i}"] = dict(sev=2, where=J(i), title=FAULT_LABELS["friction"], cause="Friction beyond the model",
                     lines=[f"Unexplained torque {u[i]:+.2f} N·m while moving ({abs(u[i]) / self.limit[i] * 100:.1f}% of limit), z = {z_u[i]:+.0f}.",
                            f"The other joints fit a {fit:.2f} kg load; this one does not, so it is not gravity."])
-        if self.streak["lag"] >= CONSEC_TICKS and not rj:
+        if self.streak["lag"] >= self.consec and not rj:
             faultOn = True
             out["delay"] = dict(sev=3, where="All joints", title="Command delay / inconsistent command",
                 cause="Tracking channel only; the residual cannot see it",
@@ -515,7 +502,7 @@ class Analyzer:
                     lines=[f"Measured {self.tau_now(i):+.1f} N·m of {self.limit[i]:.0f} N·m."])
         thr = PAYLOAD_OFF_KG if "payload" in self.alerts else PAYLOAD_ON_KG
         active_fault = any(a.startswith(("fric", "stuck", "delay")) for a in self.alerts)
-        if not faultOn and not active_fault and not hit_u.any() and not gated_pay and mass > thr:
+        if not faultOn and not active_fault and not hit_u.any() and mass > thr:
             k = int(np.argmax(np.abs(tkg)))
             out["payload"] = dict(sev=1, where=f"{J(k)} carries most of it", title="Unmodelled load on the gripper",
                 cause="Payload, seen as extra gravity torque",
@@ -574,6 +561,7 @@ class Engine:
         self.lock = threading.Lock()
         self.playing = True
         self.cost_ms = 0.0
+        self.block_s = BLOCK_STEPS * 1e-3            # seconds of data per block; the live simulator sets it from its row rate
         self.use("live")
         self._stop = False
         self.thread = threading.Thread(target=self._loop, daemon=True)
@@ -610,6 +598,8 @@ class Engine:
             self.an.mark_fault_change(t, kw["fault"] != "none")
         if "fault_joint" in kw and kw["fault_joint"] != c.fault_joint and c.fault != "none":
             self.an.mark_fault_change(t, True)
+        if "speeds" in kw:                                  # the arm never runs above the trusted 50% of its velocity limit (DECISIONS.md D1)
+            kw["speeds"] = [min(float(v), BAND * 100) for v in kw["speeds"]]
         changed_speeds = "speeds" in kw and list(kw["speeds"]) != list(c.speeds)
         for k, v in kw.items():
             setattr(c, k, v)
@@ -619,7 +609,7 @@ class Engine:
     def _loop(self):
         nxt = time.perf_counter()
         while not self._stop:
-            nxt += BLOCK_STEPS * 1e-3
+            nxt += self.block_s
             if self.playing:
                 t0 = time.perf_counter()
                 with self.lock:
@@ -631,7 +621,8 @@ class Engine:
                             self.source.new_run = False
                             self.an.reset_window()
                             self.an.recalibrate()
-                        self.t_run += BLOCK_STEPS * 1e-3
+                        self.block_s = len(blk.q) * blk.dt
+                        self.t_run += self.block_s
                         if self.source.kind == "replay" and getattr(self.source, "wrapped", False):
                             self.an.reset_window()
                         self.an.feed(blk, self.controls, self.t_run)

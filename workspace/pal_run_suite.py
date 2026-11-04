@@ -69,6 +69,10 @@ for name in names:
     only = [x for x in os.environ.get("PAL_ONLY", "").split(",") if x]
     if only:                                        # PAL_ONLY=name1,name2 runs just those scenarios of the suite
         runs = [r for r in runs if r.name in only]
+    off = int(os.environ.get("PAL_SEED_OFFSET", "0"))
+    if off:                                         # PAL_SEED_OFFSET=N: same scenarios, different sensor noise, saved under a name ending _sN
+        import dataclasses
+        runs = [dataclasses.replace(r, name=f"{r.name}_s{off}", noise_seed=None if r.noise_seed is None else r.noise_seed + off) for r in runs]
     runner = Runner(plant, f"/workspace/{out_dir}", mj_every=MJ_EVERY.get(name, 10), render_every=render_every, viz=viz)
     print(f"\n=== suite {name}: {len(runs)} runs -> {out_dir} ({'headless' if HEADLESS else 'windowed'}) ===", flush=True)
     for sc in runs:

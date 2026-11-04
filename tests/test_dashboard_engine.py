@@ -57,8 +57,10 @@ def test_command_delay_is_caught_by_the_tracking_channel(session):
     assert "delay" in an.alerts and not any(a.startswith("fric") for a in an.alerts)
 
 
-def test_over_speed_holds_alarms(session):
-    src, an, _ = session
-    _run(src, an, 3.0, fault="none")
-    snap = _run(src, an, 3.0, speeds=[70.0] * 7)
-    assert snap["over"] and all(a.startswith("speed") for a in an.alerts)
+def test_speed_is_capped_at_the_trusted_band():
+    from types import SimpleNamespace
+    from engine import BAND, Controls, Engine
+    stub = SimpleNamespace(controls=Controls(), an=SimpleNamespace(snapshot={}), source=SimpleNamespace(kind="isaac"))
+    Engine.set_controls(stub, speeds=[10.0, 50.0, 70.0, 100.0, 5.0, 0.0, 49.0])
+    assert max(stub.controls.speeds) <= BAND * 100
+    assert stub.controls.speeds[2] == stub.controls.speeds[3] == BAND * 100

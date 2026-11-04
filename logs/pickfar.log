@@ -1,0 +1,4 @@
+attempt 1: no script output in 420s — genuine boot hang, killing
+attempt 2: script started after 30s
+done -> /home/thinkspace/Desktop/Physics_Based_RoboArm/logs/pal_run_suite.log
+== pickfar (out/pickfar): 4 runs, 0 failed checks

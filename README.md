@@ -9,7 +9,7 @@ The repository holds both halves, merged on 2026-11-04 from two branches that ha
 | half | owns | where |
 |---|---|---|
 | **simulator side** | the plant (the simulated arm), telemetry, injected faults, data generation, benchmarks | `workspace/`, `tools/`, `data/`, `assets/` |
-| **analysis side** | the Pinocchio model, residual, confidence, payload estimator, detector, dashboard | `model/`, `observers/`, `dashboard/` |
+| **analysis side** | the Pinocchio model, residual, payload estimator, detector (with its pose mask), dashboard | `model/`, `observers/`, `dashboard/` |
 | shared | the telemetry schema and both teams' tests | `schema/`, `tests/` |
 
 ## Run something
@@ -25,7 +25,7 @@ tools/package_handover.sh              # one tarball of every run for the analys
 .venv-pal/bin/python -m pytest -q      # all tests, both teams (Pinocchio env); `unittest discover tests` runs ours without it
 ```
 
-Suites (`workspace/pal_suites.py`): `reference` (O1/O2), `o3` (confidence poses), `o4` (known payloads), `o5` (26 fault runs), `clean`
+Suites (`workspace/pal_suites.py`): `reference` (O1/O2), `o3` (probe poses, kept as evidence), `o4` (known payloads), `o5` (26 fault runs), `clean`
 (noise-free), `fast` (40% speed), `extra` (the analysis side's run list), `push` (validation), `o6` (styles, out-and-back), `pick` and `o6pick`
 (IK pick-and-place with a modelled payload), `pickphys` (a real cube). Their definitions are plain data and unit-tested.
 
@@ -50,8 +50,8 @@ All runs are **effort mode**: the arm is driven by explicit torques and `tau_app
 
 | path | what |
 |---|---|
-| `model/pinocchio_model.py`, `observers/` | the analysis side: independent model, residual, confidence, payload, detector (`docs/ANALYSIS_CONTEXT.md`, `setup.md`) |
-| `pal.sh` | **start everything**: `./pal.sh` (headless Isaac Sim + dashboard with the simulator's picture inside it, press Run pick), `--window`, `--dash-only`, `--stop`, `--status`, `--logs`, `--test [suite]` |
+| `model/pinocchio_model.py`, `observers/` | the analysis side: independent model, residual, payload, detector and its pose mask (`docs/ANALYSIS_CONTEXT.md`, `setup.md`) |
+| `pal.sh` | **start everything**: `./pal.sh` (headless Isaac Sim at 250 Hz, so it keeps up with real time, + dashboard with the simulator's picture inside it, press Run pick), `--window`, `--dash-only`, `--stop`, `--status`, `--logs`, `--test [suite]` |
 | `dashboard/` | the Plotly Dash dashboard (`dashboard/README.md`); runs on a stand-in plant or replays `data/ref_matched_*` |
 | `workspace/pal_plant.py` | **the one place the plant is built** (inertials, friction, armature, gains) |
 | `workspace/pal_config.py` | every parameter, each tagged with its source |
@@ -71,7 +71,7 @@ All runs are **effort mode**: the arm is driven by explicit torques and `tau_app
 
 ## Docs index
 
-`docs/README.md` lists every document and what it is for.
+`docs/README.md` lists every document and what it is for. `DECISIONS.md` (this folder) holds the decisions made since the first review and the evidence for each.
 
 ## Read in this order
 

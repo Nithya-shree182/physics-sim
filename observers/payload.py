@@ -8,9 +8,8 @@ on the hand. For a payload of mass m whose centre is at point p,
 so each valid row gives an estimate  m_k = F . d / (d . d)  with d = g_vec - a_p. At rest this
 is simply -F_z / 9.81; in motion the acceleration term keeps it unbiased.
 
-Rows are only used when the pose passes the payload gate (observers/confidence.py,
-vertical_noise_gain); otherwise the estimate is held ("paused, not wrong", proposal section 8).
-The running estimate is an exponentially weighted mean with time constant TAU_S, and the band
+There is no pose gate (DECISIONS.md D6): the estimate is valid while a cube is held and the arm is away from the
+straight-up elbow-extended pose, which the demo never visits. The running estimate is an exponentially weighted mean with time constant TAU_S, and the band
 is two standard errors of that mean.
 
 WAITING ON DEV: where the payload actually sits. PAYLOAD_OFFSET_M (0.1034 m along panda_hand z,
@@ -31,7 +30,6 @@ import pandas as pd
 
 HERE = Path(__file__).resolve().parent
 sys.path[:0] = [str(HERE), str(HERE.parent / "model")]
-from confidence import VERTICAL_GAIN_MAX, conditioning  # noqa: E402
 from pinocchio_model import PandaModel, load_panda  # noqa: E402
 from residual import DEFAULT_CUTOFF_HZ, Residual, compute_residual, load_run  # noqa: E402
 
@@ -45,9 +43,8 @@ MIN_D_NORM = 2.0                        # [CHOICE] skip rows in near free fall (
 class PayloadEstimate:
     t: np.ndarray
     m_raw: np.ndarray        # per-row estimate, NaN where unusable
-    m_est: np.ndarray        # running estimate, held while gated
+    m_est: np.ndarray        # running estimate
     m_band: np.ndarray       # two standard errors of the running mean
-    gated: np.ndarray        # True where the pose failed the payload gate
 
     @property
     def final(self) -> tuple[float, float]:
@@ -55,7 +52,7 @@ class PayloadEstimate:
 
     def to_frame(self) -> pd.DataFrame:
         return pd.DataFrame({"t": self.t, "m_raw": self.m_raw, "m_est": self.m_est,
-                             "m_band": self.m_band, "gated": self.gated})
+                             "m_band": self.m_band})
 
 
 def payload_torque_per_kg(model: PandaModel, q, qd, qdd, offset_local=PAYLOAD_OFFSET_M) -> np.ndarray:
@@ -72,8 +69,7 @@ def payload_torque_per_kg(model: PandaModel, q, qd, qdd, offset_local=PAYLOAD_OF
 
 
 def estimate_payload(res: Residual, model: PandaModel, offset_local=PAYLOAD_OFFSET_M,
-                     tau_s: float = TAU_S, tare_kg: float = 0.0,
-                     vertical_gain_max: float = VERTICAL_GAIN_MAX) -> PayloadEstimate:
+                     tau_s: float = TAU_S, tare_kg: float = 0.0) -> PayloadEstimate:
     """Run the estimator over a computed residual. tare_kg is subtracted from every row
     (e.g. the phantom mass measured with an empty gripper)."""
     if res.wrench is None:
@@ -83,11 +79,7 @@ def estimate_payload(res: Residual, model: PandaModel, offset_local=PAYLOAD_OFFS
     alpha = min(1.0, dt / tau_s)
 
     m_raw = np.full(n, np.nan)
-    gated = np.zeros(n, dtype=bool)
     for k in np.flatnonzero(res.valid):
-        if conditioning(res.J[k])["vertical_noise_gain"] > vertical_gain_max:
-            gated[k] = True
-            continue
         d = GRAVITY_VEC - model.point_acceleration(res.q[k], res.qd[k], res.qdd[k], offset_local)
         if np.linalg.norm(d) < MIN_D_NORM:
             continue
@@ -114,7 +106,7 @@ def estimate_payload(res: Residual, model: PandaModel, offset_local=PAYLOAD_OFFS
             n_eff = min(n_used, 2.0 / alpha - 1.0)     # effective samples in the window
             m_est[k] = mean
             m_band[k] = 2.0 * np.sqrt(var / max(n_eff, 1.0))
-    return PayloadEstimate(res.t, m_raw, m_est, m_band, gated)
+    return PayloadEstimate(res.t, m_raw, m_est, m_band)
 
 
 def main() -> int:
@@ -131,7 +123,7 @@ def main() -> int:
     m, band = est.final
     truth = float(run.df["payload_kg"].iloc[0]) if "payload_kg" in run.df else float("nan")
     print(f"{run.name}: estimate {m:.4f} ± {band:.4f} kg, label {truth:g} kg, "
-          f"error {m - truth:+.4f} kg, gated {100 * est.gated.mean():.1f}% of rows")
+          f"error {m - truth:+.4f} kg")
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)
         est.to_frame().to_parquet(args.out, index=False)
