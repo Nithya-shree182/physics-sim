@@ -1,21 +1,22 @@
-"""Named joint poses (rad), shared by the gravity check and the confidence-score work.
+"""Named joint poses (rad), shared by the gravity check and the analysis side.
 
-Copied from dev's workspace/pal_config.py (HOME_JOINTS, PROBE_POSES) so both sides test the
-same poses. Keep in sync if dev changes them.
+Everything here follows the active robot (pal_robot). The UR10e has only a home pose: the others
+were Franka Panda configurations chosen for the confidence score that D6 removed, and the Panda
+itself went on 2026-11-08.
 """
+
+import sys
+from pathlib import Path
 
 import numpy as np
 
-HOME_JOINTS = np.array([0.00, -0.785, 0.00, -2.356, 0.00, 1.571, 0.785])
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "workspace"))
+import pal_robot  # noqa: E402
 
-PROBE_POSES = {
-    "home": HOME_JOINTS,
-    "near_singular_extended": np.array([0.0, 0.30, 0.0, -0.20, 0.0, 1.00, 0.785]),
-    "near_singular_wrist": np.array([0.0, -0.785, 0.0, -2.356, 0.0, 0.00, 0.785]),
-    "folded": np.array([0.0, -1.60, 0.0, -2.80, 0.0, 1.40, 0.785]),
-    "horizontal_reach": np.array([0.0, 0.00, 0.0, -1.57, 0.0, 1.57, 0.785]),
-}
+_ACTIVE = pal_robot.active()
 
-# Joint limits from the datasheet, as used in dev's pal_config.py (Q_MIN, Q_MAX).
-Q_MIN = np.array([-2.8973, -1.7628, -2.8973, -3.0718, -2.8973, -0.0175, -2.8973])
-Q_MAX = np.array([2.8973, 1.7628, 2.8973, -0.0698, 2.8973, 3.7525, 2.8973])
+HOME_JOINTS = _ACTIVE.home
+PROBE_POSES = {"home": _ACTIVE.home}
+
+# Joint limits, from the robot spec (datasheet values).
+Q_MIN, Q_MAX = _ACTIVE.q_min, _ACTIVE.q_max

@@ -668,21 +668,22 @@ PAYLOAD_FILTER_ALPHA = 0.02           # running filter on the payload estimate (
 # ══════════════════════════════════════════════════════════════════════════════════════
 # 14. Active robot  —  added 2026-11-08 with the UR10e port
 # ══════════════════════════════════════════════════════════════════════════════════════
-# Everything above this line is the Franka Panda, with its sources, and it is still exactly
-# what `PAL_ROBOT=panda` gives you: that path is untouched so every recorded suite in out/
-# and every test that cites a Panda number still reproduces.
+# Everything above this line was written for the Franka Panda this project started on. The arm is
+# a UR10e since 2026-11-08, so the arm-specific constants are replaced here, from the one place
+# that holds them (`pal_robot`), and the rest of the code goes on reading cfg.HOME_JOINTS,
+# cfg.TAU_MAX and friends without knowing or caring which arm is loaded.
 #
-# `pal_robot` holds one RobotSpec per arm (see that file for where each number comes from and
-# which of them are authored choices rather than citations). When the active robot is not the
-# Panda the arm-specific constants are replaced here, in one place, so the rest of the code can
-# go on reading cfg.HOME_JOINTS, cfg.TAU_MAX and friends without knowing which arm is loaded.
+# The Panda values above are left in place deliberately: several carry the sourcing and the
+# reasoning for choices the project still makes the same way (the friction API, the solver
+# settings, the armature contract), and deleting them would delete that record. Nothing reads
+# them any more — every arm-specific name is rebound below.
 import pal_robot  # noqa: E402
 
 ROBOT = pal_robot.active()
 ROBOT_NAME = ROBOT.name
 DOF = ROBOT.dof
 
-if ROBOT.name != "panda":
+if True:
     HOME_JOINTS = ROBOT.home
     Q_MIN, Q_MAX = ROBOT.q_min, ROBOT.q_max
     QD_MAX = ROBOT.qd_max
@@ -696,7 +697,7 @@ if ROBOT.name != "panda":
     ROBOT_USD_SUBPATH = ROBOT.usd_subpath
     ARMATURE_CONTRACT = f"Pinocchio side sets model.armature = {ROBOT.armature.tolist()}"
     # The O3 probe poses were Panda joint configurations chosen for a confidence score that no
-    # longer exists (D6). Only "home" has any meaning for another arm.
+    # longer exists (D6). Only "home" survives.
     PROBE_POSES = {"home": ROBOT.home}
     POSES = {"home": ROBOT.home}
     # Sensor noise is now a property of the twin's instrumentation, not of a datasheet.

@@ -32,6 +32,12 @@ chmod -R a+rwX "$CACHE" "$ROOT/out" "$ROOT/logs" 2>/dev/null || true
 cleanup() { trap - INT TERM; echo; echo "Stopping $NAME ..."; docker stop -t 5 "$NAME" >/dev/null 2>&1 || docker rm -f "$NAME" >/dev/null 2>&1 || true; exit 130; }
 trap cleanup INT TERM
 
+# Isaac drops its physics view or hangs on roughly one start in five (tools/run_sim.sh carries the
+# same workaround for the data runs). PAL_ATTEMPTS retries rather than leaving you to notice.
+ATTEMPTS="${PAL_ATTEMPTS:-2}"
+for attempt in $(seq 1 "$ATTEMPTS"); do
+docker rm -f "$NAME" >/dev/null 2>&1 || true
+[ "$attempt" -gt 1 ] && echo "--- attempt $attempt of $ATTEMPTS ---"
 docker run --name "$NAME" --init --rm --gpus all --network host \
   -e ACCEPT_EULA=Y -e PRIVACY_CONSENT=Y -e OMNI_KIT_ACCEPT_EULA=YES \
   -e NVIDIA_DRIVER_CAPABILITIES=all \
@@ -43,6 +49,7 @@ docker run --name "$NAME" --init --rm --gpus all --network host \
   ${PAL_BOX_KG:+-e PAL_BOX_KG="$PAL_BOX_KG"} \
   ${PAL_SPEED:+-e PAL_SPEED="$PAL_SPEED"} \
   ${PAL_CYCLES:+-e PAL_CYCLES="$PAL_CYCLES"} \
+  ${PAL_SHOTS:+-e PAL_SHOTS="$PAL_SHOTS"} \
   ${PAL_REALTIME:+-e PAL_REALTIME="$PAL_REALTIME"} \
   ${PAL_DRIVE_MODE:+-e PAL_DRIVE_MODE="$PAL_DRIVE_MODE"} \
   ${PAL_BACKGROUND:+-e PAL_BACKGROUND="$PAL_BACKGROUND"} \
@@ -61,4 +68,5 @@ docker run --name "$NAME" --init --rm --gpus all --network host \
   -v "$ROOT/../Physyk_AI-master/workspace:/physyk_workspace:ro" \
   -w /workspace --entrypoint /isaac-sim/python.sh \
   "$IMAGE" "${PAL_SCRIPT:-pal_cell_demo.py}" "$@" &
-wait $! || true
+wait $! && break || true
+done

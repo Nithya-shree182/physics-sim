@@ -30,18 +30,18 @@ import numpy as np
 import pandas as pd
 
 REPO = Path(__file__).resolve().parents[1]
-for sub in ("model", "observers", "schema"):
+for sub in ("model", "observers", "schema", "workspace"):   # workspace holds pal_robot
     sys.path.insert(0, str(REPO / sub))
 
+import pal_robot  # noqa: E402
 from pose_mask import FORCE_GAIN_MAX, force_noise_gain  # noqa: E402
 from detector import (CALIBRATION_S, FAULT_LABELS, FLOOR_RESIDUAL_NM, FLOOR_TRACKING_RAD,  # noqa: E402
                       Z_THRESHOLD)
-from payload import GRAVITY_VEC, MIN_D_NORM, PAYLOAD_OFFSET_M, TAU_S  # noqa: E402
-from pinocchio_model import friction_sigmoid, load_panda  # noqa: E402
-from poses import HOME_JOINTS  # noqa: E402
+from payload import GRAVITY_VEC, MIN_D_NORM, PAYLOAD_OFFSET_M, TAU_S, payload_offset_for  # noqa: E402
+from pinocchio_model import friction_sigmoid, load_robot  # noqa: E402
 from residual import DEFAULT_CUTOFF_HZ, TIMING_FORWARD, Run, compute_residual, lowpass  # noqa: E402
-from synth_log import (KD, KP, MASS_MISMATCH, NOISE_Q, NOISE_QD, NOISE_TAU, PLANT_FRICTION_SCALE,  # noqa: E402
-                       QD_MAX, build_plant)
+from synth_log import (KD, KP, MASS_MISMATCH, NOISE_Q, NOISE_QD, NOISE_TAU,  # noqa: E402
+                       PLANT_FRICTION_SCALE, build_plant)
 
 BLOCK_STEPS = 50                 # physics steps per block (50 ms at 1 kHz)
 DECIM = 5                        # analysis rows are every 5th step: 200 Hz
@@ -55,17 +55,28 @@ LIVE_Z = Z_THRESHOLD
 PAYLOAD_ON_KG, PAYLOAD_OFF_KG = 0.20, 0.12
 PICK_FAULT_ONSET_S = 3.02        # s into a live pick when the simulator starts a fault (pal_suites.live_pick: grasp + 0.4 s)
 ABS_MIN_NM, ABS_MIN_FRAC = 0.10, 0.005   # an alarm also needs a residual this big: 0.10 N*m and 0.5% of the joint's limit, whichever is larger
-GLOBAL_JOINTS = 4                # this many joints off their baseline together reads as a delayed or inconsistent command, not one bad joint
+# How many joints must be off their baseline at once before it reads as a delayed or inconsistent
+# command rather than one bad joint. Four of the Panda's seven; kept as the same share of the arm
+# so a six-joint UR10e needs three, not four.
+GLOBAL_JOINTS = None             # set once DOF is known, just below
 STUCK_MIN_TRACK_RAD = 0.03          # rad: a seized joint falls this far behind its command; a slow joint with extra friction does not
 SETTLE_TOP = 3                   # extra blocks the strongest joint must stay off before it is named
 LIMIT_CONSEC = 5                 # blocks in a row above 90% of the torque limit before the alert (a delay's torque spikes are not a sustained load)
 FIT_SD_NM = 0.3                  # N*m, per-joint spread assumed by the payload-signature fit when a reference run is in use
-AMP = np.array([0.4, 0.25, 0.4, 0.3, 0.5, 0.3, 0.5])         # rad, stand-in trajectory amplitudes
+# How many joints this dashboard is drawing. Read from the active robot (pal_robot), not fixed at
+# the Panda's seven, so the same engine serves the UR10e's six. Added with the port of 2026-11-08.
+ROBOT = pal_robot.active()
+DOF = ROBOT.dof
+HOME_JOINTS = ROBOT.home
+QD_MAX = ROBOT.qd_max
+AMP = np.array([0.4, 0.25, 0.4, 0.3, 0.5, 0.3, 0.5])[:DOF]   # rad, stand-in trajectory amplitudes
+GLOBAL_JOINTS = max(3, round(4 / 7 * DOF))
+TAU_MAX = ROBOT.tau_max          # N*m per joint, exported for the views
 # Dev's sweep (RESIDUAL_FLOOR.md): worst-joint RMS residual, % of limit, 1000 Hz position drive.
 FLOOR_TABLE = [(0.0, 0.0), (0.1, 0.43), (0.2, 0.86), (0.3, 1.27), (0.5, 2.05), (0.75, 8.79), (1.0, 30.21)]
 # Empty-arm residual of data/ref_matched_0kg, % of each joint's limit, tau_measured against the model without friction (the
 # simulator's measured torque is net torque; see docs/REVIEW.md). The old values, from the wrong-plant log, were 0.09-1.75%.
-REAL_RMS_PCT = [0.0071, 0.0103, 0.0113, 0.006, 0.0763, 0.0815, 0.0007]
+REAL_RMS_PCT = [0.0071, 0.0103, 0.0113, 0.006, 0.0763, 0.0815, 0.0007][:DOF]
 
 
 def floor_pct(s: float) -> float:
@@ -77,7 +88,7 @@ def floor_pct(s: float) -> float:
 @dataclass
 class Controls:
     load: float = 0.0
-    speeds: list = field(default_factory=lambda: [30.0] * 7)     # % of velocity limit
+    speeds: list = field(default_factory=lambda: [30.0] * DOF)     # % of velocity limit
     fault: str = "none"            # none | friction | stuck_joint | delay
     fault_joint: int = 2
     reach: float = 0.0             # 0 home, 1 elbow stretched towards the singular pose
@@ -86,7 +97,7 @@ class Controls:
 @dataclass
 class Block:
     t: float
-    q: np.ndarray        # (10, 7) logged, decimated
+    q: np.ndarray        # (10, DOF) logged, decimated
     qd: np.ndarray
     tau: np.ndarray      # measured torque, mean over each decimation step
     q_cmd: np.ndarray
@@ -100,7 +111,7 @@ class LiveSource:
     timing = "forward"
 
     def __init__(self, seed: int = 0):
-        self.twin = load_panda()
+        self.twin = load_robot(ROBOT)
         self.rng = np.random.default_rng(seed)
         self.seed = seed
         self.c = Controls()
@@ -109,8 +120,8 @@ class LiveSource:
         self.plant = None
         self._build_plant(0.0)
         self.q = HOME_JOINTS.copy()
-        self.qd = np.zeros(7)
-        self.phase = np.zeros(7)
+        self.qd = np.zeros(DOF)
+        self.phase = np.zeros(DOF)
         self.q0 = HOME_JOINTS.copy()
         self.t = 0.0
         self.fifo = deque(maxlen=60)
@@ -149,21 +160,21 @@ class LiveSource:
             self.fifo.append((qc, qdc, qddc))
             lag = 50 if fault == "delay" else 0
             cq, cqd, cqdd = self.fifo[max(len(self.fifo) - 1 - lag, 0)]
-            qm = self.q + self.rng.normal(0, NOISE_Q, 7)
-            qdm = self.qd + self.rng.normal(0, NOISE_QD, 7)
+            qm = self.q + self.rng.normal(0, NOISE_Q, DOF)
+            qdm = self.qd + self.rng.normal(0, NOISE_QD, DOF)
             tau = (self.twin.tau_model(cq, cqd, cqdd) + KP * (cq - qm) + KD * (cqd - qdm))
             tau = np.clip(tau, -self.plant.effort_limit, self.plant.effort_limit)
             self.plant.friction_scale = self._friction_base.copy()
             if fault == "friction":
                 self.plant.friction_scale[fj] *= 3.0
-            tau_meas = tau + self.rng.normal(0, NOISE_TAU, 7)
+            tau_meas = tau + self.rng.normal(0, NOISE_TAU, DOF)
             if fault == "stuck_joint":
                 if self.q_stuck is None:
                     self.q_stuck = self.q[fj]
                     self.qd[fj] = 0.0
-                free = np.arange(7) != fj
-                b = tau - self.plant.tau_model(self.q, self.qd, np.zeros(7))
-                qdd = np.zeros(7)
+                free = np.arange(DOF) != fj
+                b = tau - self.plant.tau_model(self.q, self.qd, np.zeros(DOF))
+                qdd = np.zeros(DOF)
                 qdd[free] = np.linalg.solve(self.plant.M(self.q)[np.ix_(free, free)], b[free])
             else:
                 self.q_stuck = None
@@ -191,7 +202,7 @@ class ReplaySource:
         df = pd.read_parquet(path)
         self.payload_kg = float(df["payload_kg"].iloc[0])
         self.name = path.stem
-        sel = lambda p: df[[f"{p}_{i}" for i in range(7)]].to_numpy()   # noqa: E731
+        sel = lambda p: df[[f"{p}_{i}" for i in range(DOF)]].to_numpy()   # noqa: E731
         q, qd, tau, qc = sel("q"), sel("qd"), sel("tau_measured"), sel("q_cmd")
         n = (len(df) // BLOCK_STEPS) * BLOCK_STEPS
         self.q, self.qd, self.tau, self.qc = q[:n], qd[:n], tau[:n], qc[:n]
@@ -203,7 +214,7 @@ class ReplaySource:
         sl = slice(self.k, self.k + BLOCK_STEPS)
         idx = np.arange(self.k, self.k + BLOCK_STEPS)
         take = idx[::DECIM]
-        tau = self.tau[sl].reshape(-1, DECIM, 7).mean(axis=1)
+        tau = self.tau[sl].reshape(-1, DECIM, DOF).mean(axis=1)
         self.k += BLOCK_STEPS
         self.t += BLOCK_STEPS * 1e-3
         self.wrapped = self.k >= self.n
@@ -299,9 +310,10 @@ def payload_torque_per_kg(twin, q, qd=None, qdd=None) -> np.ndarray:
     the weight; with qd and qdd it includes the payload's own acceleration (a moving load pulls
     differently from a static one)."""
     J = twin.jacobian(q)
-    a = np.zeros(3) if qd is None else twin.point_acceleration(q, qd, qdd, PAYLOAD_OFFSET_M)
-    R = twin.data.oMf[twin.model.getFrameId("panda_hand")].rotation
-    p = R @ np.array(PAYLOAD_OFFSET_M)
+    off = payload_offset_for(twin)
+    a = np.zeros(3) if qd is None else twin.point_acceleration(q, qd, qdd, off)
+    R = twin.data.oMf[twin.model.getFrameId(twin.ee_frame)].rotation
+    p = R @ np.array(off)
     skew = np.array([[0, -p[2], p[1]], [p[2], 0, -p[0]], [-p[1], p[0], 0]])
     return (J[:3] - skew @ J[3:]).T @ (a + np.array([0, 0, 9.81]))
 
@@ -338,14 +350,14 @@ class Analyzer:
         self.m_est_prev = 0.0
         self.streak: dict[str, int] = {}
         self.fault_hold = False
-        self.zpeak = np.zeros(7)
+        self.zpeak = np.zeros(DOF)
 
     def reset_window(self):
         self.buf = {k: deque(maxlen=WINDOW_ROWS) for k in ("t", "q", "qd", "tau", "qc", "ta")}
 
     def _start_calibration(self):
-        self.cal = {"u": [], "e": [], "lag": [], "ready": False, "mu_lag": 0.0, "sd_lag": 0.01, "mu_u": np.zeros(7), "sd_u": np.ones(7),
-                    "mu_e": np.zeros(7), "sd_e": np.ones(7), "t0": None}
+        self.cal = {"u": [], "e": [], "lag": [], "ready": False, "mu_lag": 0.0, "sd_lag": 0.01, "mu_u": np.zeros(DOF), "sd_u": np.ones(DOF),
+                    "mu_e": np.zeros(DOF), "sd_e": np.ones(DOF), "t0": None}
 
     def recalibrate(self):
         self._start_calibration()
@@ -360,7 +372,7 @@ class Analyzer:
         self.alerts.clear()                                                        # a new pick starts with a clean board
         self.run_info = dict(info or {})
         self.auto_tare = 0.0
-        self.zpeak = np.zeros(7)
+        self.zpeak = np.zeros(DOF)
         self.run_stats = {"res": [], "held": [], "alerts": {}}
         self.cur_ref = self.refs.get(key)
         self.recording = self.cur_ref is None and fault == "none"
@@ -393,7 +405,7 @@ class Analyzer:
         df = pd.DataFrame({"t": list(self.buf["t"]), "dt": dt})
         for key, name in (("q", "q"), ("qd", "qd"), ("tau", "tau_measured")):
             a = np.array(self.buf[key])
-            for j in range(7):
+            for j in range(DOF):
                 df[f"{name}_{j}"] = a[:, j]
         man = {"timing": TIMING_FORWARD} if self.timing == "forward" else {"timing_convention": "after world.step() produced q[k]"}
         man["drive_mode"] = df["drive_mode"] = "torque" if self.timing == "forward" else "position_stiff"
@@ -421,7 +433,7 @@ class Analyzer:
         # payload: running mean of the per-row estimate over the rows not yet used
         new = [i for i in ok if res.t[i] > self.last_row_t]
         for i in new:
-            d = GRAVITY_VEC - self.twin.point_acceleration(res.q[i], res.qd[i], res.qdd[i], PAYLOAD_OFFSET_M)
+            d = GRAVITY_VEC - self.twin.point_acceleration(res.q[i], res.qd[i], res.qdd[i], payload_offset_for(self.twin))
             if np.linalg.norm(d) < MIN_D_NORM or self.fault_hold:
                 continue
             m_raw = float(res.wrench[i, :3] @ d / (d @ d))
@@ -457,9 +469,9 @@ class Analyzer:
                 if a["sev"] > 0 and aid != "payload":                       # the payload is what the demo is about, not a fault
                     rs["alerts"][aid] = (a["where"], a["title"])
         if self.picks:
-            peak = np.percentile(self.run_stats["res"], 95, axis=0) if self.run_stats["res"] else np.zeros(7)       # typical, not the one-block grasp spike
+            peak = np.percentile(self.run_stats["res"], 95, axis=0) if self.run_stats["res"] else np.zeros(DOF)       # typical, not the one-block grasp spike
         else:
-            peak = 100 * np.abs(np.array([h["r"] for h in self.hist] or [np.zeros(7)])).max(0) / self.limit
+            peak = 100 * np.abs(np.array([h["r"] for h in self.hist] or [np.zeros(DOF)])).max(0) / self.limit
         held = self.run_stats["held"]
         carry = held[-18:-8] if len(held) > 45 else held[-10:]              # the settled end of the carry (the running mean needs ~3 s after the grasp), before the release
         carry_est = float(np.mean(carry)) if len(carry) >= 5 else None
@@ -492,7 +504,7 @@ class Analyzer:
     def _geometry(self, q) -> dict:
         tw = self.twin
         tw.ee_pose(q)
-        origins = [np.zeros(3)] + [tw.data.oMi[j].translation.copy() for j in range(1, 8)]
+        origins = [np.zeros(3)] + [tw.data.oMi[j].translation.copy() for j in range(1, tw.model.njoints)]
         hand = tw.ee_position(q)
         return {"joints": origins[1:], "base": origins[0], "hand": hand}
 
@@ -506,11 +518,11 @@ class Analyzer:
             return {}
         # payload signature fit: which mass explains the residual pattern, ignoring joints it cannot explain
         if self.recording or self.cur_ref is not None:
-            sd_u = np.full(7, FIT_SD_NM)            # a reference run and the runs compared with it must define u the same way
+            sd_u = np.full(DOF, FIT_SD_NM)            # a reference run and the runs compared with it must define u the same way
         else:
-            sd_u = self.cal["sd_u"] if self.cal["ready"] else np.ones(7)
+            sd_u = self.cal["sd_u"] if self.cal["ready"] else np.ones(DOF)
         wgt = 1.0 / np.maximum(sd_u, FLOOR_RESIDUAL_NM) ** 2
-        ex = np.zeros(7, bool)
+        ex = np.zeros(DOF, bool)
         fit = 0.0
         for _ in range(4):
             den = float((wgt * tkg * tkg)[~ex].sum())
@@ -562,12 +574,12 @@ class Analyzer:
 
         big_enough = np.abs(u - self.cal["mu_u"]) >= np.maximum(ABS_MIN_NM, ABS_MIN_FRAC * self.limit)
         hit_u = (np.abs(z_u) > LIVE_Z) & big_enough
-        for i in range(7):
+        for i in range(DOF):
             self.streak[f"u{i}"] = self.streak.get(f"u{i}", 0) + 1 if hit_u[i] else 0
             self.streak[f"e{i}"] = self.streak.get(f"e{i}", 0) + 1 if abs(z_e[i]) > LIVE_Z else 0
         self.streak["lag"] = self.streak.get("lag", 0) + 1 if z_lag > LIVE_Z and lag - self.cal["mu_lag"] > 0.02 else 0
-        rj = [i for i in range(7) if self.streak[f"u{i}"] >= self.consec]
-        for i in range(7):
+        rj = [i for i in range(DOF) if self.streak[f"u{i}"] >= self.consec]
+        for i in range(DOF):
             self.zpeak[i] = max(self.zpeak[i], abs(z_u[i])) if hit_u[i] else self.zpeak[i]
         n_off = len(rj)                                                 # joints off their baseline, before any naming rule
         if rj:                                                          # a fault on one joint disturbs its neighbours: report the dominant ones
@@ -618,7 +630,7 @@ class Analyzer:
             for aid in [k for k in self.alerts if k.startswith("fric")]:
                 del self.alerts[aid]
         self.fault_hold = faultOn
-        for i in range(7):
+        for i in range(DOF):
             self.streak[f"L{i}"] = self.streak.get(f"L{i}", 0) + 1 if abs(self.tau_now(i)) > 0.9 * self.limit[i] else 0
             if self.streak[f"L{i}"] >= LIMIT_CONSEC and not (faultOn or delayed):
                 out[f"limit{i}"] = dict(sev=3, where=J(i), title="Near torque limit", cause="Gravity plus payload",
@@ -699,12 +711,12 @@ class Engine:
                 self.an = Analyzer(self.twin, "forward", detector=True)
             elif which == "isaac":
                 self.source = IsaacSource()
-                self.twin = load_panda()
+                self.twin = load_robot(ROBOT)
                 self.an = Analyzer(self.twin, "backward", detector=True, picks=True)
                 self.an.refs = self.refs
             else:
                 path = REPO / "data" / f"ref_matched_{which}_1000hz.parquet"      # our tracked reference runs
-                self.twin = load_panda()
+                self.twin = load_robot(ROBOT)
                 self.source = ReplaySource(path)
                 self.an = Analyzer(self.twin, "backward", detector=False)
             self.which = which
@@ -714,7 +726,7 @@ class Engine:
         """The page was reloaded: its controls are back at their defaults, so the engine's must be too (the analysis keeps running)."""
         self.source.c.load = 1.0 if self.source.kind == "isaac" else 0.0
         self.source.c.fault, self.source.c.fault_joint = "none", 3 if self.source.kind == "isaac" else 2
-        self.source.c.speeds = [30.0] * 7
+        self.source.c.speeds = [30.0] * DOF
 
     @property
     def controls(self) -> Controls:

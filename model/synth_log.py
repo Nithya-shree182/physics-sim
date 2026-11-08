@@ -42,19 +42,28 @@ import pinocchio as pin
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent
 sys.path[:0] = [str(HERE), str(REPO_ROOT / "schema")]
+import pal_robot  # noqa: E402
 from pinocchio_model import (  # noqa: E402
     ARMATURE_DEFAULT, DEFAULT_URDF, FINGER_OPEN, FRICTION_PHI1, FRICTION_PHI2, FRICTION_PHI3,
-    GRAVITY, PandaModel, load_panda,
+    GRAVITY, PandaModel, load_panda, load_robot,
 )
 from poses import HOME_JOINTS, Q_MAX, Q_MIN  # noqa: E402
 from validate import load_schema, required_fields, validate_frame, validate_manifest  # noqa: E402
 
 PHYSICS_HZ = 1000.0
-QD_MAX = np.array([2.175, 2.175, 2.175, 2.175, 2.61, 2.61, 2.61])       # rad/s, datasheet
+_SPEC = pal_robot.active()
+N = _SPEC.dof                                                           # joints on the active arm
+QD_MAX = _SPEC.qd_max                                                   # rad/s, datasheet
 
 # libfranka examples/joint_impedance_control gains, the per-joint set dev's DRIVE_MODES uses.
-KP = np.array([600.0, 600.0, 600.0, 600.0, 250.0, 150.0, 50.0])
-KD = np.array([50.0, 50.0, 50.0, 20.0, 20.0, 20.0, 10.0])
+_KP_PANDA = np.array([600.0, 600.0, 600.0, 600.0, 250.0, 150.0, 50.0])
+# Impedance gains. The Panda's are libfranka's example values; another arm takes them scaled to its
+# own torque limits, which keeps the stand-in's tracking comparable without inventing a datasheet.
+KP = (_KP_PANDA if pal_robot.active().dof == 7
+      else 6.0 * pal_robot.active().tau_max)
+_KD_PANDA = np.array([50.0, 50.0, 50.0, 20.0, 20.0, 20.0, 10.0])
+KD = (_KD_PANDA if pal_robot.active().dof == 7
+      else 0.6 * pal_robot.active().tau_max)
 
 PLANT_FRICTION_SCALE = 1.15     # dev's pal_config.PLANT_FRICTION_SCALE
 MASS_MISMATCH = 0.03            # [CHOICE] each link mass and inertia scaled by U(1-x, 1+x)
@@ -73,15 +82,15 @@ FAULT_DEFAULT_PARAM = {"friction": 3.0, "stuck_joint": float("nan"), "delay": 0.
 
 # ── trajectories ─────────────────────────────────────────────────────────────────────────
 def make_trajectory(kind: str, t: np.ndarray, seed: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """q, qd, qdd of shape (len(t), 7), analytic, centred on HOME_JOINTS."""
+    """q, qd, qdd of shape (len(t), N), analytic, centred on HOME_JOINTS."""
     n = len(t)
     if kind == "hold":
-        return np.tile(HOME_JOINTS, (n, 1)), np.zeros((n, 7)), np.zeros((n, 7))
+        return np.tile(HOME_JOINTS, (n, 1)), np.zeros((n, N)), np.zeros((n, N))
 
     if kind == "slow_reference":
         amp = np.array([0.3, 0.2, 0.3, 0.3, 0.3, 0.3, 0.3])
         w = 2 * np.pi * 0.1
-        phase = np.linspace(0, np.pi, 7)
+        phase = np.linspace(0, np.pi, N)
         s = np.sin(w * t[:, None] + phase)
         c = np.cos(w * t[:, None] + phase)
         return HOME_JOINTS + amp * (s - np.sin(phase)), amp * w * c, -amp * w**2 * s
@@ -92,8 +101,8 @@ def make_trajectory(kind: str, t: np.ndarray, seed: int) -> tuple[np.ndarray, np
         # stays inside the joint limits.
         rng = np.random.default_rng(seed)
         w = 2 * np.pi * 0.15 * np.arange(1, 6)
-        a = rng.uniform(-1, 1, (5, 7)) / np.arange(1, 6)[:, None]
-        ph = rng.uniform(0, 2 * np.pi, (5, 7))
+        a = rng.uniform(-1, 1, (5, N)) / np.arange(1, 6)[:, None]
+        ph = rng.uniform(0, 2 * np.pi, (5, N))
         arg = w[None, :, None] * t[:, None, None] + ph[None]
         q_rel = np.sum(a[None] * (np.sin(arg) - np.sin(ph)[None]), axis=1)
         qd = np.sum(a[None] * w[None, :, None] * np.cos(arg), axis=1)
@@ -109,20 +118,24 @@ def make_trajectory(kind: str, t: np.ndarray, seed: int) -> tuple[np.ndarray, np
 
 # ── plant ────────────────────────────────────────────────────────────────────────────────
 def build_plant(payload_kg: float, mass_mismatch: float, friction_scale: float,
-                rng: np.random.Generator) -> tuple[PandaModel, np.ndarray]:
-    plant = load_panda()
+                rng: np.random.Generator, spec=None) -> tuple[PandaModel, np.ndarray]:
+    """The stand-in plant: a second copy of the arm with perturbed link masses and extra friction.
+    Arm-agnostic since 2026-11-08; `spec` defaults to the active robot."""
+    spec = spec or pal_robot.active()
+    plant = load_robot(spec)
     m = plant.model
-    scales = 1.0 + rng.uniform(-mass_mismatch, mass_mismatch, 7) if mass_mismatch > 0 else np.ones(7)
+    n = m.njoints - 1
+    scales = 1.0 + rng.uniform(-mass_mismatch, mass_mismatch, n) if mass_mismatch > 0 else np.ones(n)
     for jid in range(1, m.njoints):
         I = m.inertias[jid]
         m.inertias[jid] = pin.Inertia(I.mass * scales[jid - 1], I.lever, I.inertia * scales[jid - 1])
     if payload_kg > 0:
-        frame = m.frames[m.getFrameId("panda_hand")]
+        frame = m.frames[m.getFrameId(spec.tool_frame)]
         at = frame.placement.act(np.array([0.0, 0.0, PAYLOAD_TCP_OFFSET]))
         sphere = pin.Inertia.FromSphere(payload_kg, PAYLOAD_RADIUS)
         m.inertias[frame.parentJoint] = m.inertias[frame.parentJoint] + pin.SE3(np.eye(3), at).act(sphere)
     plant.data = m.createData()
-    plant.friction_scale = np.full(7, friction_scale)
+    plant.friction_scale = np.full(m.nv, friction_scale)
     return plant, scales
 
 
@@ -154,8 +167,8 @@ def generate(traj: str = "excitation", duration: float = 20.0, payload_kg: float
     delay_steps = int(round(fault_param * PHYSICS_HZ)) if fault == "delay" else 0
     sig = (NOISE_Q, NOISE_QD, NOISE_TAU) if noise else (0.0, 0.0, 0.0)
 
-    cols = {k: np.zeros((n, 7)) for k in ("q", "qd", "tau_applied", "tau_measured", "g", "coriolis")}
-    M_log, J_log = np.zeros((n, 7, 7)), np.zeros((n, 6, 7))
+    cols = {k: np.zeros((n, N)) for k in ("q", "qd", "tau_applied", "tau_measured", "g", "coriolis")}
+    M_log, J_log = np.zeros((n, N, N)), np.zeros((n, 6, N))
     pos_log, quat_log = np.zeros((n, 3)), np.zeros((n, 4))
     fault_active = np.zeros(n, dtype=bool)
 
@@ -165,8 +178,8 @@ def generate(traj: str = "excitation", duration: float = 20.0, payload_kg: float
         active = fault != "none" and t[k] >= fault_onset
         fault_active[k] = active
 
-        q_meas = q + rng.normal(0, sig[0], 7)
-        qd_meas = qd + rng.normal(0, sig[1], 7)
+        q_meas = q + rng.normal(0, sig[0], N)
+        qd_meas = qd + rng.normal(0, sig[1], N)
 
         # The controller sees the command late when the delay fault is active; the log keeps
         # the command as scheduled, which is what the tracking-error signal compares against.
@@ -181,7 +194,7 @@ def generate(traj: str = "excitation", duration: float = 20.0, payload_kg: float
 
         cols["q"][k], cols["qd"][k] = q_meas, qd_meas
         cols["tau_applied"][k] = tau
-        cols["tau_measured"][k] = tau + rng.normal(0, sig[2], 7)
+        cols["tau_measured"][k] = tau + rng.normal(0, sig[2], N)
         cols["g"][k] = plant.g(q)
         cols["coriolis"][k] = plant.coriolis(q, qd)
         M_log[k], J_log[k] = plant.M(q), plant.jacobian(q)

@@ -33,7 +33,9 @@ FRAME_Z = 0.030                        # centre height of the cross
 CUP_R, CUP_H = 0.030, 0.040            # a single cup
 CUP_SPAN = 0.085                       # cup centre offset from the tool axis, along x and y
 CUP_PLANE_Z = 0.110                    # where the cup faces are: what the IK aims at
-GRIP_RANGE = 0.025                     # m, how close a box's top face must be before a cup seals
+GRIP_LATERAL = 0.055                   # m, how far off centre the cups may still seal
+GRIP_VERTICAL = 0.030                  # m, how far above the face they may still seal
+GRIP_RANGE = GRIP_LATERAL              # kept for callers that quote one number
 LATCH_S = 0.12                         # s, vacuum build-up before the box is actually held
 BLEED_S = 0.08                         # s, air bleed before the box is actually let go
 
@@ -89,6 +91,7 @@ class SuctionTool:
         self.on = False             # is the vacuum commanded on
         self._t_on = None           # when it was switched on, for LATCH_S
         self._t_off = None          # when it was switched off, for BLEED_S
+        self._missed = False        # so a failed seal is reported once, not every step
         self.joints = {}            # box prim path -> its (disabled) fixed joint
         for i, bp in enumerate(box_paths):
             self.joints[bp] = self._make_joint(i, bp)
@@ -113,6 +116,7 @@ class SuctionTool:
     def set_vacuum(self, on: bool, t: float):
         if on and not self.on:
             self._t_on = t
+            self._missed = False
         if (not on) and self.on:
             self._t_off = t
         self.on = bool(on)
@@ -137,12 +141,25 @@ class SuctionTool:
         Returns "grip" or "release" on the step the state changed, else None."""
         if self.on and self.held is None and self._t_on is not None and t - self._t_on >= LATCH_S:
             p, R = self.cup_pose()
-            target, best = None, GRIP_RANGE
+            target, best = None, None
+            dists = []
             for b in boxes:
                 top = b.top_centre()
-                d = float(np.linalg.norm(p - top))
-                if d < best:
-                    target, best = b, d
+                # A cup array seals if it is over the face and close to it. Judging that as one
+                # distance made the tolerance depend on how the error split between sideways and
+                # down: a 32 mm lateral miss and a 32 mm hover are very different things, and the
+                # first still seals. Measured 2026-11-08: the arm is still converging when the
+                # vacuum latches, so lateral error at that moment runs to about 32 mm.
+                lat = float(np.linalg.norm((p - top)[:2]))
+                vert = float(abs(p[2] - top[2]))
+                dists.append((b.name, round(lat, 4), round(vert, 4)))
+                if lat <= GRIP_LATERAL and vert <= GRIP_VERTICAL and (best is None or lat < best):
+                    target, best = b, lat
+            if target is None and not self._missed:
+                self._missed = True
+                print(f"[suction] t={t:.2f}s no seal: cups at {np.round(p, 3).tolist()}, need lateral "
+                      f"<={GRIP_LATERAL * 1000:.0f} mm and vertical <={GRIP_VERTICAL * 1000:.0f} mm; "
+                      f"(box, lateral, vertical) = {dists}", flush=True)
             if target is not None:
                 self._attach(target.path)
                 self.held = target.path

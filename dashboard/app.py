@@ -19,7 +19,7 @@ from dash import ALL, Dash, Input, Output, State, ctx, dcc, html, no_update
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import views as V  # noqa: E402
-from engine import BAND, Engine, REAL_RMS_PCT  # noqa: E402
+from engine import BAND, DOF, Engine, REAL_RMS_PCT  # noqa: E402
 
 E = Engine()
 app = Dash(__name__, suppress_callback_exceptions=True, title="PAL dashboard")
@@ -51,7 +51,7 @@ BAR_DEFAULT = 60                   # 60 on the bar = 30% of the velocity limit
 layout_joint_speeds = [html.Div(style=dict(display="flex", flexDirection="column"), children=[
     html.Div(style=dict(display="flex", justifyContent="space-between", fontSize=12), children=[
         html.Label(f"Joint {i + 1}", htmlFor=f"spd-{i}"), html.Span(id=f"spd-txt-{i}", className="num")]),
-    slider(f"spd-{i}", 5, 100, 5, BAR_DEFAULT)]) for i in range(7)]
+    slider(f"spd-{i}", 5, 100, 5, BAR_DEFAULT)]) for i in range(DOF)]
 
 DEFAULT_SOURCE = os.environ.get("PAL_DASH_SOURCE", "live")       # pal.sh sets "isaac"
 SIM_URL = os.environ.get("PAL_LIVE_URL", "http://127.0.0.1:8765")
@@ -135,7 +135,7 @@ def serve_layout():
                                                            dict(label="None", value="none"), dict(label="Friction ×3 (stiction / bearing wear)", value="friction"),
                                                            dict(label="Stuck joint", value="stuck_joint"), dict(label="Command delay 50 ms", value="delay")])]),
                                     html.Div(children=[html.Div("ON JOINT", className="lbl"),
-                                                       dcc.RadioItems(id="fault-joint", className="radio", value=2, inline=True, options=[dict(label=str(i + 1), value=i) for i in range(7)])]),
+                                                       dcc.RadioItems(id="fault-joint", className="radio", value=2, inline=True, options=[dict(label=str(i + 1), value=i) for i in range(DOF)])]),
                                     html.Button(f"Reset speeds to {BAR_DEFAULT}%", id="reset-speeds", n_clicks=0, className="btn")]),
                                 html.P("In the live product these are commands sent to Isaac Sim. The speed bars stop at half of each joint's velocity limit, "
                                        "the range where the residual is trustworthy.", className="muted", style=dict(margin=0, fontSize=12))])])])]),
@@ -163,7 +163,7 @@ def serve_layout():
                         html.Div(style=dict(display="flex", flexDirection="column", gap=6), children=[
                             html.Span("RESIDUAL PER JOINT, % OF TORQUE LIMIT · CLICK A JOINT TO SELECT IT", className="lbl"), html.Div(children=[
                                 html.Button(id={"type": "jbar", "i": i}, n_clicks=0, className="jbar", title=f"Select joint {i + 1}",
-                                            children=html.Div(id={"type": "jb", "i": i}, style=dict(display="contents"))) for i in range(7)])]),
+                                            children=html.Div(id={"type": "jb", "i": i}, style=dict(display="contents"))) for i in range(DOF)])]),
                         html.Div(children=html.Button(id="brk-btn", n_clicks=0, className="btn btn-s")), html.Div(id="brk")])]),
                 html.Div(id="main-bench", style=dict(display="none", flexDirection="column", gap=20))]),
             html.Aside(id="drawer", className="drawer", style=dict(display="none"), children=[
@@ -182,7 +182,7 @@ app.layout = serve_layout
 # by the small callbacks below, which read other components.
 @app.callback(
     Output("ctl-sync", "data"),
-    [Input("load", "value"), Input("fault", "value"), Input("fault-joint", "value")] + [Input(f"spd-{i}", "value") for i in range(7)])
+    [Input("load", "value"), Input("fault", "value"), Input("fault-joint", "value")] + [Input(f"spd-{i}", "value") for i in range(DOF)])
 def controls(load, fault, fjoint, *spd):
     if E.source.kind == "live":
         E.set_controls(load=float(load or 0), speeds=[float(v or BAR_DEFAULT) * SPEED_SCALE for v in spd], fault=fault or "none",
@@ -199,15 +199,15 @@ def load_buttons(_dn, _up, load):
     return float(max(0.0, min(3.0, round((float(load or 0) + step) * 20) / 20)))
 
 
-@app.callback([Output(f"spd-{i}", "value") for i in range(7)], Input("spd-all", "value"), prevent_initial_call=True)
+@app.callback([Output(f"spd-{i}", "value") for i in range(DOF)], Input("spd-all", "value"), prevent_initial_call=True)
 def speed_all(v):
-    return [float(v or BAR_DEFAULT)] * 7
+    return [float(v or BAR_DEFAULT)] * DOF
 
 
-@app.callback([Output("spd-all", "value", allow_duplicate=True)] + [Output(f"spd-{i}", "value", allow_duplicate=True) for i in range(7)],
+@app.callback([Output("spd-all", "value", allow_duplicate=True)] + [Output(f"spd-{i}", "value", allow_duplicate=True) for i in range(DOF)],
               Input("reset-speeds", "n_clicks"), prevent_initial_call=True)
 def reset_speeds(_):
-    return [float(BAR_DEFAULT)] * 8
+    return [float(BAR_DEFAULT)] * (DOF + 1)      # the all-joints slider, then one per joint
 
 
 @app.callback(Output("dummy", "data"), Input("play", "n_clicks"), prevent_initial_call=True)
@@ -410,7 +410,7 @@ OUTS = ["hdr-t", "bell", "bell:cls", "pill", "pill:style", "play", "demo-banner:
         "tab-arm:cls", "tab-bench:cls", "main-arm:style", "main-bench:style", "twin-graph:style", "stream:style", "v-twin:cls", "v-stream:cls",
         "task-card:style", "task-status", "sim-msg", "stats", "ctl-wrap:cls", "ctl-note", "more:style", "more-btn", "load-txt", "spd-txt", "chart-title", "chart-sub", "main-chart:fig",
         "brk-btn", "brk", "main-bench", "drawer:style", "drawer-title", "drawer-body", "toasts"] + [f"p-{k}:cls" for k, _ in PANELS] + [f"ch-{k}:cls" for k, _ in CHANS] + \
-       [f"spd-txt-{i}" for i in range(7)] + ["twin-graph:fig"]
+       [f"spd-txt-{i}" for i in range(DOF)] + ["twin-graph:fig"]
 _PROP = {"cls": "className", "style": "style", "fig": "figure"}
 
 
@@ -478,7 +478,7 @@ def render(_n, ui):
     r["more-btn"] = "Fewer controls" if ui["more"] else "More controls"
     r["load-txt"] = f"{ctl.load:.2f} kg"
     r["spd-txt"] = f"{round(np.mean(ctl.speeds) / SPEED_SCALE / 5) * 5}%"
-    for i in range(7):
+    for i in range(DOF):
         v = ctl.speeds[i]                                    # real % of the velocity limit; the bar shows it doubled
         r[f"spd-txt-{i}"] = f"{v / SPEED_SCALE:.0f}% · {v / 100 * V.QDM[i]:.2f} rad/s"
     hist = list(an.hist)

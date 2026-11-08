@@ -41,7 +41,7 @@ from scipy.signal import butter, filtfilt
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "model"))
-from pinocchio_model import PandaModel, load_panda  # noqa: E402
+from pinocchio_model import PandaModel, load_panda, load_robot  # noqa: E402
 
 EFFORT_MODES = {"torque"}
 TIMING_FORWARD = "tau at row k moves qd[k] to qd[k+1]"
@@ -71,7 +71,14 @@ class Run:
     manifest: dict
     name: str
 
-    def arr(self, prefix: str, n: int = 7) -> np.ndarray:
+    def arr(self, prefix: str, n: int | None = None) -> np.ndarray:
+        """Columns `prefix_0..prefix_(n-1)`. With no n, take however many the log actually has,
+        so a six-joint UR10e run and a seven-joint Panda run both read correctly."""
+        if n is None:
+            n = sum(1 for c in self.df.columns if c.startswith(f"{prefix}_")
+                    and c[len(prefix) + 1:].isdigit())
+            if n == 0:
+                raise KeyError(f"no {prefix}_* columns in run {self.name!r}")
         return self.df[[f"{prefix}_{i}" for i in range(n)]].to_numpy()
 
     @property
@@ -172,7 +179,7 @@ def compute_residual(run: Run, model: PandaModel | None = None, torque: str = "m
     if torque == "applied" and run.drive_mode not in EFFORT_MODES:
         raise ValueError(f"tau_applied is zero in position mode; refusing a '{run.drive_mode}' log. "
                          "Use torque='measured'.")
-    model = model or load_panda()
+    model = model or load_robot()
     dt = run.dt
     timing = timing or timing_from_manifest(run.manifest)
 
@@ -180,10 +187,10 @@ def compute_residual(run: Run, model: PandaModel | None = None, torque: str = "m
     qd = lowpass(run.arr("qd"), dt, cutoff_hz)
     tau = lowpass(run.arr(f"tau_{torque}"), dt, cutoff_hz)
     qdd = joint_acceleration(qd, dt, timing)
-    n = len(q)
-    tau_model = np.full((n, 7), np.nan)
-    J = np.zeros((n, 6, 7))
-    J_logged = (run.df[[f"J_{a}_{b}" for a in range(6) for b in range(7)]].to_numpy().reshape(n, 6, 7)
+    n, dof = len(q), q.shape[1]
+    tau_model = np.full((n, dof), np.nan)
+    J = np.zeros((n, 6, dof))
+    J_logged = (run.df[[f"J_{a}_{b}" for a in range(6) for b in range(dof)]].to_numpy().reshape(n, 6, dof)
                 if jacobian == "logged" else None)
     # Friction belongs in the model only when the torque it is compared with contains friction. The APPLIED (commanded) torque
     # does: it has to overcome friction. The simulator's tau_measured is the NET joint torque and does not (measured,
@@ -251,7 +258,7 @@ def main() -> int:
     if "wrench_mean_last_1s" in s:
         print("  W_ext, last 1 s mean :", np.array(s["wrench_mean_last_1s"]), " [fx fy fz mx my mz]")
     if args.out:
-        cols = {"t": res.t} | {f"r_{i}": res.r[:, i] for i in range(7)}
+        cols = {"t": res.t} | {f"r_{i}": res.r[:, i] for i in range(res.r.shape[1])}
         if res.wrench is not None:
             cols |= {f"w_{a}": res.wrench[:, i] for i, a in enumerate(["fx", "fy", "fz", "mx", "my", "mz"])}
         args.out.parent.mkdir(parents=True, exist_ok=True)

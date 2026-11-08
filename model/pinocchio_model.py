@@ -11,7 +11,7 @@ It must stay independent of the simulator: nothing here reads Isaac Sim. The onl
 the URDF and the handful of settings below, each with its source.
 
 Settings that change M(q) or g(q), and where they come from:
-  - Fingers are locked at `finger_open` (0.04 m each, fully open), so the model is the 7-DOF
+  - Any non-arm joints are locked, so the model is the
     arm with the hand and both fingers as rigid tool mass (0.93 kg total).
   - Armature (reflected rotor inertia between motor and joint) 0.0061 kg*m^2 per arm joint,
     the value dev's pal_config.py applies to the simulated plant. A URDF has none, so it is
@@ -28,41 +28,53 @@ Settings that change M(q) or g(q), and where they come from:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import sys
 from pathlib import Path
 
 import numpy as np
 import pinocchio as pin
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_URDF = REPO_ROOT / "panda_arm_hand.urdf"
+sys.path.insert(0, str(REPO_ROOT / "workspace"))
+import pal_robot  # noqa: E402
 
-ARM_JOINTS = [f"panda_joint{i}" for i in range(1, 8)]
-FINGER_JOINTS = ["panda_finger_joint1", "panda_finger_joint2"]
+_SPEC = pal_robot.active()
+DEFAULT_URDF = Path(_SPEC.urdf_file())
+ARM_JOINTS = list(_SPEC.joint_names)
 
-ARMATURE_DEFAULT = 0.0061      # kg*m^2 per arm joint, matches dev's pal_config.ARMATURE_PHYSICAL
-FINGER_OPEN = 0.04             # m per finger, fully open
+ARMATURE_DEFAULT = _SPEC.armature    # kg*m^2 per joint, reflected rotor inertia (pal_robot)
+FINGER_OPEN = 0.0              # kept only so the reduced-model call has a reference value
 GRAVITY = (0.0, 0.0, -9.81)
 
-# Gaz et al. 2019, supplementary material Table I: tau_f(qd) = phi1/(1+exp(-phi2(qd+phi3)))
-# - phi1/(1+exp(-phi2 phi3)). Same values as dev's pal_config.FRICTION_SIGMOID_PHI1..3.
-FRICTION_PHI1 = np.array([0.54615, 0.87224, 0.64068, 1.27940, 0.83904, 0.30301, 0.56489])        # N*m
-FRICTION_PHI2 = np.array([5.1181, 9.0657, 10.136, 5.5903, 8.3469, 17.133, 10.336])               # s/rad
-FRICTION_PHI3 = np.array([0.039533, 0.025882, -0.046070, 0.036194, 0.026226, -0.021047, 0.0035526])  # rad/s
+# tau_f(qd) = phi1/(1+exp(-phi2(qd+phi3))) - phi1/(1+exp(-phi2 phi3)). The parameters live on the
+# robot spec (pal_robot), because they are a property of the arm; these names are the active one's.
+FRICTION_PHI1 = _SPEC.friction_phi1       # N*m
+FRICTION_PHI2 = _SPEC.friction_phi2       # s/rad
+FRICTION_PHI3 = _SPEC.friction_phi3       # rad/s
 
 
-def friction_sigmoid(qd) -> np.ndarray:
-    """Joint friction torque (N*m) for a 7-vector of joint velocities. Zero at rest."""
+def friction_sigmoid(qd, spec=None) -> np.ndarray:
+    """Joint friction torque (N*m) for a vector of joint velocities. Zero at rest.
+
+    The parameters come from the robot spec, so this works for any arm; with no spec it uses the
+    one matching the length of `qd`, which keeps every Panda caller written before the UR10e port
+    working untouched."""
     qd = np.asarray(qd, dtype=float)
-    a, b, c = FRICTION_PHI1, FRICTION_PHI2, FRICTION_PHI3
+    if spec is None:
+        spec = pal_robot.active()
+        if qd.shape[-1] != spec.dof:                  # a caller with a Panda-length vector
+            spec = next((r for r in pal_robot.ROBOTS.values() if r.dof == qd.shape[-1]), spec)
+    a, b, c = spec.friction_phi1, spec.friction_phi2, spec.friction_phi3
     return a / (1.0 + np.exp(-b * (qd + c))) - a / (1.0 + np.exp(-b * c))
 
 
 @dataclass
-class PandaModel:
+class RobotModel:
     model: pin.Model
     data: pin.Data
     ee_frame: str
-    friction_scale: np.ndarray = field(default_factory=lambda: np.ones(7))
+    friction_scale: np.ndarray = field(default_factory=lambda: np.ones(pal_robot.active().dof))
+    spec: object = None            # the pal_robot.RobotSpec this was built from
 
     @property
     def armature(self) -> np.ndarray:
@@ -109,7 +121,7 @@ class PandaModel:
 
     def friction(self, qd) -> np.ndarray:
         """Joint friction torque tau_f(qd), scaled per joint by friction_scale."""
-        return self.friction_scale * friction_sigmoid(self._q(qd))
+        return self.friction_scale * friction_sigmoid(self._q(qd), self.spec)
 
     def tau_model(self, q, qd, qdd, include_friction: bool = True) -> np.ndarray:
         """M(q) qdd + C(q, qd) qd + g(q) (+ tau_f(qd)), with armature."""
@@ -163,46 +175,73 @@ class PandaModel:
         return float(pin.computePotentialEnergy(self.model, self.data, self._q(q)))
 
 
-def load_panda(
-    urdf: str | Path = DEFAULT_URDF,
-    armature: float = ARMATURE_DEFAULT,
+def load_robot(
+    spec=None,
+    urdf: str | Path | None = None,
+    armature=None,
     finger_open: float = FINGER_OPEN,
     gravity: tuple[float, float, float] = GRAVITY,
-    ee_frame: str = "panda_hand",
+    ee_frame: str | None = None,
     friction: bool = True,
-) -> PandaModel:
-    """Load the URDF as a 7-DOF arm with the fingers locked at `finger_open`.
-    friction=False gives a rigid-body-only model (friction_scale all zero)."""
-    urdf = Path(urdf)
+) -> RobotModel:
+    """Load an arm's URDF as a fixed-base rigid-body model.
+
+    `spec` is a pal_robot.RobotSpec and supplies the URDF, the expected joint names and order, the
+    armature and the tool frame; leaving it out takes the active robot.
+
+    Any extra joints the URDF carries that are not the arm's own are locked at `finger_open`
+    rather than deleted, so the mass they carry stays on their parent link. The UR10e's URDF has
+    none. friction=False gives a rigid-body-only model (friction_scale all zero)."""
+    spec = spec or pal_robot.active()
+    urdf = Path(urdf) if urdf is not None else Path(spec.urdf_file())
+    ee_frame = ee_frame or spec.tool_frame
+    armature = spec.armature if armature is None else armature
     if not urdf.is_file():
         raise FileNotFoundError(f"URDF not found: {urdf}")
 
     full = pin.buildModelFromUrdf(str(urdf))
 
-    # Lock the fingers at a reference configuration so their mass stays on the hand.
+    # Lock every joint that is not one of the arm's, at a reference configuration, so the mass it
+    # carries stays on its parent link instead of leaving the model.
+    arm = list(spec.joint_names)
     q_ref = pin.neutral(full)
     lock_ids = []
-    for name in FINGER_JOINTS:
-        if full.existJointName(name):
-            jid = full.getJointId(name)
-            lock_ids.append(jid)
-            q_ref[full.joints[jid].idx_q] = finger_open
+    for jid in range(1, full.njoints):
+        name = full.names[jid]
+        if name in arm:
+            continue
+        lock_ids.append(jid)
+        q_ref[full.joints[jid].idx_q] = finger_open
     model = pin.buildReducedModel(full, lock_ids, q_ref) if lock_ids else full
 
     model.gravity.linear = np.array(gravity, dtype=float)
-    model.armature = np.full(model.nv, float(armature))
+    arm_armature = np.asarray(armature, dtype=float)
+    model.armature = (np.full(model.nv, float(armature)) if arm_armature.ndim == 0
+                      else arm_armature.astype(float))
 
-    if model.nq != 7:
-        raise RuntimeError(f"expected a 7-DOF arm after locking fingers, got nq={model.nq}")
+    if model.nq != spec.dof:
+        raise RuntimeError(f"expected a {spec.dof}-DOF arm after locking, got nq={model.nq}")
     names = list(model.names)[1:]
-    if names != ARM_JOINTS:
-        raise RuntimeError(f"unexpected joint order: {names}")
+    if names != arm:
+        raise RuntimeError(f"unexpected joint order: {names}, expected {arm}")
     if not model.existFrame(ee_frame):
-        raise RuntimeError(f"end-effector frame '{ee_frame}' not in the model")
+        raise RuntimeError(f"end-effector frame {ee_frame!r} not in the model")
 
-    return PandaModel(
+    return RobotModel(
         model=model,
         data=model.createData(),
         ee_frame=ee_frame,
         friction_scale=np.ones(model.nv) if friction else np.zeros(model.nv),
+        spec=spec,
     )
+
+
+# Names from before the Franka Panda was dropped on 2026-11-08. Everything that used to say
+# "panda" now means "the one arm this project has", so the old spellings are kept as aliases
+# rather than touched in thirty call sites. New code should use RobotModel and load_robot.
+PandaModel = RobotModel
+
+
+def load_panda(*args, **kwargs) -> RobotModel:
+    """Deprecated alias for load_robot(). There is no Panda any more; this loads the active arm."""
+    return load_robot(*args, **kwargs)

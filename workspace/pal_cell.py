@@ -31,31 +31,41 @@ from __future__ import annotations
 
 import numpy as np
 
+import pal_cell_scenery as SC
 import pal_config as cfg
 
 # ── cell geometry, metres ─────────────────────────────────────────────────────────────────────
 FLOOR_Z = -0.90                 # the shop floor, below the robot's base
-WORK_Z = -0.25                  # table top and belt surface
-BOX = (0.16, 0.16, 0.13)        # a cardboard box
+WORK_Z = -0.25                  # table top and the top of the conveyor's rollers
+BOX = (0.22, 0.22, 0.17)        # a cardboard box
 BOX_DEFAULT_KG = 1.5
 N_BOXES = 3
-BOX_X = (0.40, 0.62, 0.84)      # where the three boxes start, lined up on the infeed table
-BOX_Y = -0.48
+BOX_X = (0.38, 0.66, 0.94)      # where the three boxes start, lined up on the infeed table
+BOX_Y = -0.52
+# Boxes are let go this far above the belt rather than set down on it, so the belt takes them
+# with a small drop the way a real singulation cell does, and the cups never scuff the surface.
+DROP_GAP = 0.0035
+# How much air is left under a carried box as it travels. It has to clear the boxes still waiting
+# on the table: the carry height is measured to the CUP PLANE, so the box hangs a full box-height
+# below it, and an approach height of one box height left the carried box's underside exactly
+# level with its neighbours' lids and clipping them. Carry height = box top + box height + this.
+LIFT_CLEARANCE = 0.16
 
-TABLE_C = (0.62, BOX_Y)         # infeed table centre
-TABLE_SIZE = (0.72, 0.42, 0.055)
+TABLE_C = (0.66, BOX_Y)         # infeed table centre
+TABLE_SIZE = (1.02, 0.62, 0.06)
 
-BELT_Y = 0.52                   # conveyor centre line
-BELT_X0, BELT_X1 = -0.45, 1.95  # the belt runs this far along x
-BELT_W = 0.40
+BELT_Y = 0.55                   # conveyor centre line
+BELT_X0, BELT_X1 = -0.55, 2.25  # the belt runs this far along x
+BELT_W = 0.46
 BELT_SPEED = 0.28               # m/s, towards +x
-PLACE_XY = (0.55, BELT_Y)       # where every box is set down on the belt
+PLACE_XY = (0.50, BELT_Y)       # where every box is let go over the belt
+ROLLER_R = 0.028
+N_ROLLERS = 20
 
-PEDESTAL_R = 0.14
+PEDESTAL_R = 0.15
 
-WALL_Y = 2.35                   # back wall
+WALL_Y = 2.45                   # back wall
 WALL_X = -2.10                  # side wall
-DESKS = ((-0.35, 1.70), (1.05, 1.70))
 
 # ── colours ───────────────────────────────────────────────────────────────────────────────────
 CARDBOARD = (0.74, 0.56, 0.37)
@@ -68,8 +78,10 @@ DESK_COL = (0.78, 0.76, 0.72)
 SCREEN_COL = (0.04, 0.05, 0.07)
 BAR_COL = (0.21, 0.72, 0.95)
 
-CAM_EYE = (2.45, -2.15, 1.05)
-CAM_TARGET = (0.45, 0.05, -0.22)
+# Framed like the reference photograph: low, across the infeed table, with the conveyor running
+# away to the right and the fence and factory behind.
+CAM_EYE = (1.80, -2.80, 1.08)
+CAM_TARGET = (0.45, 0.35, 0.10)
 
 
 def _check_path(path):
@@ -80,6 +92,9 @@ def _check_path(path):
     if not Sdf.Path.IsValidPathString(path)[0]:
         raise ValueError(f"{path!r} is not a usable USD prim path; names must be [A-Za-z_][A-Za-z0-9_]*")
     return path
+
+
+_xform_cube_unused = None
 
 
 def _xform_cube(stage, path, size, color, translate=(0, 0, 0), rotate=None):
@@ -124,6 +139,7 @@ class Box:
             scale=self.size, color=np.array(CARDBOARD), mass=float(kg),
             physics_material=material))
         self.view = None
+        self.kg = float(kg)          # what the simulator currently has, so we never rewrite it for nothing
         self.placed = False          # has it been set down on the belt yet
 
     def initialize(self):
@@ -139,9 +155,15 @@ class Box:
         return p + np.array([0.0, 0.0, self.size[2] / 2])
 
     def set_mass(self, kg):
-        self.view.set_masses(np.array([float(kg)], np.float32))
+        """Write a new mass, and only a new one: changing a rigid body's mass mid-run makes PhysX
+        re-read the scene, which has been seen to drop the articulation's physics view."""
+        kg = float(kg)
+        if abs(kg - self.kg) < 1e-9:
+            return self.kg
+        self.view.set_masses(np.array([kg], np.float32))
         back = float(np.asarray(self.view.get_masses()).reshape(-1)[0])
         assert abs(back - kg) < 1e-3, f"box {self.index} mass write did not take: asked {kg}, got {back}"
+        self.kg = back
         return back
 
     def reset(self, xy=None, kg=None):
@@ -180,33 +202,32 @@ class ConveyorCell:
         self._pedestal()
         self._table()
         self._conveyor()
-        self._desks()
+        self._screen()
         self.boxes = [Box(world, i, (BOX_X[i % len(BOX_X)], BOX_Y), box_kg, self.grip_mat)
                       for i in range(n_boxes)]
         self.tool = None                       # the SuctionTool, mounted once the robot exists
         self._roller_angle = 0.0
+        self._t_vis = 0.0
 
     # -- static scenery ------------------------------------------------------------------------
     def _room(self):
         from isaacsim.core.api.objects import FixedCuboid
         self.world.scene.add(FixedCuboid(
             prim_path="/World/Cell/Floor", name="cell_floor",
-            position=np.array([0.3, 0.3, FLOOR_Z - 0.05]), scale=np.array([9.0, 9.0, 0.10]),
-            color=np.array(FLOOR_COL), physics_material=self.surface_mat))
-        # Walls are visual only: nothing should ever touch them, and a collider there would only
-        # give the solver more pairs to test every step.
-        _xform_cube(self.stage, "/World/Cell/WallBack", (9.0, 0.08, 3.1), WALL_COL, (0.3, WALL_Y, FLOOR_Z + 1.55))
-        _xform_cube(self.stage, "/World/Cell/WallSide", (0.08, 9.0, 3.1), WALL_COL, (WALL_X, 0.3, FLOOR_Z + 1.55))
-        # A painted safety border on the floor, the usual yellow line around a robot cell.
-        for i, sx in enumerate((-1, 1)):
-            _xform_cube(self.stage, f"/World/Cell/SafetyLine{i}", (0.06, 4.4, 0.004), (0.86, 0.72, 0.12),
-                        (0.45 + sx * 1.55, 0.1, FLOOR_Z + 0.003))
+            position=np.array([1.0, 2.0, FLOOR_Z - 0.05]), scale=np.array([26.0, 24.0, 0.10]),
+            color=np.array(SC.FLOOR_COL), physics_material=self.surface_mat))
+        SC.build_factory(self.stage, "/World/Cell", FLOOR_Z)
+        SC.build_fence(self.stage, "/World/Cell", FLOOR_Z)
+        SC.build_sign(self.stage, "/World/Cell", FLOOR_Z)
+        SC.build_bollards(self.stage, "/World/Cell", FLOOR_Z)
 
     def _pedestal(self):
-        _cyl(self.stage, "/World/Cell/Pedestal", PEDESTAL_R, abs(FLOOR_Z), (0.22, 0.24, 0.28),
-             (0, 0, FLOOR_Z / 2))
-        _cyl(self.stage, "/World/Cell/PedestalFoot", PEDESTAL_R * 1.9, 0.03, (0.30, 0.32, 0.36),
-             (0, 0, FLOOR_Z + 0.015))
+        SC.cyl(self.stage, "/World/Cell/Pedestal", PEDESTAL_R, abs(FLOOR_Z), (0.24, 0.26, 0.30),
+               (0, 0, FLOOR_Z / 2))
+        SC.cyl(self.stage, "/World/Cell/PedestalFoot", PEDESTAL_R * 1.8, 0.035, (0.32, 0.34, 0.38),
+               (0, 0, FLOOR_Z + 0.018))
+        SC.cyl(self.stage, "/World/Cell/PedestalCollar", PEDESTAL_R * 1.15, 0.04, (0.34, 0.36, 0.40),
+               (0, 0, -0.03))
 
     def _table(self):
         from isaacsim.core.api.objects import FixedCuboid
@@ -214,75 +235,73 @@ class ConveyorCell:
         self.world.scene.add(FixedCuboid(
             prim_path="/World/Cell/InfeedTable", name="infeed_table",
             position=np.array([cx, cy, WORK_Z - TABLE_SIZE[2] / 2]),
-            scale=np.array(TABLE_SIZE), color=np.array(STEEL),
+            scale=np.array(TABLE_SIZE), color=np.array([0.78, 0.80, 0.83]),
             physics_material=self.surface_mat))
-        for i, sx in enumerate((-1, 1)):
-            for j, sy in enumerate((-1, 1)):
-                _cyl(self.stage, f"/World/Cell/TableLeg{i}{j}", 0.022,
-                     abs(FLOOR_Z - WORK_Z) - TABLE_SIZE[2],
-                     (0.30, 0.32, 0.36),
-                     (cx + sx * (TABLE_SIZE[0] / 2 - 0.05), cy + sy * (TABLE_SIZE[1] / 2 - 0.05),
-                      (FLOOR_Z + WORK_Z - TABLE_SIZE[2]) / 2))
+        for i, sx in enumerate((-1, 1)):            # extrusion rails under the top
+            SC.cube(self.stage, f"/World/Cell/TableRail{i}", (TABLE_SIZE[0], 0.045, 0.045), SC.ALU,
+                    (cx, cy + sx * (TABLE_SIZE[1] / 2 - 0.05), WORK_Z - TABLE_SIZE[2] - 0.022))
+            for j, sy in enumerate((-1, 1)):        # square aluminium legs, as on the reference
+                SC.cube(self.stage, f"/World/Cell/TableLeg{i}{j}", (0.045, 0.045,
+                        abs(FLOOR_Z - WORK_Z) - TABLE_SIZE[2]), SC.ALU,
+                        (cx + sy * (TABLE_SIZE[0] / 2 - 0.06), cy + sx * (TABLE_SIZE[1] / 2 - 0.05),
+                         (FLOOR_Z + WORK_Z - TABLE_SIZE[2]) / 2))
+                SC.cube(self.stage, f"/World/Cell/TableFoot{i}{j}", (0.07, 0.07, 0.016), (0.32, 0.34, 0.38),
+                        (cx + sy * (TABLE_SIZE[0] / 2 - 0.06), cy + sx * (TABLE_SIZE[1] / 2 - 0.05),
+                         FLOOR_Z + 0.008))
 
     def _conveyor(self):
+        """A flat belt in an aluminium frame, as on the reference photograph.
+
+        It used to be a bed of rollers, which looked wrong twice over: the rollers were drawn
+        32 mm proud of the surface boxes actually rest on, so every box sat half sunk into them.
+        The belt's top face and its collision surface are now the same plane at WORK_Z. Motion is
+        shown by seam lines that run along the belt and wrap, plus turning end rollers."""
         from isaacsim.core.api.objects import FixedCuboid
         length = BELT_X1 - BELT_X0
         cx = (BELT_X0 + BELT_X1) / 2
-        # The belt surface is the only part with a collider: boxes rest on it and are carried.
         self.world.scene.add(FixedCuboid(
             prim_path="/World/Cell/BeltSurface", name="belt_surface",
-            position=np.array([cx, BELT_Y, WORK_Z - 0.02]),
-            scale=np.array([length, BELT_W, 0.04]), color=np.array(BELT_COL),
+            position=np.array([cx, BELT_Y, WORK_Z - 0.012]),
+            scale=np.array([length, BELT_W, 0.024]), color=np.array(BELT_COL),
             physics_material=self.surface_mat))
-        for i, sy in enumerate((-1, 1)):                     # side rails
-            _xform_cube(self.stage, f"/World/Cell/BeltRail{i}", (length, 0.035, 0.075), STEEL,
-                        (cx, BELT_Y + sy * (BELT_W / 2 + 0.02), WORK_Z + 0.015))
-        for i, sy in enumerate((-1, 1)):                     # frame beams and legs
-            _xform_cube(self.stage, f"/World/Cell/BeltBeam{i}", (length, 0.05, 0.10), (0.34, 0.36, 0.40),
-                        (cx, BELT_Y + sy * (BELT_W / 2 + 0.02), WORK_Z - 0.14))
-            for k in range(5):
-                x = BELT_X0 + 0.25 + k * (length - 0.5) / 4
-                _cyl(self.stage, f"/World/Cell/BeltLeg{i}{k}", 0.028, abs(FLOOR_Z - WORK_Z) - 0.19,
-                     (0.30, 0.32, 0.36),
-                     (x, BELT_Y + sy * (BELT_W / 2 + 0.02), (FLOOR_Z + WORK_Z - 0.19) / 2))
-        # Rollers: visual, and they spin at the belt's surface rate so the motion reads.
+        for i, sy in enumerate((-1, 1)):
+            SC.cube(self.stage, f"/World/Cell/BeltRail{i}", (length, 0.05, 0.085), SC.ALU,
+                    (cx, BELT_Y + sy * (BELT_W / 2 + 0.03), WORK_Z - 0.005))
+            SC.cube(self.stage, f"/World/Cell/BeltBeam{i}", (length, 0.07, 0.13), SC.ALU,
+                    (cx, BELT_Y + sy * (BELT_W / 2 + 0.03), WORK_Z - 0.125))
+            for k in range(6):
+                x = BELT_X0 + 0.3 + k * (length - 0.6) / 5
+                SC.cube(self.stage, f"/World/Cell/BeltLeg{i}{k}", (0.05, 0.05,
+                        abs(FLOOR_Z - WORK_Z) - 0.19), SC.ALU,
+                        (x, BELT_Y + sy * (BELT_W / 2 + 0.03), (FLOOR_Z + WORK_Z - 0.19) / 2))
+                SC.cube(self.stage, f"/World/Cell/BeltFoot{i}{k}", (0.09, 0.09, 0.018), (0.32, 0.34, 0.38),
+                        (x, BELT_Y + sy * (BELT_W / 2 + 0.03), FLOOR_Z + 0.009))
+            for k in range(5):                                  # cross braces under the belt
+                x = BELT_X0 + 0.45 + k * (length - 0.9) / 4
+                SC.cube(self.stage, f"/World/Cell/BeltBrace{i}{k}", (0.04, BELT_W + 0.06, 0.04), SC.ALU,
+                        (x, BELT_Y, WORK_Z - 0.20))
         self._rollers = []
-        n_roll = 14
-        for k in range(n_roll):
-            x = BELT_X0 + 0.08 + k * (length - 0.16) / (n_roll - 1)
-            _, rop = _cyl(self.stage, f"/World/Cell/Roller{k}", 0.028, BELT_W - 0.03, ROLLER_COL,
-                          (x, BELT_Y, WORK_Z + 0.004), (90, 0, 0))
+        for k, x in enumerate((BELT_X0 + ROLLER_R, BELT_X1 - ROLLER_R)):   # end drums only
+            _, rop = SC.cyl(self.stage, f"/World/Cell/Roller{k}", ROLLER_R, BELT_W, SC.STEEL,
+                            (x, BELT_Y, WORK_Z - ROLLER_R), (90, 0, 0))
             self._rollers.append(rop)
+        # seam lines: the belt's motion made visible
+        self._seams = []
+        self._seam_pitch = 0.26
+        n_seam = int(length / self._seam_pitch) + 1
+        for k in range(n_seam):
+            _, _, tr = SC.cube(self.stage, f"/World/Cell/Seam{k}", (0.012, BELT_W - 0.04, 0.003),
+                               (0.30, 0.32, 0.35), (BELT_X0 + k * self._seam_pitch, BELT_Y, WORK_Z + 0.002))
+            self._seams.append(tr)
+        self._seam_phase = 0.0
 
-    def _desks(self):
-        """Two desks against the back wall, each with a laptop whose screen shows live joint torque."""
-        self.bars = []           # (scale op, base translate op) per joint, across both laptops
-        self._bar_ops = []
-        for d, (dx, dy) in enumerate(DESKS):
-            _xform_cube(self.stage, f"/World/Cell/Desk{d}/Top", (1.15, 0.58, 0.04), DESK_COL,
-                        (dx, dy, FLOOR_Z + 0.72))
-            for i, sx in enumerate((-1, 1)):
-                for j, sy in enumerate((-1, 1)):
-                    _cyl(self.stage, f"/World/Cell/Desk{d}/Leg{i}{j}", 0.018, 0.70, (0.35, 0.36, 0.38),
-                         (dx + sx * 0.52, dy + sy * 0.24, FLOOR_Z + 0.35))
-            # laptop: base, and a screen tilted back, facing -y (towards the robot and the camera)
-            _xform_cube(self.stage, f"/World/Cell/Desk{d}/Base", (0.34, 0.24, 0.015), (0.22, 0.23, 0.25),
-                        (dx, dy, FLOOR_Z + 0.748))
-            _xform_cube(self.stage, f"/World/Cell/Desk{d}/Lid", (0.34, 0.015, 0.23), (0.22, 0.23, 0.25),
-                        (dx, dy + 0.11, FLOOR_Z + 0.855), (-15, 0, 0))
-            _xform_cube(self.stage, f"/World/Cell/Desk{d}/Screen", (0.315, 0.004, 0.205), SCREEN_COL,
-                        (dx, dy + 0.1, FLOOR_Z + 0.855), (-15, 0, 0))
-        # One bar per joint, spread over the two screens.
-        n = self.spec.dof
-        per = int(np.ceil(n / len(DESKS)))
-        for k in range(n):
-            d = k // per
-            dx, dy = DESKS[min(d, len(DESKS) - 1)]
-            slot = k - d * per
-            x = dx - 0.12 + slot * 0.075
-            _, sc = _xform_cube(self.stage, f"/World/Cell/Desk{d}/Bar{k}", (0.05, 0.003, 0.02), BAR_COL,
-                                (x, dy + 0.097, FLOOR_Z + 0.785), (-15, 0, 0))
-            self._bar_ops.append(sc)
+    def _screen(self):
+        # Behind the robot and beyond the conveyor, raised so it clears the belt: standing it in
+        # front of the cell put a large dark slab between the camera and everything else.
+        self.screen = SC.TelemetryScreen(self.stage, "/World/Cell", self.spec.dof, FLOOR_Z,
+                                         x=0.95, y=1.42, yaw=4.0, z_centre=1.26)
+        self.controls = SC.ControlBox(self.stage, "/World/Cell", FLOOR_Z)
+        SC.relight(self.stage, FLOOR_Z)
 
     # -- life cycle ----------------------------------------------------------------------------
     def initialize(self):
@@ -305,8 +324,14 @@ class ConveyorCell:
             print(f"[cell] camera not set: {e!r}", flush=True)
 
     # -- per step ------------------------------------------------------------------------------
-    def step(self, dt, tau_frac=None):
-        """Carry whatever is on the belt, spin the rollers, and refresh the torque bars."""
+    def step(self, dt, tau_frac=None, visual=True):
+        """Carry whatever is on the belt; when `visual`, also spin the rollers and move the bars.
+
+        The split matters for speed. Driving the belt is physics and belongs on every step, but the
+        rollers and the torque bars are USD attribute writes, and USD writes are expensive: 14
+        rollers plus one bar per joint on every step at 250 Hz is 5000 writes a second, which was
+        enough on its own to hold the cell to half of real time (measured 2026-11-08). They are
+        only ever looked at, so they are refreshed on rendered steps instead."""
         for b in self.boxes:
             if self.tool is not None and self.tool.held == b.path:
                 continue
@@ -314,20 +339,24 @@ class ConveyorCell:
                 v = np.asarray(b.view.get_velocities()).reshape(6).copy()
                 v[0], v[1] = BELT_SPEED, 0.0           # drive along the belt, hold the line
                 b.view.set_velocities(v.reshape(1, 6).astype(np.float32))
-        self._roller_angle = (self._roller_angle + np.degrees(BELT_SPEED / 0.028) * dt) % 360.0
+        self._roller_angle = (self._roller_angle + np.degrees(BELT_SPEED / ROLLER_R) * dt) % 360.0
+        if not visual:
+            return
         if self._rollers:
             from pxr import Gf
             for rop in self._rollers:
                 rop.Set(Gf.Vec3f(90.0, float(self._roller_angle), 0.0))
         if tau_frac is not None:
-            self.set_torque_bars(tau_frac)
+            self._t_vis += dt
+            self.set_torque_bars(tau_frac, self._t_vis)
 
-    def set_torque_bars(self, frac):
-        """`frac` is |tau| / tau_limit per joint; the bars grow upward from the screen's base."""
-        from pxr import Gf
-        for k, sc in enumerate(self._bar_ops):
-            h = 0.02 + 0.16 * float(np.clip(frac[k], 0.0, 1.0))
-            sc.Set(Gf.Vec3f(0.05, 0.003, h))
+    def set_torque_bars(self, frac, t=0.0):
+        """`frac` is |tau| / tau_limit per joint. Also feeds the screen's scrolling traces."""
+        frac = np.asarray(frac, float)
+        on_belt = sum(1 for b in self.boxes if b.on_belt())
+        self.screen.update(frac, on_belt / max(len(self.boxes), 1), t)
+        held = self.tool is not None and self.tool.held is not None
+        self.controls.update(True, held, float(frac.max()) if frac.size else 0.0, t)
 
     # -- the task's view of the cell -------------------------------------------------------------
     def reset_boxes(self, kg=None):

@@ -9,13 +9,14 @@ simulator container and the host-side analysis can both read it.
     R = pal_robot.active()            # honours $PAL_ROBOT, default "ur10e"
     R.dof, R.tau_max, R.home          # ... etc
 
-Choose with the environment: `PAL_ROBOT=panda` or `PAL_ROBOT=ur10e`.
+The arm is the UR10e. The Franka Panda this project started on was removed on 2026-11-08; the
+structure stays because it is what makes the arm-specific numbers findable in one place, and
+because adding a second arm should not mean another hunt through ten files. `$PAL_ROBOT` selects
+among whatever is defined here.
 
-A note on provenance, because the two arms are not equally well documented. Every Panda number
-below is cited (Gaz et al. for friction, the datasheet for limits). The UR10e's masses, centres of
-mass, full 3x3 inertia tensors, link offsets and limits are Universal Robots' own published values
-and are just as solid — but **nobody has published an identified friction or rotor-inertia set for
-a UR10e**, so those two are authored here and tagged [CHOICE]. That is deliberate and it is sound
+A note on provenance. The UR10e's masses, centres of mass, full 3x3 inertia tensors, link offsets
+and limits are Universal Robots' own published values. But **nobody has published an identified
+friction or rotor-inertia set for a UR10e**, so those two are authored here and tagged [CHOICE]. That is deliberate and it is sound
 for what this project is: a digital twin for studying how physics parameters move the residual, not
 a model claiming to match a particular physical robot (see docs/HANDOFF.md, the 2026-11-08 entry).
 The plant and the model both derive from the same URDF with a controlled mismatch, so the method
@@ -65,6 +66,13 @@ class RobotSpec:
     friction_static: np.ndarray     # N*m, Coulomb
     friction_dynamic: np.ndarray    # N*m
     friction_viscous: np.ndarray    # N*m*s/rad
+    # The MODEL side's friction law: tau_f(qd) = phi1/(1+exp(-phi2(qd+phi3))) - phi1/(1+exp(-phi2 phi3)).
+    # A smooth stand-in for Coulomb friction that is exactly zero at rest. The plant applies
+    # static/dynamic/viscous through PhysX instead, and the gap between the two representations is
+    # part of what the residual measures.
+    friction_phi1: np.ndarray       # N*m, the saturation torque
+    friction_phi2: np.ndarray       # s/rad, how sharply it rises off zero
+    friction_phi3: np.ndarray       # rad/s, offset
     sensors: SensorSpec
     tool_frame: str                 # the URDF frame the tool offset is measured from
     tool_offset: tuple              # m, TCP along the tool frame's z
@@ -111,35 +119,6 @@ class RobotSpec:
         assert np.all(self.tau_max > 0) and np.all(self.qd_max > 0), f"{self.name}: limits must be positive"
 
 
-# ── Franka Panda ───────────────────────────────────────────────────────────────────────────────
-# The original arm. Kept so every recorded suite in out/ and the 164 tests can still be reproduced;
-# PAL_ROBOT=panda selects it. All values as they were in pal_config.py before the port.
-PANDA = RobotSpec(
-    name="panda",
-    dof=7,
-    urdf="/workspace/assets/panda_arm_hand.urdf",
-    urdf_host=str(REPO / "assets" / "franka_panda" / "panda_arm_hand.urdf"),
-    joint_names=tuple(f"panda_joint{i + 1}" for i in range(7)),
-    home=np.array([0.00, -0.785, 0.00, -2.356, 0.00, 1.571, 0.785]),
-    q_min=np.array([-2.8973, -1.7628, -2.8973, -3.0718, -2.8973, -0.0175, -2.8973]),
-    q_max=np.array([2.8973, 1.7628, 2.8973, -0.0698, 2.8973, 3.7525, 2.8973]),
-    qd_max=np.array([2.1750, 2.1750, 2.1750, 2.1750, 2.6100, 2.6100, 2.6100]),
-    tau_max=np.array([87.0, 87.0, 87.0, 87.0, 12.0, 12.0, 12.0]),
-    armature=np.array([0.0061] * 7),                                    # [LITERATURE]
-    friction_static=np.array([0.2450, 0.1523, 0.1827, 0.3591, 0.2669, 0.1658, 0.2109]),   # [LITERATURE] Gaz et al.
-    friction_dynamic=0.85 * np.array([0.2450, 0.1523, 0.1827, 0.3591, 0.2669, 0.1658, 0.2109]),  # [CHOICE]
-    friction_viscous=np.maximum(np.array([0.0665, 0.1987, 0.0399, 0.2257, 0.1023, -0.0132, 0.0638]), 0.0),
-    sensors=SensorSpec(q=2e-5, qd=1e-3, tau=0.02),
-    tool_frame="panda_hand",
-    tool_offset=(0.0, 0.0, 0.1034),
-    usd_subpath="/Isaac/Robots/FrankaRobotics/FrankaPanda/franka.usd",
-    usd_candidates=("/Isaac/Robots/FrankaRobotics/FrankaPanda/franka.usd",
-                    "/Isaac/Robots/Franka/franka.usd"),
-    prim="/World/Franka",
-    reach=0.855,
-    notes={"gripper": "two driven fingers", "friction_source": "Gaz et al. 2019"},
-)
-
 # ── Universal Robots UR10e ─────────────────────────────────────────────────────────────────────
 # The arm from 2026-11-08 on. Chosen for three reasons: 1300 mm of reach instead of 855 mm, which
 # makes a real conveyor cell fit; 6 joints instead of 7, so IK is square and has no null space; and
@@ -178,6 +157,13 @@ UR10E = RobotSpec(
     friction_static=0.010 * _UR_TAU,
     friction_dynamic=0.0085 * _UR_TAU,
     friction_viscous=np.array([1.00, 1.00, 0.50, 0.20, 0.20, 0.20]),
+    # [CHOICE] No identified sigmoid exists for a UR10e. The saturation torque is the Coulomb
+    # figure above; the steepness is one value for every joint, inside the 5-17 s/rad range Gaz
+    # measured on the Panda, and there is no offset. Like the Coulomb values these set the scale a
+    # friction fault is measured against, so treat them as a knob.
+    friction_phi1=0.010 * _UR_TAU,
+    friction_phi2=np.full(6, 12.0),
+    friction_phi3=np.zeros(6),
     # Idealised sensing (see SensorSpec). tau sigma 0.05 N*m holds the Panda's noise-to-limit ratio
     # (0.02 of 87) at this arm's much larger torques, so detection results stay comparable.
     sensors=SensorSpec(q=2e-5, qd=1e-3, tau=0.05),
@@ -195,7 +181,7 @@ UR10E = RobotSpec(
            "kinematics_hash": "calib_5119701370761913513"},
 )
 
-ROBOTS = {r.name: r for r in (PANDA, UR10E)}
+ROBOTS = {r.name: r for r in (UR10E,)}
 DEFAULT_ROBOT = "ur10e"
 
 

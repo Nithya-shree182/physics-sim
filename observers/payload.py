@@ -35,6 +35,17 @@ from residual import DEFAULT_CUTOFF_HZ, Residual, compute_residual, load_run  # 
 
 GRAVITY_VEC = np.array([0.0, 0.0, -9.81])
 PAYLOAD_OFFSET_M = (0.0, 0.0, 0.1034)   # in panda_hand frame; the Franka TCP. Ask dev (NOTES_FOR_DEV 6)
+
+
+def payload_offset_for(model) -> tuple:
+    """Where the carried mass sits, in the model's own tool frame.
+
+    The Panda keeps its 0.1034 m fingertip TCP. Another arm takes the offset from its robot spec,
+    which for the UR10e is the suction cups' contact plane rather than the bare flange."""
+    spec = getattr(model, "spec", None)
+    if spec is None or spec.name == "panda":
+        return PAYLOAD_OFFSET_M
+    return tuple(spec.tool_offset)
 TAU_S = 1.0                             # [CHOICE] time constant of the running mean, s
 MIN_D_NORM = 2.0                        # [CHOICE] skip rows in near free fall (|g - a| < 2 m/s^2)
 
@@ -62,7 +73,7 @@ def payload_torque_per_kg(model: PandaModel, q, qd, qdd, offset_local=PAYLOAD_OF
     dashboard/engine.py; this is the one the detector uses.)"""
     J = model.jacobian(q)
     a = model.point_acceleration(q, qd, qdd, offset_local)
-    R = model.data.oMf[model.model.getFrameId("panda_hand")].rotation
+    R = model.data.oMf[model.model.getFrameId(model.ee_frame)].rotation
     p = R @ np.asarray(offset_local, float)
     skew = np.array([[0, -p[2], p[1]], [p[2], 0, -p[0]], [-p[1], p[0], 0]])
     return (J[:3] - skew @ J[3:]).T @ (a - GRAVITY_VEC)

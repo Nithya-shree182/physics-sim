@@ -10,7 +10,7 @@ import pal_config as cfg  # noqa: E402
 import pal_trajectories as T  # noqa: E402
 
 Q0 = cfg.HOME_JOINTS
-Q1 = cfg.HOME_JOINTS + np.array([0.6, -0.3, 0.3, 0.4, 0.3, -0.4, 0.3])
+Q1 = cfg.HOME_JOINTS + np.array([0.6, -0.3, 0.3, 0.4, 0.3, -0.4, 0.3])[:cfg.DOF]
 
 
 def sample(tr, n=4000):

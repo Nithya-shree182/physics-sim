@@ -24,7 +24,7 @@ import pal_trajectories as T
 from pal_faults import FaultSpec
 from pal_runner import PushSpec, Scenario
 
-OFFSET = np.array([0.6, -0.3, 0.3, 0.4, 0.3, -0.4, 0.3])     # the O6 "pick" displacement
+OFFSET = np.array([0.6, -0.3, 0.3, 0.4, 0.3, -0.4, 0.3])[:cfg.DOF]   # the O6 "pick" displacement
 Q_HOME, Q_PICK = cfg.HOME_JOINTS, cfg.HOME_JOINTS + OFFSET
 
 
@@ -37,24 +37,9 @@ def reference():
                      payload_kg=kg, mass_scale=1.0, noise_seed=None) for kg in (0.0, 1.0)]
 
 
-def o3():
-    runs = []
-    for i, (pose, q) in enumerate(cfg.PROBE_POSES.items()):
-        for kg in (0.0, 1.0):
-            runs.append(Scenario(name=f"o3_hold_{pose}_{_kg(kg)}", traj=T.hold(q), traj_type="hold", duration_s=3.0,
-                                 payload_kg=kg, noise_seed=4000 + 2 * i + int(kg)))
-    # a slow pass home -> extended (elbow) singular pose -> home carrying 1 kg, so the confidence dip is seen in motion
-    near = cfg.PROBE_POSES["near_singular_extended"]
-    for kg in (0.0, 1.0):
-        runs.append(Scenario(name=f"o3_pass_singular_{_kg(kg)}", traj=T.cycle(Q_HOME, near, "torque_aware", T=3.0, dwell=0.5),
-                             traj_type="torque_aware", duration_s=T.cycle(Q_HOME, near, "torque_aware", T=3.0, dwell=0.5).duration + 0.3,
-                             payload_kg=kg, noise_seed=4100 + int(kg)))
-    return runs
-
-
 def o4():
     runs, i = [], 0
-    for pose in ("home", "horizontal_reach", "folded"):
+    for pose in cfg.PROBE_POSES:          # the arm's named poses; the UR10e has only home
         for kg in (0.0, 0.5, 1.0, 2.0, 3.0):
             runs.append(Scenario(name=f"o4_hold_{pose}_{_kg(kg)}", traj=T.hold(cfg.PROBE_POSES[pose]), traj_type="hold",
                                  duration_s=3.0, payload_kg=kg, noise_seed=2000 + i))
@@ -120,8 +105,10 @@ def extra():
 
 def push():
     runs = []
-    for friction_scale, label, poses, mags in ((1.0, "", ("home", "horizontal_reach", "folded"), (10.0, 20.0)),
-                                               (0.0, "nofric_", ("home", "folded"), (10.0,))):
+    # Poses are whatever the arm names (cfg.PROBE_POSES). The Panda had five; the UR10e has home.
+    named = tuple(cfg.PROBE_POSES)
+    for friction_scale, label, poses, mags in ((1.0, '', named, (10.0, 20.0)),
+                                               (0.0, 'nofric_', named, (10.0,))):
         for pose in poses:
             for axis, e in (("x", (1, 0, 0)), ("y", (0, 1, 0)), ("z", (0, 0, 1))):
                 for mag in mags:
@@ -290,10 +277,10 @@ def o6pick():
     return runs
 
 
-SUITES = {"reference": ("data", reference), "o3": ("out/o3", o3), "o4": ("out/o4", o4), "o5": ("out/o5", o5),
+SUITES = {"reference": ("data", reference), "o4": ("out/o4", o4), "o5": ("out/o5", o5),
           "clean": ("out/clean", clean), "fast": ("out/fast", fast), "extra": ("out/extra", extra),
           "push": ("out/push", push), "o6": ("out/o6", o6), "pick": ("out/pick", pick), "o6pick": ("out/o6pick", o6pick),
           "pickphys": ("out/pickphys", pickphys), "pickfar": ("out/pickfar", pickfar)}
-ORDER = ["reference", "o3", "o4", "o5", "clean", "fast", "extra", "push", "o6", "pick", "o6pick", "pickphys", "pickfar"]
+ORDER = ["reference", "o4", "o5", "clean", "fast", "extra", "push", "o6", "pick", "o6pick", "pickphys", "pickfar"]
 NEEDS_GRIPPER = {"pickphys", "pickfar"}       # suites that need the gripper asset variant, finger drives and a physical cube; they cannot share
                                    # a process with the others (a different asset variant would change the other suites' physics)

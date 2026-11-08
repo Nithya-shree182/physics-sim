@@ -8,9 +8,9 @@ import numpy as np
 import plotly.graph_objects as go
 from dash import dcc, html
 
-from engine import LIVE_Z, floor_pct
+from engine import DOF, LIVE_Z, TAU_MAX, floor_pct
 
-TL = np.array([87, 87, 87, 87, 12, 12, 12.0])
+TL = TAU_MAX                      # torque limits of whichever arm is loaded
 QDM = np.array([2.175, 2.175, 2.175, 2.175, 2.61, 2.61, 2.61])
 SEV_COLOR = ["#9ca3af", "#fab219", "#fb923c", "#f87171"]
 C_MEAS, C_PIN, C_GRAV, C_INER, C_COUP, C_FRIC, C_LOAD = "#e5e7eb", "#3987e5", "#199e70", "#d95926", "#9085e9", "#c98500", "#6ee7b7"
@@ -36,7 +36,7 @@ def twin_figure(snap, alerts, load):
     fig = go.Figure()
     fig.add_shape(type="line", x0=-0.35, x1=0.95, y0=0, y1=0, line=dict(color="rgba(255,255,255,0.14)"))
     for k in range(len(pts) - 1):
-        j = min(k, 6)
+        j = min(k, DOF - 1)              # the last segment (wrist to tool) is tinted by the last joint
         s = abs(snap["tau_meas"][j]) / TL[j] * 1.6
         fig.add_trace(go.Scatter(x=[pts[k][0], pts[k + 1][0]], y=[pts[k][2], pts[k + 1][2]], mode="lines",
                                  line=dict(color=_tint(s), width=11), hoverinfo="skip", showlegend=False))
@@ -59,14 +59,21 @@ def twin_figure(snap, alerts, load):
             ring[n] = max(ring.get(n, 0), a["sev"])
     for i, p in enumerate(g["joints"]):
         sv = ring.get(i, 0)
-        show = i in (0, 2, 4, 6) or sv
+        show = i % 2 == 0 or sv          # label every other joint, whatever the arm's count
         fig.add_trace(go.Scatter(x=[p[0]], y=[p[2]], mode="markers+text" if show else "markers",
                                  marker=dict(size=17 if sv else 11, color="#0d0f13", line=dict(color=SEV_COLOR[sv] if sv else "#e5e7eb", width=2.5)),
                                  text=[f"J{i + 1} {abs(snap['tau_meas'][i] / TL[i] * 100):.0f}%"] if show else None,
                                  textposition="top right", textfont=dict(color=SEV_COLOR[sv] if sv else "#c7cbd1", size=12, family=MONO),
                                  hoverinfo="skip", showlegend=False))
+    # The frame has to hold whatever arm is loaded: a UR10e reaches 1.3 m where a Panda reached
+    # 0.855 m, so the view is sized from the points actually drawn rather than fixed to the Panda.
+    xs = [p[0] for p in pts]; zs = [p[2] for p in pts]
+    pad = 0.18
+    x0, x1 = min(xs) - pad, max(xs) + pad
+    z0, z1 = min(min(zs) - pad, -0.05), max(zs) + pad
     fig.update_layout(_base_layout(height=380, margin=dict(l=0, r=0, t=0, b=0)),
-                      xaxis=dict(range=[-0.3, 0.9], visible=False, scaleanchor="y"), yaxis=dict(range=[-0.05, 1.0], visible=False))
+                      xaxis=dict(range=[x0, x1], visible=False, scaleanchor="y"),
+                      yaxis=dict(range=[z0, z1], visible=False))
     return fig
 
 
@@ -229,7 +236,7 @@ def joint_bars(snap, sel, cal):
     """Contents and class names for the seven fixed joint buttons (the buttons themselves live in the
     layout, so redrawing them cannot fire their click callbacks)."""
     contents, classes = [], []
-    for i in range(7):
+    for i in range(DOF):
         thr = LIVE_Z * cal["sd_u"][i] if cal["ready"] else 1e9
         col = "#fab219" if abs(snap["r"][i]) > thr else "#9ca3af"
         contents.append([html.Span(f"J{i + 1}"), track(snap["r_pct"][i] / 100, 12, col),
@@ -256,7 +263,7 @@ def breakdown(snap, sel):
 def drawer_body(kind, snap, an, hist, load_truth):
     if kind == "o1":
         rows = [html.Tr([html.Td(f"J{i + 1}"), html.Td(f2(snap["q"][i], 3)), html.Td(f2(snap["qd"][i], 2)), html.Td(f2(snap["tau_meas"][i], 1)),
-                         html.Td(f2(snap["tau_model"][i], 1)), html.Td(f2(snap["r"][i]))]) for i in range(7)]
+                         html.Td(f2(snap["tau_model"][i], 1)), html.Td(f2(snap["r"][i]))]) for i in range(DOF)]
         return [html.Div(style=dict(overflowX="auto"), children=html.Table(className="tbl", children=[
                     html.Thead(html.Tr([html.Th(h) for h in ("Joint", "q (rad)", "qd", "τ meas", "τ model", "resid")])), html.Tbody(rows)])),
                 html.Div(style=dict(display="grid", gridTemplateColumns="1fr 1fr", gap=10, fontSize=12), children=[
@@ -269,7 +276,7 @@ def drawer_body(kind, snap, an, hist, load_truth):
         fig, _, _ = chart_figure(hist, "pay", 0, an.cal, snap, height=200)
         bars = [html.Div(style=dict(display="grid", gridTemplateColumns="28px minmax(0,1fr) 60px", alignItems="center", gap=8, fontSize=12), children=[
                     html.Span(f"J{i + 1}"), track(snap["tkg"][i] * snap["est"] / TL[i], 9, C_LOAD),
-                    html.Span(f2(snap["tkg"][i] * snap["est"]), className="num", style=dict(textAlign="right"))]) for i in range(7)]
+                    html.Span(f2(snap["tkg"][i] * snap["est"]), className="num", style=dict(textAlign="right"))]) for i in range(DOF)]
         state = ("Fault alarm active: the estimate may be off" if any(a.startswith(("fric", "stuck", "delay")) for a in snap["alerts"]) else "Estimating")
         return [html.Div(style=dict(display="grid", gridTemplateColumns="1fr 1fr", gap=10), children=[
                     html.Div([html.Div("ESTIMATE", className="lbl"), html.Div(f"{snap['est']:.3f} kg", className="num", style=dict(fontSize=24)),
@@ -376,7 +383,7 @@ def bench(snap, real_pct, speeds):
     regimes = [(0.1, "physical"), (0.2, "physical"), (0.3, "physical"), (0.5, "physical, knee"), (0.75, "drive artifact"), (1.0, "drive artifact")]
     rows, lo = [], 0.0
     for s, rg in regimes:
-        js = [f"J{i + 1}" for i in range(7) if lo + 1e-9 < spd[i] <= s + 1e-9]
+        js = [f"J{i + 1}" for i in range(DOF) if lo + 1e-9 < spd[i] <= s + 1e-9]
         rows.append(html.Tr([html.Td(f"{round(s * 100)}%"), html.Td(f"{floor_pct(s):.2f}%"), html.Td(rg), html.Td(" ".join(js) or "—", style=dict(color="#60a5fa"))]))
         lo = s
     m = snap["metrics"]
@@ -397,6 +404,6 @@ def bench(snap, real_pct, speeds):
             html.Div(style=dict(overflowX="auto"), children=html.Table(className="tbl", children=[
                 html.Thead(html.Tr([html.Th(h) for h in ("Speed", "Worst-joint RMS, % of limit", "Regime", "Joints now in this band")])), html.Tbody(rows)])),
             html.H3("Empty-arm reference log: RMS residual, % of limit", className="h2", style=dict(fontSize=13)),
-            html.Div(className="num", style=dict(display="grid", gridTemplateColumns="repeat(7,minmax(0,1fr))", gap=8, fontSize=12, textAlign="center"), children=[
+            html.Div(className="num", style=dict(display="grid", gridTemplateColumns=f"repeat({DOF},minmax(0,1fr))", gap=8, fontSize=12, textAlign="center"), children=[
                 html.Div(style=dict(background="#0d0f13", borderRadius=6, padding="8px 4px"), children=[html.Div(f"J{i + 1}", className="lbl"), html.Div(f"{v:.2f}%")])
                 for i, v in enumerate(real_pct)])])]
