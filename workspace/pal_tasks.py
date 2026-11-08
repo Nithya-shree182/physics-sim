@@ -35,12 +35,10 @@ GRASP_LIFT = 0.004
 
 
 def _urdf(path=None):
-    """The Franka URDF: cfg.URDF_PATH inside the simulator container, the repository copy on the host."""
-    import os
-    from pathlib import Path
+    """The active arm's URDF: cfg.URDF_PATH inside the simulator container, the repository copy on the host."""
     if path is None:
-        path = cfg.URDF_PATH if os.path.exists(cfg.URDF_PATH) else Path(__file__).resolve().parents[1] / "assets" / "franka_panda" / "panda_arm_hand.urdf"
-    return Urdf(str(path))
+        path = cfg.ROBOT.urdf_file()
+    return Urdf(str(path), tool_link=cfg.ROBOT.tool_frame)
 
 
 @dataclass
@@ -56,6 +54,8 @@ class Task:
     physical: bool = False            # a real cube and real finger contact (the fingers close at t_close and open at t_open)
     t_close: float = None
     t_open: float = None
+    events: tuple = ()                # ((t, "vacuum_on"|"vacuum_off"|"picked"|"placed", box index), ...)
+    n_boxes: int = 0
 
 
 def waypoints(urdf=None, pick_xy=PICK_XY, place_xy=PLACE_XY, approach_z=APPROACH_Z, offset=pal_ik.TOOL_OFFSET, lift=0.0):
@@ -137,3 +137,76 @@ def ellipse(center=(0.42, 0.0, 0.30), a=0.12, b=0.08, cycles=2, duration=12.0, h
     ret = T.leg(q_path[-1], cfg.HOME_JOINTS, "s_curve", vscale=0.35, ascale=0.35)
     traj = T.sequence([approach, T.from_samples(q_path, hz), ret])
     return Task(traj, traj.duration, name="ellipse", waypoints={"start": q_path[0]})
+
+
+# ── the conveyor cell's cycle: three boxes, infeed table to moving belt ───────────────────────
+VACUUM_DWELL_S = 0.45            # held still while the cups seal, and again while they bleed
+CUP_CONTACT_GAP = 0.002          # m, how far above the box face the cups stop
+
+
+def palletize(style, boxes_xy, place_xy, box_top_z, place_top_z, cup_offset,
+              approach_z=None, vscale=0.35, ascale=0.35, tfac=2.5, urdf=None, name=None):
+    """Pick several boxes off the infeed table and set each one on the conveyor.
+
+    One cycle, in order, for every box: above it, down onto it, vacuum on and hold while the cups
+    seal, lift, across to the belt, down, vacuum off and hold while they bleed, lift clear. The arm
+    returns home at the end. Each box is placed at the SAME spot on the belt, because the belt has
+    carried the previous one away by then — which is what a real singulation cell does.
+
+    All heights are absolute world z. `cup_offset` is the suction tool's own length, the vector
+    from the robot's tool frame to the cup faces, and is what makes the IK aim the cups rather than
+    the flange. Returns a Task whose `events` say when the vacuum switches, so the simulator can
+    drive the gripper straight from the trajectory."""
+    urdf = urdf or _urdf()
+    R, _ = pal_ik.tool_target_from_home(urdf)
+    approach_z = box_top_z + 0.17 if approach_z is None else approach_z
+    lift_z = max(approach_z, place_top_z + 0.17)
+
+    def ik(p, seed, what):
+        q, ok, err = pal_ik.solve(urdf, np.asarray(p, float), R, seed, offset=cup_offset)
+        if not ok:
+            raise ValueError(f"IK failed for {what} at {np.round(p, 3).tolist()}: {err}")
+        return q
+
+    q = cfg.HOME_JOINTS.copy()
+    parts, events, t = [], [], 0.0
+
+    def move(q0, q1, tag):
+        nonlocal t
+        Tleg = max(0.6, tfac * float(np.abs(q1 - q0).max())) if style == "torque_aware" else None
+        part = T.leg(q0, q1, style, T=Tleg, vscale=vscale, ascale=ascale)
+        parts.append(part); t += part.duration
+        return part
+
+    def dwell(qd, seconds):
+        nonlocal t
+        part = T.dwell(qd, seconds)
+        parts.append(part); t += part.duration
+
+    q_home = cfg.HOME_JOINTS.copy()
+    q_prev = q_home
+    for i, (bx, by) in enumerate(boxes_xy):
+        q_above = ik((bx, by, approach_z), q_prev, f"above box {i}")
+        q_on = ik((bx, by, box_top_z + CUP_CONTACT_GAP), q_above, f"on box {i}")
+        q_pre_place = ik((place_xy[0], place_xy[1], lift_z), q_above, f"above the belt for box {i}")
+        q_place = ik((place_xy[0], place_xy[1], place_top_z + CUP_CONTACT_GAP), q_pre_place, f"placing box {i}")
+
+        move(q_prev, q_above, "to above the box")
+        move(q_above, q_on, "down onto the box")
+        events.append((t, "vacuum_on", i))
+        dwell(q_on, VACUUM_DWELL_S)
+        events.append((t, "picked", i))
+        move(q_on, q_above, "lift the box")
+        move(q_above, q_pre_place, "across to the belt")
+        move(q_pre_place, q_place, "down onto the belt")
+        events.append((t, "vacuum_off", i))
+        dwell(q_place, VACUUM_DWELL_S)
+        events.append((t, "placed", i))
+        move(q_place, q_pre_place, "clear of the belt")
+        q_prev = q_pre_place
+    move(q_prev, q_home, "home")
+
+    traj = T.sequence(parts)
+    return Task(traj, traj.duration, pick_xy=tuple(boxes_xy[0]), place_xy=tuple(place_xy),
+                waypoints={"home": q_home}, name=name or f"palletize_{style}", physical=True,
+                events=tuple(events), n_boxes=len(boxes_xy))

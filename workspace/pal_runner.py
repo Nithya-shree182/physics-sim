@@ -21,7 +21,7 @@ from pal_faults import FaultInjector, FaultSpec
 from pal_sensors import SensorNoise
 from pal_telemetry import TelemetryWriter
 
-ARM = 7
+ARM = cfg.DOF          # driven arm joints; the articulation may hold more (the Panda's two fingers)
 KP_NORMAL, KD_NORMAL = 400.0, 40.0     # acceleration-space feedback gains
 KP_LOW, KD_LOW = 40.0, 12.0             # "low-gain torque mode" for the validation push (proposal 7.7): ten times
                                         # softer than normal but critically damped. Kp = 4 let a 10 N push drive the
@@ -66,7 +66,8 @@ class Runner:
         self.inj = FaultInjector(plant, plant.hz)
         plant.to_effort_mode()
         self.art = plant.art
-        self._tau = np.zeros(9, np.float32)
+        self.ndof = int(np.asarray(self.art.get_joint_positions()).reshape(-1).shape[0])   # 9 on the Panda (7 + 2 fingers), 6 on the UR10e
+        self._tau = np.zeros(self.ndof, np.float32)
 
     @staticmethod
     def _v(x, n=ARM):
@@ -77,7 +78,7 @@ class Runner:
         q, qd = self._v(art.get_joint_positions()), self._v(art.get_joint_velocities())
         g = self._v(art.get_generalized_gravity_forces())
         c = self._v(art.get_coriolis_and_centrifugal_forces())
-        M = np.asarray(art.get_mass_matrices()).reshape(9, 9)[:ARM, :ARM]
+        M = np.asarray(art.get_mass_matrices()).reshape(self.ndof, self.ndof)[:ARM, :ARM]
         qs, qds, qdds = traj(t)
         tau = M @ (qdds + kp * (qs - q) + kd * (qds - qd)) + c + g
         if tau_limit:
@@ -86,7 +87,7 @@ class Runner:
 
     def _apply(self, tau):
         self._tau[:ARM] = tau
-        self.art.set_joint_efforts(self._tau.reshape(1, 9))
+        self.art.set_joint_efforts(self._tau.reshape(1, self.ndof))
 
     def run(self, sc, write=True, on_step=None):
         """Run one scenario. on_step(k, t, state) is called after every physics step (state: dict of the step's q, qd, tau)."""
@@ -159,7 +160,7 @@ class Runner:
             if sc.diagnostics:
                 g1 = self._v(art.get_generalized_gravity_forces())
                 c1 = self._v(art.get_coriolis_and_centrifugal_forces())
-                M1 = np.asarray(art.get_mass_matrices()).reshape(9, 9)[:ARM, :ARM]
+                M1 = np.asarray(art.get_mass_matrices()).reshape(self.ndof, self.ndof)[:ARM, :ARM]
                 log["net"].append(M1 @ qdd_last + c1 + g1)
                 J = np.asarray(art.get_jacobians())
                 log["J"].append(J.reshape(J.shape[0], -1, J.shape[-2], J.shape[-1])[0, cfg.EE_JACOBIAN_ROW][:, :ARM])

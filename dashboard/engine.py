@@ -56,6 +56,9 @@ PAYLOAD_ON_KG, PAYLOAD_OFF_KG = 0.20, 0.12
 PICK_FAULT_ONSET_S = 3.02        # s into a live pick when the simulator starts a fault (pal_suites.live_pick: grasp + 0.4 s)
 ABS_MIN_NM, ABS_MIN_FRAC = 0.10, 0.005   # an alarm also needs a residual this big: 0.10 N*m and 0.5% of the joint's limit, whichever is larger
 GLOBAL_JOINTS = 4                # this many joints off their baseline together reads as a delayed or inconsistent command, not one bad joint
+STUCK_MIN_TRACK_RAD = 0.03          # rad: a seized joint falls this far behind its command; a slow joint with extra friction does not
+SETTLE_TOP = 3                   # extra blocks the strongest joint must stay off before it is named
+LIMIT_CONSEC = 5                 # blocks in a row above 90% of the torque limit before the alert (a delay's torque spikes are not a sustained load)
 FIT_SD_NM = 0.3                  # N*m, per-joint spread assumed by the payload-signature fit when a reference run is in use
 AMP = np.array([0.4, 0.25, 0.4, 0.3, 0.5, 0.3, 0.5])         # rad, stand-in trajectory amplitudes
 # Dev's sweep (RESIDUAL_FLOOR.md): worst-joint RMS residual, % of limit, 1000 Hz position drive.
@@ -335,6 +338,7 @@ class Analyzer:
         self.m_est_prev = 0.0
         self.streak: dict[str, int] = {}
         self.fault_hold = False
+        self.zpeak = np.zeros(7)
 
     def reset_window(self):
         self.buf = {k: deque(maxlen=WINDOW_ROWS) for k in ("t", "q", "qd", "tau", "qc", "ta")}
@@ -356,6 +360,7 @@ class Analyzer:
         self.alerts.clear()                                                        # a new pick starts with a clean board
         self.run_info = dict(info or {})
         self.auto_tare = 0.0
+        self.zpeak = np.zeros(7)
         self.run_stats = {"res": [], "held": [], "alerts": {}}
         self.cur_ref = self.refs.get(key)
         self.recording = self.cur_ref is None and fault == "none"
@@ -456,7 +461,7 @@ class Analyzer:
         else:
             peak = 100 * np.abs(np.array([h["r"] for h in self.hist] or [np.zeros(7)])).max(0) / self.limit
         held = self.run_stats["held"]
-        carry = held[25:-8] if len(held) > 45 else held[25:]                # skip the first second of the carry and the release
+        carry = held[-18:-8] if len(held) > 45 else held[-10:]              # the settled end of the carry (the running mean needs ~3 s after the grasp), before the release
         carry_est = float(np.mean(carry)) if len(carry) >= 5 else None
         summary = {"picks": self.picks, "info": dict(self.run_info), "running": self.run_key is not None,
                    "elapsed": (blk.t - self.run_t0) if self.run_key is not None else None,
@@ -562,19 +567,24 @@ class Analyzer:
             self.streak[f"e{i}"] = self.streak.get(f"e{i}", 0) + 1 if abs(z_e[i]) > LIVE_Z else 0
         self.streak["lag"] = self.streak.get("lag", 0) + 1 if z_lag > LIVE_Z and lag - self.cal["mu_lag"] > 0.02 else 0
         rj = [i for i in range(7) if self.streak[f"u{i}"] >= self.consec]
+        for i in range(7):
+            self.zpeak[i] = max(self.zpeak[i], abs(z_u[i])) if hit_u[i] else self.zpeak[i]
+        n_off = len(rj)                                                 # joints off their baseline, before any naming rule
         if rj:                                                          # a fault on one joint disturbs its neighbours: report the dominant ones
-            zm = max(abs(z_u[i]) for i in rj)
-            rj = [i for i in rj if abs(z_u[i]) >= 0.4 * zm]
+            top = max(rj, key=lambda i: abs(z_u[i]))
+            # one joint is named: the strongest, once it has stayed off a little longer than the bare minimum (a delay shows on one joint first, then on all);
+            # the joints beside it are disturbed through the arm's coupling, not faulty
+            rj = [top] if self.streak[f"u{top}"] >= self.consec + SETTLE_TOP else []
         judged = (not self.picks) or self.cur_ref is not None       # picks without a healthy reference are not judged for faults
         if not judged:
-            rj = []
+            rj, n_off = [], 0
         # a delay disturbs most joints at once (and can shake the arm so the lag estimate fails); friction or a jam disturbs one or two
         jam = any(a.startswith("stuck") for a in self.alerts)                     # a jam shakes the whole arm afterwards; it is still a jam
-        delayed = judged and ("delay" in self.alerts or (not jam and (len(rj) >= GLOBAL_JOINTS or (self.streak["lag"] >= self.consec and not rj))))
-        rj_all = rj
+        delayed = judged and ("delay" in self.alerts or (not jam and (n_off >= GLOBAL_JOINTS or (self.streak["lag"] >= self.consec and not n_off))))
+        rj_all = list(range(n_off))
         if delayed:
             rj = []
-        seized = [i for i in rj if abs(qd[i]) < 0.02 and self.streak[f"e{i}"] >= self.consec]
+        seized = [i for i in rj if abs(qd[i]) < 0.02 and self.streak[f"e{i}"] >= self.consec and abs(e[i] - self.cal["mu_e"][i]) > STUCK_MIN_TRACK_RAD]
         faultOn = False
         if seized:                                   # a jam disturbs the other joints too: name the worst one
             i = max(seized, key=lambda j: abs(z_u[j]))
@@ -595,9 +605,22 @@ class Analyzer:
                 lines=[f"{len(rj_all)} joints are off their baseline at the same time." if len(rj_all) >= GLOBAL_JOINTS else
                        f"Tracking error leads the motion by {lag * 1000:.0f} ms (baseline {self.cal['mu_lag'] * 1000:.0f} ms).",
                        "A single worn or jammed joint disturbs one or two joints; a delayed command disturbs them all."])
+        # one fault at a time: once a joint is named, another joint is not (it is the first one's neighbour); a delay replaces the single-joint guesses;
+        # a joint found jammed replaces the friction guess for it
+        named = [a[-1] for a in self.alerts if a.startswith(("fric", "stuck"))]
+        for aid in [k for k in out if k.startswith(("fric", "stuck"))]:
+            if delayed or (named and aid[-1] not in named):
+                del out[aid]
+        if delayed:
+            for aid in [k for k in self.alerts if k.startswith(("fric", "stuck"))]:
+                del self.alerts[aid]
+        elif any(k.startswith("stuck") for k in out):
+            for aid in [k for k in self.alerts if k.startswith("fric")]:
+                del self.alerts[aid]
         self.fault_hold = faultOn
         for i in range(7):
-            if abs(self.tau_now(i)) > 0.9 * self.limit[i]:
+            self.streak[f"L{i}"] = self.streak.get(f"L{i}", 0) + 1 if abs(self.tau_now(i)) > 0.9 * self.limit[i] else 0
+            if self.streak[f"L{i}"] >= LIMIT_CONSEC and not (faultOn or delayed):
                 out[f"limit{i}"] = dict(sev=3, where=J(i), title="Near torque limit", cause="Gravity plus payload",
                     lines=[f"Measured {self.tau_now(i):+.1f} N·m of {self.limit[i]:.0f} N·m."])
         thr = PAYLOAD_OFF_KG if "payload" in self.alerts else PAYLOAD_ON_KG

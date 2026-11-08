@@ -16,6 +16,12 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 PORT_DASH="${PAL_DASH_PORT:-8050}"
+# The dashboard and pal_live.py are still seven-joint Franka Panda code: the engine parses rows of
+# 7, the views draw 7 bars, and pal_suites.py builds Panda scenarios. Porting that pair to the
+# UR10e's six joints is the next phase of the 2026-11-08 work, so until it lands this command runs
+# the Panda and stays working. The UR10e conveyor cell is watched with ./start_sim_docker.sh.
+# Override with PAL_ROBOT=ur10e once the dashboard is ported.
+export PAL_ROBOT="${PAL_ROBOT:-panda}"
 export PAL_LIVE_PORT="${PAL_LIVE_PORT:-8765}"
 export PAL_LIVE_URL="http://127.0.0.1:$PAL_LIVE_PORT"
 CONTAINER="pal-pal-live"

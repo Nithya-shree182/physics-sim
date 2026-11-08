@@ -28,9 +28,15 @@ def orientation_error(R, R_target):
 
 def solve(urdf, p_target, R_target, q_seed, q_ref=None, tol_pos=1e-9, tol_rot=1e-8, iters=200, lam=0.03, step_max=0.15,
           null_gain=0.1, offset=TOOL_OFFSET):
-    """Return (q, converged, (position error m, rotation error rad)). Joint limits are enforced by clipping each step."""
+    """Return (q, converged, (position error m, rotation error rad)). Joint limits are enforced by clipping each step.
+
+    Works for a redundant arm (the Panda's 7 joints, where the null-space bias holds the elbow on
+    one branch) and for a square one (the UR10e's 6, where the null space is empty and the bias
+    term falls out of the arithmetic by itself)."""
+    n = urdf.dof
     q = np.array(q_seed, float)
     q_ref = cfg.HOME_JOINTS if q_ref is None else q_ref
+    q_min, q_max = cfg.Q_MIN, cfg.Q_MAX
     for _ in range(iters):
         R, p, J = urdf.tool_jacobian(q, offset=offset)
         e = np.concatenate([p_target - p, orientation_error(R, R_target)])
@@ -43,11 +49,11 @@ def solve(urdf, p_target, R_target, q_seed, q_ref=None, tol_pos=1e-9, tol_rot=1e
             Jp = np.linalg.pinv(J)
         else:
             Jp = J.T @ np.linalg.inv(J @ J.T + lam ** 2 * np.eye(6))
-        dq = Jp @ e + (np.eye(7) - Jp @ J) @ (null_gain * (q_ref - q))
+        dq = Jp @ e + (np.eye(n) - Jp @ J) @ (null_gain * (q_ref - q))
         m = np.abs(dq).max()
         if m > step_max:
             dq *= step_max / m
-        q = np.clip(q + dq, cfg.Q_MIN + 1e-3, cfg.Q_MAX - 1e-3)
+        q = np.clip(q + dq, q_min + 1e-3, q_max - 1e-3)
     R, p, _ = urdf.tool_jacobian(q, offset=offset)
     return q, False, (float(np.linalg.norm(p_target - p)), float(np.linalg.norm(orientation_error(R, R_target))))
 

@@ -663,3 +663,43 @@ CONFIDENCE_THRESHOLD = 0.08           # section 7.3: below this, a pose is low-t
 RESIDUAL_ALARM_NM = 2.0               # section 7.5: per-joint residual alarm level
 RESIDUAL_ALARM_CONSECUTIVE = 5        # consecutive steps above the level before alarming
 PAYLOAD_FILTER_ALPHA = 0.02           # running filter on the payload estimate (O4)
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════
+# 14. Active robot  —  added 2026-11-08 with the UR10e port
+# ══════════════════════════════════════════════════════════════════════════════════════
+# Everything above this line is the Franka Panda, with its sources, and it is still exactly
+# what `PAL_ROBOT=panda` gives you: that path is untouched so every recorded suite in out/
+# and every test that cites a Panda number still reproduces.
+#
+# `pal_robot` holds one RobotSpec per arm (see that file for where each number comes from and
+# which of them are authored choices rather than citations). When the active robot is not the
+# Panda the arm-specific constants are replaced here, in one place, so the rest of the code can
+# go on reading cfg.HOME_JOINTS, cfg.TAU_MAX and friends without knowing which arm is loaded.
+import pal_robot  # noqa: E402
+
+ROBOT = pal_robot.active()
+ROBOT_NAME = ROBOT.name
+DOF = ROBOT.dof
+
+if ROBOT.name != "panda":
+    HOME_JOINTS = ROBOT.home
+    Q_MIN, Q_MAX = ROBOT.q_min, ROBOT.q_max
+    QD_MAX = ROBOT.qd_max
+    TAU_MAX = ROBOT.tau_max
+    ARMATURE = ROBOT.armature
+    FRICTION_COULOMB_STATIC = ROBOT.friction_static
+    FRICTION_COULOMB_DYNAMIC = ROBOT.friction_dynamic
+    FRICTION_VISCOUS = ROBOT.friction_viscous
+    URDF_PATH = ROBOT.urdf
+    ROBOT_PRIM = ROBOT.prim
+    ROBOT_USD_SUBPATH = ROBOT.usd_subpath
+    ARMATURE_CONTRACT = f"Pinocchio side sets model.armature = {ROBOT.armature.tolist()}"
+    # The O3 probe poses were Panda joint configurations chosen for a confidence score that no
+    # longer exists (D6). Only "home" has any meaning for another arm.
+    PROBE_POSES = {"home": ROBOT.home}
+    POSES = {"home": ROBOT.home}
+    # Sensor noise is now a property of the twin's instrumentation, not of a datasheet.
+    SENSOR_SIGMA_Q = ROBOT.sensors.q
+    SENSOR_SIGMA_QD = ROBOT.sensors.qd
+    SENSOR_SIGMA_TAU = ROBOT.sensors.tau

@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
-# Runs pal_scene.py inside the official Isaac Sim container, so the host OS does not matter.
-#   ./start_sim_docker.sh                      # windowed (default); writes out/physics_audit.json
+# Runs one script inside the official Isaac Sim container, so the host OS does not matter.
+# The default is the conveyor-cell demo: a UR10e picking three cardboard boxes off an infeed
+# table with a suction tool and setting them on a running belt.
+#   ./start_sim_docker.sh                      # windowed cell demo (default)
 #   HEADLESS=1 ./start_sim_docker.sh           # headless, no window
+#   PAL_BOX_KG=2.5 ./start_sim_docker.sh       # heavier boxes
+#   PAL_STYLE=trapezoidal ./start_sim_docker.sh        # trapezoidal | s_curve | torque_aware
+#   PAL_SPEED=0.4 PAL_RENDER_HZ=30 ./start_sim_docker.sh
+#   PAL_SCRIPT=pal_scene.py ./start_sim_docker.sh      # the old physics audit, writes out/physics_audit.json
+#   PAL_ROBOT=panda PAL_SCRIPT=pal_scene.py ./start_sim_docker.sh   # the original Franka scene
 #   PAL_DRIVE_MODE=torque ./start_sim_docker.sh
 #   PAL_PHYSICS_HZ=1000 PAL_PAYLOAD_KG=3.0 ./start_sim_docker.sh
 #
@@ -30,6 +37,13 @@ docker run --name "$NAME" --init --rm --gpus all --network host \
   -e NVIDIA_DRIVER_CAPABILITIES=all \
   -e DISPLAY="${DISPLAY:-:0}" -e ISAAC_SIM_HEADLESS="${HEADLESS:-0}" \
   ${PAL_PHYSICS_HZ:+-e PAL_PHYSICS_HZ="$PAL_PHYSICS_HZ"} \
+  ${PAL_ROBOT:+-e PAL_ROBOT="$PAL_ROBOT"} \
+  ${PAL_RENDER_HZ:+-e PAL_RENDER_HZ="$PAL_RENDER_HZ"} \
+  ${PAL_STYLE:+-e PAL_STYLE="$PAL_STYLE"} \
+  ${PAL_BOX_KG:+-e PAL_BOX_KG="$PAL_BOX_KG"} \
+  ${PAL_SPEED:+-e PAL_SPEED="$PAL_SPEED"} \
+  ${PAL_CYCLES:+-e PAL_CYCLES="$PAL_CYCLES"} \
+  ${PAL_REALTIME:+-e PAL_REALTIME="$PAL_REALTIME"} \
   ${PAL_DRIVE_MODE:+-e PAL_DRIVE_MODE="$PAL_DRIVE_MODE"} \
   ${PAL_BACKGROUND:+-e PAL_BACKGROUND="$PAL_BACKGROUND"} \
   ${PAL_PAYLOAD_KG:+-e PAL_PAYLOAD_KG="$PAL_PAYLOAD_KG"} \
@@ -42,8 +56,9 @@ docker run --name "$NAME" --init --rm --gpus all --network host \
   -v "$CACHE/computecache:/root/.nv/ComputeCache:rw" \
   -v "$ROOT/workspace:/workspace:rw" \
   -v "$ROOT/assets/franka_panda:/workspace/assets:ro" \
+  -v "$ROOT/assets:/workspace/assets_all:ro" \
   -v "$ROOT/out:/workspace/out:rw" \
   -v "$ROOT/../Physyk_AI-master/workspace:/physyk_workspace:ro" \
   -w /workspace --entrypoint /isaac-sim/python.sh \
-  "$IMAGE" pal_scene.py "$@" &
+  "$IMAGE" "${PAL_SCRIPT:-pal_cell_demo.py}" "$@" &
 wait $! || true

@@ -188,7 +188,8 @@ def controls(load, fault, fjoint, *spd):
         E.set_controls(load=float(load or 0), speeds=[float(v or BAR_DEFAULT) * SPEED_SCALE for v in spd], fault=fault or "none",
                        fault_joint=int(fjoint if fjoint is not None else 2))
     elif E.source.kind == "isaac":                                  # the speed bar is sent with "Run pick"; these three apply to the next pick
-        E.set_controls(load=float(load or 0), fault=fault or "none", fault_joint=int(fjoint if fjoint is not None else 3))
+        E.set_controls(load=float(load or 0), speeds=[float(v or BAR_DEFAULT) * SPEED_SCALE for v in spd], fault=fault or "none",
+                       fault_joint=int(fjoint if fjoint is not None else 3))      # speeds: for the text above the bar; the pick takes its speed from the bar at Run pick
     return no_update
 
 
