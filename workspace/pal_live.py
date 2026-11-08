@@ -214,7 +214,7 @@ def emit(t_local, qd, q_des, tau_applied):
              + [state["held"], state["run_id"]])
     HUB.set(t=round(t_local, 3), held=round(float(state["held"]), 3),
             box=[round(float(x), 4) for x in cell.position()],
-            boxes_placed=sum(1 for b in cell.boxes if b.on_belt()))
+            boxes_placed=sum(1 for b in cell.boxes if b.placed))
     wall = time.time()
     if wall - state["rt_wall"] >= 2.0:                       # how fast the simulation really runs, shown in status
         HUB.set(rt=round((t - state["rt_sim"]) / (wall - state["rt_wall"]), 2), hz=HZ)
@@ -272,6 +272,11 @@ def run_cycle(msg):
         if HUB.stop_flag:
             raise Abort()
         cell.step(1.0 / HZ, visual=bool(render_every) and k % render_every == 0)
+        # A box counts as placed the moment it is set down on the belt. It used to be counted by asking which boxes are on the
+        # belt NOW, but the belt carries each one off its far end after about 6 s, so a perfect cycle reported "1 of 3 placed".
+        for b in cell.boxes:
+            if not b.placed and tool.held != b.path and b.on_belt():
+                b.placed = True
         emit(t, st["qd"], st["q_des"], st["tau"])
 
     aborted = False
@@ -281,7 +286,7 @@ def run_cycle(msg):
         aborted = True
         runner.inj.clear()
         tool.set_vacuum(False, 0.0)
-    placed = sum(1 for b in cell.boxes if b.on_belt())
+    placed = sum(1 for b in cell.boxes if b.placed)
     last = {"run": sc.name, "kg": sc.box_kg, "fault": f.type, "aborted": aborted,
             "boxes": task.n_boxes, "boxes_placed": placed,
             "ok": (not aborted) and placed == task.n_boxes}

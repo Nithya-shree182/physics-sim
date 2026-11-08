@@ -317,9 +317,14 @@ class IsaacSource:
         a = np.array([r[:-2] for r in rows], dtype=float)
         held = float(rows[-1][-2])
         st = self.status
-        return Block(t=float(a[-1, 0]), q=a[:, 1:8], qd=a[:, 8:15], tau=a[:, 15:22], q_cmd=a[:, 22:29],
+        # A live row is [t, q, qd, tau_measured, q_des, tau_applied, held, run_id], each group DOF wide. These slices were
+        # hard-coded for a 7-joint arm (1:8, 8:15, ...), so on the UR10e every channel was read from the wrong columns and
+        # the payload estimate, the residuals and the fault detection were all computed from a mixture of them.
+        D = DOF
+        return Block(t=float(a[-1, 0]), q=a[:, 1:1 + D], qd=a[:, 1 + D:1 + 2 * D], tau=a[:, 1 + 2 * D:1 + 3 * D],
+                     q_cmd=a[:, 1 + 3 * D:1 + 4 * D],
                      truth={"load": held, "fault": st.get("fault", "none"), "fault_joint": st.get("joint", -1)},
-                     tau_applied=a[:, 29:36] if a.shape[1] >= 36 else None,
+                     tau_applied=a[:, 1 + 4 * D:1 + 5 * D] if a.shape[1] >= 1 + 5 * D else None,
                      dt=1.0 / float(st.get("row_hz") or 1.0 / DT_ROW))
 
 
@@ -371,11 +376,18 @@ class Analyzer:
         self.fault_hold = False
         self.zpeak = np.zeros(DOF)
 
-    @staticmethod
-    def _box_fact(seg):
-        """One box's payload estimate: the settled end of its carry (the running mean needs a moment after the grasp)."""
-        carry = seg[-18:-8] if len(seg) > 45 else seg[-10:]
-        return {"est": float(np.mean(carry)) if len(carry) >= 5 else None, "n": len(seg)}
+    def _box_fact(self, seg):
+        """One box's payload estimate: the median over the settled middle of its carry.
+
+        The running mean needs about 2 s after the grasp to converge, and in the last second the arm brakes to put the box down,
+        which pulls the estimate low (a live 8 kg carry read 8.0-8.4 kg in the middle and 4.6-5.5 kg at the end). So skip the first
+        2 s and the last 1 s of the carry, and fall back to the later half if the carry is too short for that."""
+        blk = max(float(getattr(self, "blk_s", 0.05)), 1e-3)
+        a, b = int(round(2.5 / blk)), len(seg) - int(round(1.0 / blk))
+        if b - a < 5:
+            a, b = len(seg) // 2, len(seg)
+        mid = seg[a:b]
+        return {"est": float(np.median(mid)) if len(mid) >= 5 else None, "n": len(seg)}
 
     def reset_window(self):
         self.buf = {k: deque(maxlen=WINDOW_ROWS) for k in ("t", "q", "qd", "tau", "qc", "ta")}
@@ -504,13 +516,14 @@ class Analyzer:
         else:
             peak = 100 * np.abs(np.array([h["r"] for h in self.hist] or [np.zeros(DOF)])).max(0) / self.limit
         held = self.run_stats["held"]
-        carry = held[-18:-8] if len(held) > 45 else held[-10:]              # the settled end of the carry (the running mean needs ~3 s after the grasp), before the release
-        carry_est = float(np.mean(carry)) if len(carry) >= 5 else None
+        boxes = [self._box_fact(seg) for seg in self.run_stats["segs"]]
+        done = [b["est"] for b in boxes if b["est"] is not None]
+        carry_est = float(np.mean(done)) if done else None                 # the settled middle of each carry, averaged over the boxes lifted so far
         summary = {"picks": self.picks, "info": dict(self.run_info), "running": self.run_key is not None,
                    "elapsed": (blk.t - self.run_t0) if self.run_key is not None else None,
                    "peak": (int(np.argmax(peak)), float(np.max(peak))),
                    "carry_est": carry_est,
-                   "boxes": [self._box_fact(seg) for seg in self.run_stats["segs"]],
+                   "boxes": boxes,
                    "alerts": list(self.run_stats["alerts"].values()),
                    "ref": "recorded" if self.recording else ("compared" if self.cur_ref is not None else "none")}
         comp = {"gravity": self.twin.g(q), "inertia": self.twin.M(q) @ res.qdd[k],

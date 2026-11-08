@@ -6,6 +6,18 @@ Newest first. What is still to do is in [docs/TODO.md](docs/TODO.md); read that 
 
 Written for: whoever picks this up next. [docs/TODO.md](docs/TODO.md) is the list.
 
+- **Live dashboard read the wrong columns (fixed).** `IsaacSource.next_block` sliced each live row for a 7-joint arm
+  (1:8, 8:15, 15:22 ...), so on the UR10e positions, velocities and torques were taken from the wrong columns. That is why the live
+  payload estimate read 1.2-1.5 kg for 8 kg boxes (auto-tare -9 kg) and why live fault detection could not be trusted. Now sliced by
+  DOF. After the fix the auto-tare is the expected 0.32-0.38 kg (the 5% mass mismatch) and the per-box estimate is within about 3.5%
+  from 0.5 to 8 kg (7.72 / 3.89 / 1.95 / 0.49 kg for 8 / 4 / 2 / 0.5 kg).
+- **Per-box payload figure** is the median over the settled middle of the carry (skip 2.5 s after the grasp and the last 1 s, when the
+  arm brakes and the running mean dips), not the tail.
+- **"1 of 3 placed" was a miscount.** `pal_live` counted boxes still on the belt when the cycle ended, but the belt carries each box off
+  its far end in about 6 s, so a perfect cycle reported 1 of 3. Boxes now count as placed when set down on the belt.
+- Live fault check through the dashboard (2 kg, s-curve): two healthy compares raised no alert; friction on joints 4 and 6, a stuck
+  joint 4, a stuck joint 1 (flagged as inconsistent command, not located) and a 50 ms delay were all flagged.
+
 **A controller bug that had hidden every wrist result.** In every run recorded before today joints 5 and 6
 did not move (q range 0.0002 rad against 0.16 rad commanded). Two causes, both in `workspace/pal_runner.py`:
 computed torque scales its feedback by the mass matrix, PhysX's mass matrix has no rotor inertia, and the
