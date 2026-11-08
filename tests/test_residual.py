@@ -1,4 +1,7 @@
 import numpy as np
+import pal_robot
+
+DOF = pal_robot.active().dof
 import pytest
 
 from residual import DEFAULT_CUTOFF_HZ, compute_residual, run_from_frame, summarize
@@ -9,7 +12,27 @@ def test_clean_plant_gives_zero_residual(twin):
     run = run_from_frame(*generate("excitation", 2.0, mismatch=False, noise=False))
     res = compute_residual(run, twin)
     assert np.nanmax(np.abs(res.r)) < 1e-9
-    assert res.valid.sum() == len(run.df) - 1          # forward difference drops the last row
+    # Schema v1 logs qdd, so no row has to be sacrificed to a finite difference. Differencing
+    # still costs one row at the end, which is the comparison below.
+    assert res.settings["accel"] == "log"
+    assert res.valid.all()
+    diffed = compute_residual(run, twin, accel="difference")
+    assert diffed.settings["accel"].startswith("difference")
+    assert diffed.valid.sum() == len(run.df) - 1       # forward difference drops the last row
+
+
+def test_the_logged_acceleration_beats_differencing_a_noisy_velocity(twin):
+    """Why schema v1 logs qdd at all.
+
+    Joint acceleration is the dominant noise source in the residual, and differencing a LOGGED
+    velocity amplifies whatever noise the sensor added to it by 1/dt. Differencing in-sim, before
+    the sensor model touches anything, does not. With noise on, the two paths should differ by a
+    wide margin, and the logged one should be the better."""
+    run = run_from_frame(*generate("excitation", 2.0, mismatch=False, seed=2))
+    logged = summarize(compute_residual(run, twin, accel="log"), twin.effort_limit)
+    diffed = summarize(compute_residual(run, twin, accel="difference"), twin.effort_limit)
+    assert max(logged["rms_pct_limit"]) < 0.5 * max(diffed["rms_pct_limit"]), (
+        logged["rms_pct_limit"], diffed["rms_pct_limit"])
 
 
 def test_payload_appears_as_its_weight(twin):
@@ -38,11 +61,25 @@ def test_filter_edges_are_dropped(twin):
 
 
 def test_filter_tames_differentiation_noise(twin):
+    """The low-pass exists to tame the noise that DIFFERENCING a velocity creates, so it is tested
+    on the differencing path. On a v1 log that carries its own qdd there is much less for the
+    filter to do, which is the point of logging it — measured below."""
+    run = run_from_frame(*generate("excitation", 4.0, seed=1))
+    raw = summarize(compute_residual(run, twin, cutoff_hz=None, accel="difference"),
+                    twin.effort_limit)
+    filt = summarize(compute_residual(run, twin, cutoff_hz=DEFAULT_CUTOFF_HZ, accel="difference"),
+                     twin.effort_limit)
+    assert max(filt["rms_pct_limit"]) < 1.0
+    assert max(filt["rms_pct_limit"]) < 0.3 * max(raw["rms_pct_limit"])
+
+
+def test_the_filter_still_helps_a_little_on_a_logged_acceleration(twin):
+    """Not nothing: the torque channel is still noisy even when qdd is clean, so filtering both
+    together still lowers the floor. It just stops being the dominant effect."""
     run = run_from_frame(*generate("excitation", 4.0, seed=1))
     raw = summarize(compute_residual(run, twin, cutoff_hz=None), twin.effort_limit)
     filt = summarize(compute_residual(run, twin, cutoff_hz=DEFAULT_CUTOFF_HZ), twin.effort_limit)
-    assert max(filt["rms_pct_limit"]) < 1.0
-    assert max(filt["rms_pct_limit"]) < 0.3 * max(raw["rms_pct_limit"])
+    assert max(filt["rms_pct_limit"]) < max(raw["rms_pct_limit"])
 
 
 DEV_TIMING = ("row assembled after world.step(); all quantities are post-step values; "
@@ -53,7 +90,7 @@ def _as_dev_layout(df, man):
     """Rewrite a synthetic log (tau[k] moves row k to k+1) in dev's layout (tau[k] produced row k)."""
     df = df.copy()
     for name in ("tau_measured", "tau_applied"):
-        cols = [f"{name}_{i}" for i in range(7)]
+        cols = [f"{name}_{i}" for i in range(DOF)]
         df[cols] = df[cols].shift(1)
     df = df.iloc[1:].reset_index(drop=True)
     man = {k: v for k, v in man.items() if k != "timing"} | {"timing_convention": DEV_TIMING}
@@ -64,8 +101,12 @@ def test_dev_timing_convention_is_read_and_used(twin):
     from residual import timing_from_manifest
     run = _as_dev_layout(*generate("excitation", 2.0, mismatch=False, noise=False))
     assert timing_from_manifest(run.manifest) == "backward"
-    res = compute_residual(run, twin)                        # backward, from the manifest
+    # The convention only decides which way qd is differenced, so it is exercised on the
+    # differencing path; a log carrying its own qdd has already applied its own convention and
+    # says so in the manifest.
+    res = compute_residual(run, twin, accel="difference")
     assert res.settings["timing"] == "backward"
+    assert res.settings["accel"] == "difference (backward)"
     assert not res.valid[0] and res.valid[-1]               # backward: first row has no qdd
     # Not exactly zero: the model is evaluated at the post-step state while the plant stepped
     # from the pre-step state, an O(dt) difference. On smooth motion a one-step pairing error

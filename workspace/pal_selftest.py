@@ -29,7 +29,7 @@ from pal_plant import build_plant, DEFAULT_MASS_SCALE
 from pal_runner import Runner, Scenario, PushSpec
 from pal_kinematics import Urdf
 
-ARM = 7
+ARM = cfg.DOF
 HZ = 1000.0
 plant = build_plant(HZ)
 runner = Runner(plant, "/workspace/out", mj_every=10)

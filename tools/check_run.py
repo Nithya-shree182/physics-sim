@@ -30,12 +30,14 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import numpy as np
+
+import pal_robot
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "workspace"))
 from pal_kinematics import Urdf  # noqa: E402
-URDF = ROOT / "assets/franka_panda/panda_arm_hand.urdf"
+URDF = Path(pal_robot.active().urdf_file())   # whatever arm is loaded
 TAU_MAX = np.array([87.0, 87.0, 87.0, 87.0, 12.0, 12.0, 12.0])    # Franka datasheet limits
 GRAVITY_TOL_NM = 0.15        # [CHOICE] abs N*m; sag of the stiff drive explains ~0.1 on loaded joints
 IDENTITY_TOL_PCT = 5.0       # proposal section 9, O2

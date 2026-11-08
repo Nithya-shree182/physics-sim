@@ -71,7 +71,7 @@ def serve_layout():
         html.Header(className="hdr", children=[
             html.Div(className="brand", children=[html.Img(src="/assets/ntt_data_logo.png", className="logo", alt="NTT DATA")]),
             html.Div(className="product", children=[html.Span("Physics Attestation Layer", className="product-name"),
-                                                    html.Span("Franka Panda · NVIDIA Isaac Sim", className="product-sub")])]),
+                                                    html.Span("Universal Robots UR10e · NVIDIA Isaac Sim", className="product-sub")])]),
         html.Div(className="toolbar", children=[
             html.Div(className="tb-left", children=[
                 dcc.RadioItems(id="source", className="seg", value=DEFAULT_SOURCE, inline=True,
@@ -108,11 +108,10 @@ def serve_layout():
                                                        dict(label="Trapezoidal", value="trapezoidal"), dict(label="S-curve", value="s_curve"), dict(label="Torque-aware", value="torque_aware")])]),
                                 html.Button("Run pick", id="task-run", n_clicks=0, className="btn btn-on", style=dict(alignSelf="flex-end", minHeight=40, minWidth=96)),
                                 html.Button("Stop", id="task-stop", n_clicks=0, className="btn", style=dict(alignSelf="flex-end", minHeight=40)),
-                                dcc.Checklist(id="task-loop", options=[dict(label=" repeat", value="loop")], value=[], className="radio", style=dict(alignSelf="flex-end")),
-                                dcc.Checklist(id="task-random", options=[dict(label=" random cube position", value="random")], value=[], className="radio", style=dict(alignSelf="flex-end"))]),
+                                dcc.Checklist(id="task-loop", options=[dict(label=" repeat", value="loop")], value=[], className="radio", style=dict(alignSelf="flex-end"))]),
                             html.Div(id="task-status", className="muted", style=dict(fontSize=13)),
-                            html.P("The load slider sets the cube's mass (0.2 to 3 kg). A fault chosen under More controls starts 0.4 s after the grasp; "
-                                   "to find it the arm first records one healthy pick of the same task as a reference.", className="muted", style=dict(margin=0, fontSize=12))]),
+                            html.P("The load slider sets each box's mass. A fault chosen under More controls starts 0.4 s after the first box is gripped; "
+                                   "to find it the arm first records one healthy run of the same cycle as a reference.", className="muted", style=dict(margin=0, fontSize=12))]),
                     html.Section(className="card", style=dict(padding="14px 18px"), children=[
                         html.Div(id="ctl-note"),
                         html.Div(id="ctl-wrap", children=[
@@ -228,17 +227,23 @@ def source(which, ui):
     return (E.controls.load, BAR_DEFAULT, "none", 2, ui) if which == "live" else (E.controls.load, no_update, "none", no_update, ui)
 
 
-@app.callback(Output("dummy", "data", allow_duplicate=True), Input("task-run", "n_clicks"), State("task-style", "value"), State("task-loop", "value"), State("task-random", "value"),
+@app.callback(Output("dummy", "data", allow_duplicate=True), Input("task-run", "n_clicks"), State("task-style", "value"), State("task-loop", "value"),
               State("load", "value"), State("fault", "value"), State("fault-joint", "value"), State("spd-all", "value"), prevent_initial_call=True)
-def task_run(n, style, loop, rand, kg, fault, joint, spd):
+def task_run(n, style, loop, kg, fault, joint, spd):
+    """Ask the live simulator for one cell cycle.
+
+    The random-position checkbox is gone (2026-11-08): the boxes sit where the cell puts them, so
+    there is nothing to randomise, and the reference key below no longer has to carry a position.
+    """
     if E.source.kind == "isaac" and n:
-        kg = max(0.2, float(kg or 1.0))
-        speed = min(1.0, max(0.05, float(spd or BAR_DEFAULT) / 100))                                    # the speed bar sets the pick's speed
+        kg = max(0.2, float(kg or 1.5))
+        speed = min(1.0, max(0.05, float(spd or BAR_DEFAULT) / 100))                 # the speed bar sets the cycle's speed
         cmd = dict(cmd="run", style=style, kg=kg, fault=fault or "none", joint=int(joint if joint is not None else 3),
-                   loop=bool(loop), random=bool(rand), speed=speed)
-        key = (style, round(kg, 2), round(speed, 2), (0.45, -0.25))                                     # the fixed cube spot
-        if cmd["fault"] != "none" and not rand and key not in E.an.refs:
-            # faults are found by comparing with a healthy run of the same pick: record one first (DECISIONS.md D7)
+                   loop=bool(loop), speed=speed)
+        key = (style, round(kg, 2), round(speed, 2))
+        if cmd["fault"] != "none" and key not in E.an.refs:
+            # faults are found by comparing with a healthy run of the same cycle: record one first
+            # (DECISIONS.md D7)
             E.source.command(**dict(cmd, fault="none", loop=False, reference=True))
         E.source.last_reply = E.source.command(**cmd)
     return no_update
@@ -382,14 +387,19 @@ def _task_status(src):
         return f"Command refused: {reply.get('error')}", ""
     if st.get("state") == "running":
         f = "" if st.get("fault", "none") == "none" else f" · fault: {st['fault']}" + (f" on joint {st['joint'] + 1}" if st.get("joint", -1) >= 0 else "")
-        xy = st.get("pick_xy")
-        where = f" at x {xy[0]:.2f}, y {xy[1]:.2f} m" if xy else ""
         ref = " · recording a healthy reference first" if st.get("reference") else ""
-        return f"Picking a {st['kg']:g} kg cube{where}, {st['style']} · {st['t']:.1f} of {st['duration']:.1f} s{f}{ref}" + (" · repeating" if st.get("loop") else ""), ""
+        placed = st.get("boxes_placed", 0)
+        boxes = st.get("boxes") or 0
+        progress = f" · box {min(placed + 1, boxes)} of {boxes}" if boxes else ""
+        return (f"Running the cell: {boxes or '—'} boxes of {st['kg']:g} kg, {st['style']}"
+                f"{progress} · {st['t']:.1f} of {st['duration']:.1f} s{f}{ref}"
+                + (" · repeating" if st.get("loop") else "")), ""
     last = st.get("last")
     if last:
-        verdict = "cube placed" if last["ok"] else ("stopped" if last["aborted"] else "PICK FAILED: cube not at the place point")
-        return f"Idle. Last pick: {last['kg']:g} kg, fault {last['fault']}: {verdict} ({last['placed_error_m'] * 1000:.0f} mm from target).", ""
+        n, total = last.get("boxes_placed", 0), last.get("boxes", 0)
+        verdict = (f"all {total} boxes on the belt" if last["ok"] else
+                   "stopped" if last["aborted"] else f"CYCLE INCOMPLETE: {n} of {total} placed")
+        return (f"Idle. Last cycle: {last['kg']:g} kg boxes, fault {last['fault']}: {verdict}."), ""
     return "Ready. Press Run pick.", "" if st.get("windowed") else "Simulator is headless: no picture (start without --headless to see it)."
 
 
@@ -446,7 +456,7 @@ def render(_n, ui):
     r["bell"] = f"Alerts {len(active)}"
     r["bell:cls"] = on(ui["drawer"] == "alerts", "btn")
     if kind == "isaac":
-        r["pill"] = [html.Span(className="dot", style=dict(background="#34d399")), "Live · Isaac Sim, physical cube"]
+        r["pill"] = [html.Span(className="dot", style=dict(background="#34d399")), "Live · Isaac Sim, conveyor cell"]
     elif live:
         r["pill"] = [html.Span(className="dot", style=dict(background="#fab219")), "Stand-in · Pinocchio plant, not Isaac Sim"]
     else:
@@ -488,7 +498,7 @@ def render(_n, ui):
     r["brk-btn"] = f"{'Hide' if ui['brk'] else 'Show'} torque breakdown for joint {sel + 1}"
     r["brk"] = V.breakdown(snap, sel) if ui["brk"] else []
     snap_b = dict(snap)
-    snap_b["_err"] = [h["est"] - h["load"] for h in hist[-200:] if (not an.picks or h["load"] > 0)]       # picks: only while the cube is held
+    snap_b["_err"] = [h["est"] - h["load"] for h in hist[-200:] if (not an.picks or h["load"] > 0)]       # cycles: only while a box is held
     r["main-bench"] = V.bench(snap_b, _real_pct(), ctl.speeds) if ui["tab"] == "bench" else no_update
     r["drawer:style"] = dict(display="flex" if ui["drawer"] else "none", flexDirection="column")
     r["drawer-title"] = TITLES.get(ui["drawer"], "")

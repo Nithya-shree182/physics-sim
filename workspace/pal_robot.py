@@ -1,24 +1,24 @@
 """Which arm this project is running, and every number that changes when the arm changes.
 
-Until 2026-11-08 the arm was a Franka Panda and its constants were spread over `pal_config.py`,
-`model/pinocchio_model.py` and `model/poses.py`. Porting to a UR10e meant finding all of them, so
-they now live here, once, as a `RobotSpec`. Pure numpy: no Isaac and no Pinocchio import, so the
-simulator container and the host-side analysis can both read it.
+Every number that changes when the arm changes lives here, once, as a `RobotSpec`. Before the
+UR10e port these were spread over `pal_config.py`, `model/pinocchio_model.py` and `model/poses.py`,
+which is why that port touched sixty-odd files, and why it should not again. Pure numpy: no Isaac
+and no Pinocchio import, so the simulator container and the host-side analysis can both read it.
 
     import pal_robot
     R = pal_robot.active()            # honours $PAL_ROBOT, default "ur10e"
     R.dof, R.tau_max, R.home          # ... etc
 
-The arm is the UR10e. The Franka Panda this project started on was removed on 2026-11-08; the
-structure stays because it is what makes the arm-specific numbers findable in one place, and
-because adding a second arm should not mean another hunt through ten files. `$PAL_ROBOT` selects
-among whatever is defined here.
+The arm is the UR10e. The structure takes a dict of arms rather than one hard-coded set because
+that is what makes the arm-specific numbers findable in one place; `$PAL_ROBOT` selects among
+whatever is defined here.
 
 A note on provenance. The UR10e's masses, centres of mass, full 3x3 inertia tensors, link offsets
 and limits are Universal Robots' own published values. But **nobody has published an identified
-friction or rotor-inertia set for a UR10e**, so those two are authored here and tagged [CHOICE]. That is deliberate and it is sound
-for what this project is: a digital twin for studying how physics parameters move the residual, not
-a model claiming to match a particular physical robot (see docs/HANDOFF.md, the 2026-11-08 entry).
+friction or rotor-inertia set for a UR10e**, so those two are authored here and tagged [CHOICE].
+That is deliberate and it is sound for what this project is: a digital twin for studying how
+physics parameters move the residual, not a model claiming to match a particular physical robot
+(docs/UR10E_PORT.md).
 The plant and the model both derive from the same URDF with a controlled mismatch, so the method
 stays self-consistent whatever the absolute accuracy. If these ever need to be real, identify them
 from healthy data rather than looking for a citation that does not exist.
@@ -39,10 +39,14 @@ DEG = np.pi / 180.0
 class SensorSpec:
     """The joint sensors. Idealised on purpose: these are study parameters, not a hardware claim.
 
-    Since 2026-11-08 the project does not try to reproduce what a real controller can measure (a
-    real UR reports current-derived torque, which could not carry this method at all). Instead the
-    twin is given clean joint torque sensing and the noise is a knob, so the question "how good must
-    the sensing be before detection fails?" can be answered by sweeping it."""
+    The project does not try to reproduce what a real controller can measure (a real UR reports
+    current-derived torque, which could not carry this method at all). The twin is given clean
+    joint torque sensing and the noise is a knob, so the question "how good must the sensing be
+    before detection fails?" can be answered by sweeping it.
+
+    The default is ideal: every sigma zero. `pal_sensors` holds the reference sigmas and turns
+    them on through $PAL_SENSOR_NOISE, so a run only carries injected error when it is asked
+    for one."""
     q: float                 # rad, white noise on the position reading
     qd: float                # rad/s
     tau: float               # N*m
@@ -150,25 +154,32 @@ UR10E = RobotSpec(
     # order for a geared arm, and small enough not to dominate the mass matrix. Identify if it matters.
     armature=np.array([0.10, 0.10, 0.05, 0.02, 0.02, 0.02]),
     # [CHOICE] Friction. No identified set exists for a UR10e. Coulomb is set at 1% of each joint's
-    # own effort limit (the Panda's Gaz values sit near 0.3% of its limits; harmonic drives rub more
-    # than the Panda's, so 1% is the deliberate, documented step up), dynamic at 0.85 of static as
-    # for the Panda, and viscous scaled the same way. These are the numbers a friction fault is
+    # own effort limit — the published Gaz identification of a Franka Panda sits near 0.3% of its
+    # limits, and a harmonic drive rubs more than that arm's gearing, so 1% is a deliberate,
+    # documented step up. Dynamic is 0.85 of static and viscous is scaled the same way. These are
+    # the numbers a friction fault is
     # multiplied against, so they set the detection scale: treat them as a knob, not a measurement.
     friction_static=0.010 * _UR_TAU,
     friction_dynamic=0.0085 * _UR_TAU,
     friction_viscous=np.array([1.00, 1.00, 0.50, 0.20, 0.20, 0.20]),
     # [CHOICE] No identified sigmoid exists for a UR10e. The saturation torque is the Coulomb
     # figure above; the steepness is one value for every joint, inside the 5-17 s/rad range Gaz
-    # measured on the Panda, and there is no offset. Like the Coulomb values these set the scale a
-    # friction fault is measured against, so treat them as a knob.
+    # et al. (2019) measured on a Franka Panda, and there is no offset. Like the Coulomb values
+    # these set the scale a friction fault is measured against, so treat them as a knob.
     friction_phi1=0.010 * _UR_TAU,
     friction_phi2=np.full(6, 12.0),
     friction_phi3=np.zeros(6),
-    # Idealised sensing (see SensorSpec). tau sigma 0.05 N*m holds the Panda's noise-to-limit ratio
-    # (0.02 of 87) at this arm's much larger torques, so detection results stay comparable.
-    sensors=SensorSpec(q=2e-5, qd=1e-3, tau=0.05),
+    # Ideal sensing by default (see SensorSpec): no noise on any channel. This is the twin's
+    # instrumentation, not a hardware claim, and it is a study parameter rather than a constant —
+    # `pal_sensors.REFERENCE_SIGMA` holds the figures to sweep and $PAL_SENSOR_NOISE turns them on.
+    sensors=SensorSpec(q=0.0, qd=0.0, tau=0.0),
     tool_frame="tool0",
-    tool_offset=(0.0, 0.0, 0.0),        # tool0 is the bare flange; the suction cups add their own offset
+    # Where a carried load actually sits, measured down the tool frame's z from the flange. The
+    # suction cups' contact plane is 0.110 m out (pal_suction.CUP_PLANE_Z) and a standard box is
+    # 0.17 m tall, so the box's centre of mass — which is what the payload estimator models as a
+    # point mass — sits half a box beyond that. Leaving this at zero put the load at the flange
+    # and cost the estimator the whole lever arm.
+    tool_offset=(0.0, 0.0, 0.195),
     usd_subpath="/Isaac/Robots/UniversalRobots/ur10e/ur10e.usd",
     usd_candidates=("/Isaac/Robots/UniversalRobots/ur10e/ur10e.usd",
                     "/Isaac/Robots/UniversalRobots/ur10e/ur10e_instanceable.usd",

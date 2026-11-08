@@ -16,12 +16,14 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 PORT_DASH="${PAL_DASH_PORT:-8050}"
-# The dashboard and pal_live.py are still seven-joint Franka Panda code: the engine parses rows of
-# 7, the views draw 7 bars, and pal_suites.py builds Panda scenarios. Porting that pair to the
-# UR10e's six joints is the next phase of the 2026-11-08 work, so until it lands this command runs
-# the Panda and stays working. The UR10e conveyor cell is watched with ./start_sim_docker.sh.
-# Override with PAL_ROBOT=ur10e once the dashboard is ported.
-export PAL_ROBOT="${PAL_ROBOT:-panda}"
+# The arm. pal_live.py and the dashboard both read their joint count from this spec, so there is
+# nothing else to change when it changes. ./start_sim_docker.sh watches the same cell without the
+# dashboard attached.
+export PAL_ROBOT="${PAL_ROBOT:-ur10e}"
+# Sensor noise on the streamed rows: 0 (the default) is ideal sensing. See workspace/pal_sensors.py.
+export PAL_SENSOR_NOISE="${PAL_SENSOR_NOISE:-0}"
+# Viewport framing for the streamed picture: iso (default), iso_high, side, top. pal_cell_geom.py.
+export PAL_CAM="${PAL_CAM:-iso}"
 export PAL_LIVE_PORT="${PAL_LIVE_PORT:-8765}"
 export PAL_LIVE_URL="http://127.0.0.1:$PAL_LIVE_PORT"
 CONTAINER="pal-pal-live"

@@ -7,14 +7,15 @@ and its equivalent external wrench at the hand,
 
     W_ext = -(J^T)^+ r
 
-W_ext is the force and moment acting ON the robot at the panda_hand frame (world-aligned,
+W_ext is the force and moment acting ON the robot at the arm's tool frame (world-aligned,
 [fx, fy, fz, mx, my, mz]). Holding a 1 kg payload gives fz = -9.81 N: gravity pulls down. The
 minus sign is because the joints must supply -J^T W to resist a wrench W.
 
-qdd is not logged; it comes from differencing qd, matched to the row's torque by the timing
-convention in the run manifest: forward difference for synthetic logs ("tau at row k moves
-qd[k] to qd[k+1]"), backward difference for dev's Isaac Sim logs (row assembled after the
-step, so tau[k] produced q[k]). Optional
+qdd is used from the log when it is there (schema v1 logs it, differenced in-sim at the physics
+rate); otherwise it comes from differencing qd here, matched to the row's torque by the timing
+convention in the run manifest: forward difference for synthetic logs ("tau at row k moves qd[k]
+to qd[k+1]"), backward difference for Isaac Sim logs (row assembled after the step, so tau[k]
+produced q[k]). Optional
 zero-phase low-pass filtering (Butterworth, filtfilt) is applied to qd and tau together so the
 two stay time-aligned. filtfilt is offline only; a live dashboard needs a causal filter.
 
@@ -41,7 +42,7 @@ from scipy.signal import butter, filtfilt
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "model"))
-from pinocchio_model import PandaModel, load_panda, load_robot  # noqa: E402
+from pinocchio_model import RobotModel, load_robot  # noqa: E402
 
 EFFORT_MODES = {"torque"}
 TIMING_FORWARD = "tau at row k moves qd[k] to qd[k+1]"
@@ -72,8 +73,8 @@ class Run:
     name: str
 
     def arr(self, prefix: str, n: int | None = None) -> np.ndarray:
-        """Columns `prefix_0..prefix_(n-1)`. With no n, take however many the log actually has,
-        so a six-joint UR10e run and a seven-joint Panda run both read correctly."""
+        """Columns `prefix_0..prefix_(n-1)`. With no n, take however many the log actually
+        has, so the joint count comes from the data rather than from an assumption."""
         if n is None:
             n = sum(1 for c in self.df.columns if c.startswith(f"{prefix}_")
                     and c[len(prefix) + 1:].isdigit())
@@ -129,7 +130,7 @@ def joint_acceleration(qd: np.ndarray, dt: float, timing: str = "forward") -> np
 
 
 def external_wrench(J: np.ndarray, r: np.ndarray) -> np.ndarray:
-    """W_ext = -(J^T)^+ r for one 6x7 Jacobian and one 7-vector residual."""
+    """W_ext = -(J^T)^+ r for one 6xn Jacobian and one n-vector residual."""
     return -np.linalg.pinv(J.T) @ r
 
 
@@ -150,15 +151,15 @@ def timing_from_manifest(manifest: dict) -> str:
 @dataclass
 class Residual:
     t: np.ndarray            # (n,)
-    r: np.ndarray            # (n, 7)  tau_measured - tau_model; NaN where qdd is undefined
-                             #         and, when filtering, in the first/last 3 filter time constants
-    tau_model: np.ndarray    # (n, 7)
-    tau: np.ndarray          # (n, 7)  the (filtered) measured or applied torque used
-    qdd: np.ndarray          # (n, 7)
-    wrench: np.ndarray | None  # (n, 6) W_ext at panda_hand, world-aligned
-    J: np.ndarray            # (n, 6, 7) the Jacobian used
-    q: np.ndarray            # (n, 7) (filtered) joint positions used
-    qd: np.ndarray           # (n, 7)
+    r: np.ndarray            # (n, dof) tau - tau_model; NaN where qdd is undefined and, when
+                             #          filtering, in the first/last 3 filter time constants
+    tau_model: np.ndarray    # (n, dof)
+    tau: np.ndarray          # (n, dof) the (filtered) measured or applied torque used
+    qdd: np.ndarray          # (n, dof)
+    wrench: np.ndarray | None  # (n, 6) W_ext at the tool frame, world-aligned
+    J: np.ndarray            # (n, 6, dof) the Jacobian used
+    q: np.ndarray            # (n, dof) (filtered) joint positions used
+    qd: np.ndarray           # (n, dof)
     settings: dict
 
     @property
@@ -166,13 +167,19 @@ class Residual:
         return np.all(np.isfinite(self.r), axis=1)
 
 
-def compute_residual(run: Run, model: PandaModel | None = None, torque: str = "measured",
+def compute_residual(run: Run, model: RobotModel | None = None, torque: str = "measured",
                      cutoff_hz: float | None = None, timing: str | None = None,
-                     jacobian: str = "model", wrench: bool = True) -> Residual:
+                     jacobian: str = "model", wrench: bool = True,
+                     accel: str = "log") -> Residual:
     """r = tau - tau_model for every row of a run.
 
     torque   'measured' (default) or 'applied'. 'applied' is refused on non-effort logs.
     jacobian 'model' (Pinocchio, independent; default) or 'logged' (the simulator's J columns).
+    accel    'log' (default) uses the run's own qdd_* columns when it has them, which schema v1
+             logs at the physics rate; 'difference' always differences qd here. Differencing a
+             LOGGED velocity after it has been low-pass filtered is not the same operation as
+             differencing it in-sim before anything touched it, so which one was used is
+             recorded in the returned settings.
     """
     if torque not in ("measured", "applied"):
         raise ValueError("torque must be 'measured' or 'applied'")
@@ -186,7 +193,15 @@ def compute_residual(run: Run, model: PandaModel | None = None, torque: str = "m
     q = lowpass(run.arr("q"), dt, cutoff_hz)
     qd = lowpass(run.arr("qd"), dt, cutoff_hz)
     tau = lowpass(run.arr(f"tau_{torque}"), dt, cutoff_hz)
-    qdd = joint_acceleration(qd, dt, timing)
+    has_qdd = any(c.startswith("qdd_") and c[4:].isdigit() for c in run.df.columns)
+    if accel == "log" and has_qdd:
+        qdd = lowpass(run.arr("qdd"), dt, cutoff_hz)
+        accel_used = "log"
+    else:
+        if accel == "log":
+            accel = "difference"                   # no qdd columns: there is nothing else to do
+        qdd = joint_acceleration(qd, dt, timing)
+        accel_used = f"difference ({timing})"
     n, dof = len(q), q.shape[1]
     tau_model = np.full((n, dof), np.nan)
     J = np.zeros((n, 6, dof))
@@ -217,7 +232,7 @@ def compute_residual(run: Run, model: PandaModel | None = None, torque: str = "m
             W[k] = external_wrench(J[k], r[k])
 
     settings = {"torque": torque, "cutoff_hz": cutoff_hz, "timing": timing, "jacobian": jacobian,
-                "model_friction": include_friction,
+                "accel": accel_used, "model_friction": include_friction,
                 "ee_frame": model.ee_frame, "drive_mode": run.drive_mode}
     return Residual(run.df["t"].to_numpy(), r, tau_model, tau, qdd, W, J, q, qd, settings)
 
@@ -247,7 +262,7 @@ def main() -> int:
     args = ap.parse_args()
 
     run = load_run(args.parquet)
-    model = load_panda()
+    model = load_robot()
     res = compute_residual(run, model, args.torque, args.cutoff, args.timing, args.jacobian)
     s = summarize(res, model.effort_limit)
     np.set_printoptions(precision=4, suppress=True)

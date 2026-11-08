@@ -1,6 +1,116 @@
-# Changes on the `nithya` branch
+# Changes
 
-Newest first. Current status and next steps are in [docs/ANALYSIS_CONTEXT.md](docs/ANALYSIS_CONTEXT.md).
+Newest first. What is still to do is in [docs/TODO.md](docs/TODO.md); read that first.
+
+## 2026-11-08 (evening) — the Panda removed, telemetry v1, Pinocchio energy and payload work
+
+Written for: whoever picks this up next. The one-page version is [docs/TODO.md](docs/TODO.md); the
+telemetry contract is [docs/TELEMETRY.md](docs/TELEMETRY.md).
+
+**The Franka Panda is gone from the runtime, not just unselected.**
+
+- 24 Panda-era modules deleted from `workspace/` (the one-off probes, the finger workcell
+  `pal_scene.py` / `pal_objects.py`, the rate and inertia audits). `panda.urdf`,
+  `panda_arm_hand.urdf` and `assets/franka_panda/` are gone; the launchers no longer mount them.
+- `workspace/pal_config.py` rewritten: **706 lines to 272**, and nothing arm-specific left in it.
+  Everything about the arm is now a view onto the one `RobotSpec` in `pal_robot.py`; what stays is
+  the simulation's own settings — rates, solver, contact, drive gains, camera, thresholds. The
+  Panda's sourcing notes went with it; they are in git history at `b696c1c` if the provenance of a
+  Franka number is ever wanted again.
+- Drive gains are now a multiple of each joint's effort limit (`KP_PER_TAU = 4.6`, from the Panda's
+  400 N*m/rad against its 87 N*m joint) instead of a fixed 400, which was a stiff drive on an 87
+  N*m joint and a soft one on a 330 N*m one.
+- `load_panda` / `PandaModel` renamed to `load_robot` / `RobotModel` everywhere, the aliases
+  dropped, and `pal.sh` no longer pins `PAL_ROBOT=panda` — a spec that no longer exists.
+
+**Sensor noise is off by default.** `pal_sensors.py` rewritten: ideal sensing unless
+`PAL_SENSOR_NOISE` asks for it, with the reference sigmas kept for sweeping. Two consequences,
+both stated in the file rather than discovered later: every channel is now readable without an
+injected error in it, and a false-alarm *rate* needs the noise switched back on. Every run manifest
+carries a `sensor_noise` block, so "no noise" and "nobody recorded whether there was noise" can no
+longer look the same.
+
+**Telemetry v1** (`schema/telemetry_v1.yaml`, `workspace/pal_telemetry.py` rewritten). Six joints,
+no finger columns, and 205 columns in place of the old ~170. What is new is the physics:
+
+- `qdd` is logged, differenced in-sim at the physics rate. The analysis side used to difference a
+  velocity that had already been low-pass filtered. Measured: on a noisy synthetic run the residual
+  floor is **less than half** what differencing gives (`tests/test_residual.py`), and no row has to
+  be dropped to a finite difference any more.
+- The torque is decomposed per joint: `g`, `coriolis`, `tau_inertial`, `tau_friction`,
+  `tau_unexplained`. They sum to `tau_applied` exactly, and the validator checks it — a
+  disagreement means two columns in one row came from different state, which is the failure mode a
+  per-step writer has and is invisible in a plot.
+- Energy and power: `E_kin` (through M, so the armature's share is in it), `E_pot_rel` (integrated
+  from `dV/dt = g'qd`, because the articulation will not cheaply hand back link centres of mass),
+  `E_tot_rel`, per-joint `P_joint`, `P_mech`, `P_grav`, cumulative `W_mech`.
+- Headroom (`tau_frac`, `tau_frac_max`) and pose quality (`sigma_min`, `sigma_max`, `cond_J`,
+  `manip`, `cond_M`). The conditioning scalars use the Jacobian's LINEAR block only: the full 6xn
+  mixes m/s rows with rad/s rows, so its singular values have no single unit.
+- Tool velocity, and a per-run `summary` in the manifest (energy budget, worst headroom, closest
+  approach to a singularity).
+- The `attack_*` labels are gone (O5 is fault injection, not attacks) and `grip_active` / `box_index`
+  replace the finger columns — so a commanded grip that failed to seal is now visible as
+  `payload_attached` true with `grip_active` false.
+
+**Pinocchio.** `model/pinocchio_model.py` gained the physics the telemetry needs on the model side:
+`kinetic_energy`, `potential_energy`, `total_energy`, `joint_power`, `gravity_power`, `decompose`,
+`operational_space_inertia`, `manipulability`, `singular_values`, `gravity_headroom`, and
+`with_payload(mass, size=...)` — a carried box as a **real rigid body** with its own
+`m/12 diag(y²+z², ...)` tensor at its own centre of mass, not m·g at the wrist. A box and a point
+mass of equal mass give the same gravity torque and different mass matrices, which is where a
+moving payload is actually identified from.
+
+One correction worth recording: the docstring claimed `pin.computeKineticEnergy` ignores
+`model.armature`. It does not — Pinocchio 4.1 accounts for it, and the two agree to 1e-15. The test
+now pins both facts, so if a future Pinocchio changes that the suite fails instead of the twin
+quietly becoming lighter than the plant.
+
+**`pal_live.py` is ported.** It builds the conveyor cell and runs the three-box cycle, where it used
+to build the Panda finger workcell and pick a single cube. The cycle itself moved into
+`pal_tasks.cell_cycle()` — one definition shared by the watched demo, the live server and the
+recorded suites, and buildable on the host with no Isaac, which is why `tests/test_suites.py` can
+check it at all. The cell's geometry split into `pal_cell_geom.py` (plain numbers, no USD) to make
+that possible. `pal_suites.live_pick` became `live_cycle`; `random_pick_xy` and the dashboard's
+random-cube checkbox are gone (dashboard item 5).
+
+One real bug this caught: the dashboard's fault onset was the constant **3.02 s**, the Panda pick's
+grasp + 0.4. The cycle's first grip is elsewhere and moves with style and speed, and a wrong onset
+puts the detector's baseline window on the far side of the fault — so it calibrates on faulty data
+and finds nothing. It is now asked of the task (`engine.pick_fault_onset_s`, 3.81 s at the default).
+
+**A second real bug, caught by making one constant honest.** `pal_faults.ARM` was still the
+literal 7, so `FaultSpec`'s range check accepted joint 6 — and `pal_suites` aimed a backlash fault
+there in two suites, because 6 was the Panda's last joint. On a six-joint arm that fault was being
+written to a joint that does not exist. Setting `ARM = cfg.DOF` turned it into an immediate
+`ValueError`; the suites now say `LAST_JOINT = cfg.DOF - 1`, which is what "the far end of the
+chain" actually meant. Same fix in `pal_sweep.py` and `pal_selftest.py`. Suite counts unchanged.
+
+**Tests: 161 passed, 57 skipped** (was 110 / 71).
+
+- All **fifteen** per-test Panda quarantines are gone. `conftest.PANDA_ASSUMPTION` is deleted; the
+  file now records why it existed and what it was for, because that list is what made the work cheap
+  to pick up.
+- New `tests/test_telemetry.py` (15): the writer end to end against a Pinocchio-driven stub, every
+  identity between columns, decimation holding M *and* everything derived from it, and a written run
+  validating against the schema through `npz_to_parquet`.
+- New `tests/test_energy.py` (16): energy conservation in a free swing, the work-energy theorem, the
+  armature's share, each term of the decomposition vanishing when it should, a payload's gravity
+  torque as `J_p^T(0,0,mg)` swept over three offsets, and the elbow singularity.
+- The 57 skips are the four recorded-Panda-evidence modules (56) and one missing-data skip. **The
+  project still has no validated detection or payload result for the arm it runs** — that needs
+  `tools/pal_suite.sh` on a GPU, and it is item 1 of docs/TODO.md.
+
+Two numbers worth having, both derived rather than quoted:
+
+- Payload torque at home is **6.78 N*m per kg** on shoulder-lift *and* elbow, 1.18 on wrist 1, 0 on
+  the base. Those two are equal because the UR ready pose stands the upper arm vertically, putting
+  both axes at the same x; the lever is 0.6914 m and 9.81 x 0.6914 = 6.783. Checked three ways
+  (finite difference, Pinocchio's gravity term, the lever by hand).
+- The phantom mass an empty arm reads under the +-3% model mismatch is now bounded as **0.4% of the
+  arm's moving mass** rather than an absolute 50 g. The old bound was 0.3% of the Panda's mass, so
+  carrying it over would have been *tighter* in real terms on a heavier arm — which is how an
+  unscaled tolerance misleads.
 
 ## 2026-11-03 (23:43 IST) — dashboard fix and run instructions
 

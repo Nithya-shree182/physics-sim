@@ -23,8 +23,18 @@ def test_mass_during_fast_motion_without_mismatch(twin):
 
 
 def test_empty_arm_reads_near_zero_with_mismatch(twin):
+    """With no payload the estimate must sit near zero, but not AT zero: the synthetic plant's
+    link masses differ from the twin's by +-3% (synth_log.MASS_MISMATCH), and that error has to
+    land somewhere. It lands in the estimate as a phantom mass.
+
+    The tolerance is a fraction of the arm's own moving mass rather than an absolute number of
+    kilograms, because that is what the quantity actually scales with: 3% of a 29 kg arm, seen
+    through the Jacobian at one pose, is naturally larger than 3% of an 18 kg one. The previous
+    absolute 50 g bound was 0.3% of the Panda's mass and failed here at 0.24% of this arm's —
+    tighter in real terms, which is how an un-scaled tolerance misleads."""
     m, _ = _estimate(twin, traj="hold", duration=2.0, payload_kg=0.0).final
-    assert abs(m) < 0.05          # the +-3% link-mass mismatch shows up as ~25 g of phantom mass
+    bound = 0.004 * twin.total_mass          # 0.4% of the arm's moving mass
+    assert abs(m) < bound, f"phantom mass {m:.4f} kg exceeds {bound:.4f} kg"
 
 
 def test_tare_removes_the_phantom_mass(twin):

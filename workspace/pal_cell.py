@@ -1,31 +1,16 @@
 """The industrial workcell the UR10e works in: an infeed table of cardboard boxes, a running
 conveyor, and enough of a room around it to read as a real place.
 
-Layout, in the robot's base frame (the base sits at the origin, on a pedestal):
-
-      y
-      ^            +-------------------------------------+   back wall
-      |            |   desk + laptop        desk + laptop |
-   +0.52  ========== CONVEYOR (runs towards +x) ===========
-      |
-    0 +            (O) UR10e
-      |
-   -0.48           [box] [box] [box]   on the infeed table
-      +-------------------------------------------------> x
-                  0.40   0.62   0.84
-
-Heights: the floor is FLOOR_Z below the robot's base, the table top and the belt are both at
-WORK_Z, and a box is BOX[2] tall, so its top face — what the suction cups aim at — is at
-WORK_Z + BOX[2]. Every pick target is inside 1.1 m of the base, comfortably inside the UR10e's
-1.3 m reach; this layout is the reason the arm was changed, because none of it fits a Panda.
+The layout and every dimension are in `pal_cell_geom.py`, which imports no simulator; this
+module turns them into USD. See that file for the plan view and the height convention.
 
 The conveyor really moves: `step()` puts the belt's surface speed onto any box resting on it, so a
 placed box is carried away and the next pick has a clear spot. The rollers turn at the matching
 rate so the motion is visible rather than implied.
 
-The two laptops on the back desks are not decoration: their screens carry a live bar per joint
-showing that joint's torque as a fraction of its limit, so the physics being measured is visible
-in the same picture as the arm measuring it.
+The telemetry screen on the back desk is not decoration: it carries a live bar per joint showing
+that joint's torque as a fraction of its limit, so the physics being measured is visible in the
+same picture as the arm measuring it.
 """
 from __future__ import annotations
 
@@ -34,54 +19,15 @@ import numpy as np
 import pal_cell_scenery as SC
 import pal_config as cfg
 
-# ── cell geometry, metres ─────────────────────────────────────────────────────────────────────
-FLOOR_Z = -0.90                 # the shop floor, below the robot's base
-WORK_Z = -0.25                  # table top and the top of the conveyor's rollers
-BOX = (0.22, 0.22, 0.17)        # a cardboard box
-BOX_DEFAULT_KG = 1.5
-N_BOXES = 3
-BOX_X = (0.38, 0.66, 0.94)      # where the three boxes start, lined up on the infeed table
-BOX_Y = -0.52
-# Boxes are let go this far above the belt rather than set down on it, so the belt takes them
-# with a small drop the way a real singulation cell does, and the cups never scuff the surface.
-DROP_GAP = 0.0035
-# How much air is left under a carried box as it travels. It has to clear the boxes still waiting
-# on the table: the carry height is measured to the CUP PLANE, so the box hangs a full box-height
-# below it, and an approach height of one box height left the carried box's underside exactly
-# level with its neighbours' lids and clipping them. Carry height = box top + box height + this.
-LIFT_CLEARANCE = 0.16
-
-TABLE_C = (0.66, BOX_Y)         # infeed table centre
-TABLE_SIZE = (1.02, 0.62, 0.06)
-
-BELT_Y = 0.55                   # conveyor centre line
-BELT_X0, BELT_X1 = -0.55, 2.25  # the belt runs this far along x
-BELT_W = 0.46
-BELT_SPEED = 0.28               # m/s, towards +x
-PLACE_XY = (0.50, BELT_Y)       # where every box is let go over the belt
-ROLLER_R = 0.028
-N_ROLLERS = 20
-
-PEDESTAL_R = 0.15
-
-WALL_Y = 2.45                   # back wall
-WALL_X = -2.10                  # side wall
-
-# ── colours ───────────────────────────────────────────────────────────────────────────────────
-CARDBOARD = (0.74, 0.56, 0.37)
-FLOOR_COL = (0.38, 0.40, 0.43)
-WALL_COL = (0.90, 0.91, 0.92)
-STEEL = (0.60, 0.63, 0.68)
-BELT_COL = (0.13, 0.14, 0.16)
-ROLLER_COL = (0.72, 0.74, 0.78)
-DESK_COL = (0.78, 0.76, 0.72)
-SCREEN_COL = (0.04, 0.05, 0.07)
-BAR_COL = (0.21, 0.72, 0.95)
-
-# Framed like the reference photograph: low, across the infeed table, with the conveyor running
-# away to the right and the fence and factory behind.
-CAM_EYE = (1.80, -2.80, 1.08)
-CAM_TARGET = (0.45, 0.35, 0.10)
+# Geometry and colours live in pal_cell_geom, which imports no simulator, so the palletize cycle
+# and the tests can read the layout without Isaac. Re-exported here because this module's own
+# readers (and pal_cell_demo) refer to them unqualified.
+from pal_cell_geom import *                                        # noqa: F401,F403
+from pal_cell_geom import (BOX, BOX_DEFAULT_KG, BOX_TOP_Z, BOX_X, BOX_Y, BELT_SPEED, BELT_W,
+                           BELT_X0, BELT_X1, BELT_Y, CAM_DEFAULT, CAM_EYE, CAM_TARGET, CAM_VIEWS,
+                           CARDBOARD, CARRY_Z, DROP_GAP, FLOOR_COL, FLOOR_Z, LIFT_CLEARANCE,
+                           N_BOXES, N_ROLLERS, PEDESTAL_R, PLACE_TOP_Z, PLACE_XY, ROLLER_R,
+                           TABLE_C, TABLE_SIZE, WALL_X, WALL_Y, WORK_Z, camera)   # noqa: F401
 
 
 def _check_path(path):
@@ -316,10 +262,25 @@ class ConveyorCell:
             self.tool = SuctionTool(self.stage, robot_prim, [b.path for b in self.boxes])
         return self.tool
 
-    def frame_camera(self):
+    def frame_camera(self, view=None):
+        """Point the viewport at the cell. `view` is a name from pal_cell_geom.CAM_VIEWS and
+        defaults to $PAL_CAM, then to the isometric default.
+
+        A bad name prints the choices and falls back rather than raising: losing the camera should
+        not end a run that is otherwise fine."""
+        import os
+        name = view or os.environ.get("PAL_CAM") or CAM_DEFAULT
+        try:
+            eye, target = camera(name)
+        except ValueError as e:
+            print(f"[cell] {e}; using {CAM_DEFAULT}", flush=True)
+            name = CAM_DEFAULT
+            eye, target = camera(name)
         try:
             from isaacsim.core.utils.viewports import set_camera_view
-            set_camera_view(eye=np.array(CAM_EYE), target=np.array(CAM_TARGET))
+            set_camera_view(eye=np.array(eye), target=np.array(target))
+            print(f"[cell] camera '{name}': eye {np.round(eye, 2).tolist()} "
+                  f"-> target {list(target)}", flush=True)
         except Exception as e:
             print(f"[cell] camera not set: {e!r}", flush=True)
 

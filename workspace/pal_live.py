@@ -1,22 +1,36 @@
 #!/usr/bin/env python3
-"""The live simulator: a windowed (or headless) Isaac Sim that runs real picks on command and streams them to the dashboard.
+"""The live simulator: a windowed (or headless) Isaac Sim that runs real cell cycles on command and
+streams them to the dashboard.
 
-    ./pal.sh                       # starts this and the dashboard (see pal.sh)
+    ./pal.sh                                       # starts this and the dashboard (see pal.sh)
     HEADLESS=0 tools/run_sim.sh pal_live.py        # the raw form
 
-What it does: builds the gripper plant (table, physical cube, fingers), then loops forever: when no task is queued it holds the arm at home;
-when the dashboard sends a command it runs that pick (style, cube mass, optional fault) in real time. Everything it does is served on
-http://127.0.0.1:$PAL_LIVE_PORT (default 8765, host networking):
+What it does: builds the conveyor cell (infeed table, three cardboard boxes, running belt, suction
+tool) and then loops forever. With nothing queued it holds the arm at home; when the dashboard
+sends a command it runs that cycle — style, box mass, optional fault — in real time. Everything it
+does is served on http://127.0.0.1:$PAL_LIVE_PORT (default 8765, host networking):
 
-  GET  /state?since=N   {"seq": last row number, "rows": [[t, q*7, qd*7, tau_measured*7, q_cmd*7, tau_applied*7, held_kg, run_id], ...] after row N, "status": {...}}
-  GET  /frame.png       the latest viewport picture (windowed runs only)
-  POST /cmd             {"cmd": "run", "style": "s_curve", "kg": 1.0, "fault": "none"|"friction"|"stuck_joint"|"delay", "joint": 3, "loop": false, "speed": 0.7, "random": false, "pick_xy": [x, y]}
-                        (random: put the cube at a random reachable spot a little away from the fixed one, a new one for each repeat;
-                        pick_xy: an explicit base-frame position, m)
-                        (speed: the dashboard speed bar as a fraction, 0.05-1.0; 1.0 is half the velocity limit)
-                        {"cmd": "stop"}  (abort the current pick and stay at home, cancels repeat)
+  GET  /state?since=N   {"seq": last row number,
+                         "rows": [[t, q*dof, qd*dof, tau_measured*dof, q_cmd*dof, tau_applied*dof,
+                                   held_kg, run_id], ...] after row N,
+                         "status": {...}}
+  GET  /frame.png       the latest viewport picture
+  POST /cmd             {"cmd": "run", "style": "s_curve", "kg": 1.5,
+                         "fault": "none"|"friction"|"stuck_joint"|"delay", "joint": 3,
+                         "loop": false, "speed": 0.7}
+                        (speed: the dashboard speed bar as a fraction, 0.05-1.0; 1.0 is
+                         cfg.SPEED_BAND of the velocity limit, i.e. half)
+                        {"cmd": "stop"}   (abort the cycle and stay at home, cancels repeat)
 
-Rows are HZ/DECIM per second (250 Hz at the default 250 Hz physics: every step; 200 Hz at 1000 Hz: every 5th step, torque the mean of the 5), with the same sensor noise the data runs use. Time is pace-limited to real time.
+Row width follows the arm: `dof` is read from the robot spec and published in the status as
+`dof`, so the dashboard never assumes a joint count.
+
+Rows are HZ/DECIM per second (250 Hz at the default 250 Hz physics: every step; 200 Hz at 1000 Hz:
+every 5th step, with torque the mean of the 5). Sensor noise is off unless $PAL_SENSOR_NOISE asks
+for it, the same default the recorded runs use. Time is pace-limited to real time.
+
+Ported to the conveyor cell on 2026-11-08. It used to build a two-finger workcell and pick a
+single cube, which is the arm this project no longer has.
 """
 import json
 import os
@@ -32,13 +46,13 @@ import numpy as np
 
 import pal_config as cfg
 import pal_suites as S
-import pal_tasks as K
 from pal_plant import build_plant
 from pal_runner import KD_NORMAL, KP_NORMAL, Runner
-from pal_sensors import DEFAULT_SIGMA
+from pal_sensors import from_env as sensor_from_env
 
 PORT = int(os.environ.get("PAL_LIVE_PORT", "8765"))
-HZ = float(os.environ.get("PAL_PHYSICS_HZ", cfg.PHYSICS_HZ))
+HZ = float(os.environ.get("PAL_PHYSICS_HZ", cfg.LIVE_PHYSICS_HZ))
+DOF = cfg.DOF
 DECIM = max(1, round(HZ / 200))           # one row per DECIM steps: 250 Hz rows at 250 Hz physics, 200 Hz rows at 1000 Hz (the dashboard reads row_hz)
 RENDER_HZ = float(os.environ.get("PAL_LIVE_RENDER_HZ", "10"))   # frames drawn per second; the picture is saved about 3 times a second, so 10 is enough (0 = never)
 REALTIME = os.environ.get("PAL_LIVE_REALTIME", "1") != "0"
@@ -59,8 +73,11 @@ class Hub:
         self.seq = 0
         self.cmds = deque()
         self.stop_flag = False
-        self.status = {"state": "booting", "run": "", "style": "", "kg": 0.0, "fault": "none", "joint": -1, "loop": False,
-                       "t": 0.0, "duration": 0.0, "cube": None, "lifted": False, "last": None, "windowed": True, "frames": 0}
+        self.status = {"state": "booting", "run": "", "style": "", "kg": 0.0, "fault": "none",
+                       "joint": -1, "loop": False, "t": 0.0, "duration": 0.0, "box": None,
+                       "boxes_placed": 0, "held": 0.0, "last": None, "windowed": True,
+                       "frames": 0, "dof": DOF, "robot": cfg.ROBOT_NAME,
+                       "speed_band": cfg.SPEED_BAND}
         self.frame_path = None
 
     def push(self, row):
@@ -116,9 +133,10 @@ class Handler(BaseHTTPRequestHandler):
         try:
             msg = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
             if msg.get("cmd") == "run":
-                S.live_pick(msg.get("style", "s_curve"), float(msg.get("kg", 1.0)), msg.get("fault", "none"), int(msg.get("joint", 3)),
-                            speed=float(msg.get("speed", 0.7)),
-                            pick_xy=tuple(msg["pick_xy"]) if msg.get("pick_xy") else None)   # validate now
+                # Build the scenario here, on the request thread, so a bad command is a 400 with a
+                # reason rather than an exception inside the simulation loop.
+                S.live_cycle(msg.get("style", "s_curve"), msg.get("kg"), msg.get("fault", "none"),
+                             int(msg.get("joint", 3)), speed=float(msg.get("speed", 0.7)))
                 with HUB.lock:
                     HUB.cmds.append(msg)
                     HUB.stop_flag = False
@@ -138,12 +156,15 @@ threading.Thread(target=lambda: ThreadingHTTPServer(("127.0.0.1", PORT), Handler
 print(f"[PAL] live server on http://127.0.0.1:{PORT}  ({'headless' if HEADLESS else 'windowed'})", flush=True)
 
 # The scene is drawn and the viewport captured even without a window: the dashboard shows the picture.
-plant = build_plant(HZ, scene=True, gripper=True)
+plant = build_plant(HZ, scene=True, cell=True)
 render_every = max(1, round(HZ / RENDER_HZ)) if RENDER_HZ > 0 else 0
 runner = Runner(plant, "/workspace/out/live", mj_every=10, render_every=render_every)
 art, cell = plant.art, plant.cell
-rng = np.random.default_rng(0)
-sig = DEFAULT_SIGMA
+tool = cell.mount_tool(cfg.ROBOT_PRIM)
+cell.frame_camera()
+# Ideal sensing unless $PAL_SENSOR_NOISE asks otherwise; an ideal sensor is a cheap no-op, so the
+# streaming path does not branch on whether noise is on.
+noise = sensor_from_env(seed=0, dof=DOF)
 
 if True:
     from omni.kit.viewport.utility import capture_viewport_to_file, get_active_viewport
@@ -164,27 +185,37 @@ def grab_frame():
     frame_n += 1
 
 
-state = {"run_id": 0, "t_base": 0.0, "tau_acc": np.zeros(7), "app_acc": np.zeros(7), "n_acc": 0, "wall0": 0.0, "sim0": 0.0, "held": 0.0, "rt_wall": time.time(), "rt_sim": 0.0}
+state = {"run_id": 0, "t_base": 0.0, "tau_acc": np.zeros(DOF), "app_acc": np.zeros(DOF),
+         "n_acc": 0, "wall0": 0.0, "sim0": 0.0, "held": 0.0,
+         "rt_wall": time.time(), "rt_sim": 0.0}
 
 
 def emit(t_local, qd, q_des, tau_applied):
     """Called after every physics step: accumulate torque, publish a row every DECIM steps, pace to real time, draw frames."""
-    state["tau_acc"] += np.asarray(art.get_measured_joint_efforts()).flatten()[:7]
-    state["app_acc"] += np.asarray(tau_applied).flatten()[:7]          # what the controller commanded (shows friction and faults)
+    state["tau_acc"] += np.asarray(art.get_measured_joint_efforts()).flatten()[:DOF]
+    state["app_acc"] += np.asarray(tau_applied).flatten()[:DOF]    # commanded: shows friction and faults
     state["n_acc"] += 1
     if state["n_acc"] < DECIM:
         return
-    tau = state["tau_acc"] / DECIM + rng.normal(0, sig["tau"], 7)
-    tau_app = state["app_acc"] / DECIM + rng.normal(0, sig["tau"], 7)
-    q = np.asarray(art.get_joint_positions()).flatten()[:7] + rng.normal(0, sig["q"], 7)
-    qd = np.asarray(qd).flatten()[:7] + rng.normal(0, sig["qd"], 7)
+    row = {"tau_measured": state["tau_acc"] / DECIM,
+           "tau_applied": state["app_acc"] / DECIM,
+           "q": np.asarray(art.get_joint_positions()).flatten()[:DOF].astype(float),
+           "qd": np.asarray(qd).flatten()[:DOF].astype(float)}
+    flat = {f"{k}_{i}": float(v[i]) for k, v in row.items() for i in range(DOF)}
+    noise.apply(flat)
+    get = lambda k: np.array([flat[f"{k}_{i}"] for i in range(DOF)])    # noqa: E731
     state["tau_acc"][:] = 0.0
     state["app_acc"][:] = 0.0
     state["n_acc"] = 0
     t = state["t_base"] + t_local
-    HUB.push([round(t, 4)] + [round(float(x), 6) for x in np.concatenate([q, qd, tau, np.asarray(q_des).flatten()[:7], tau_app])]
+    HUB.push([round(t, 4)]
+             + [round(float(x), 6) for x in np.concatenate(
+                 [get("q"), get("qd"), get("tau_measured"),
+                  np.asarray(q_des).flatten()[:DOF], get("tau_applied")])]
              + [state["held"], state["run_id"]])
-    HUB.set(t=round(t_local, 3), cube=[round(float(x), 4) for x in cell.position()])
+    HUB.set(t=round(t_local, 3), held=round(float(state["held"]), 3),
+            box=[round(float(x), 4) for x in cell.position()],
+            boxes_placed=sum(1 for b in cell.boxes if b.on_belt()))
     wall = time.time()
     if wall - state["rt_wall"] >= 2.0:                       # how fast the simulation really runs, shown in status
         HUB.set(rt=round((t - state["rt_sim"]) / (wall - state["rt_wall"]), 2), hz=HZ)
@@ -201,29 +232,47 @@ def begin(run_id):
 
 
 def hold_step(q_hold, k):
-    """One physics step holding the arm still (used between picks; the cube stays where the last pick left it)."""
-    tau, qs, qds, _ = runner._command(lambda t: (q_hold, np.zeros(7), np.zeros(7)), 0.0, KP_NORMAL, KD_NORMAL, True)
+    """One physics step holding the arm still, used between cycles. The belt keeps running and the
+    boxes stay where the last cycle left them, so the idle view is the cell at rest, not frozen."""
+    tau, qs, qds, _ = runner._command(lambda t: (q_hold, np.zeros(DOF), np.zeros(DOF)),
+                                      0.0, KP_NORMAL, KD_NORMAL, True)
     runner._apply(tau)
     plant.world.step(render=bool(render_every) and k % render_every == 0)
-    emit(k / HZ, np.asarray(art.get_joint_velocities()).flatten()[:7], q_hold, tau)
+    cell.step(1.0 / HZ, visual=bool(render_every) and k % render_every == 0)
+    emit(k / HZ, np.asarray(art.get_joint_velocities()).flatten()[:DOF], q_hold, tau)
 
 
-def run_pick(msg):
-    xy = tuple(msg["pick_xy"]) if msg.get("pick_xy") else (S.random_pick_xy(np.random.default_rng(msg.get("seed"))) if msg.get("random") else None)
-    sc = S.live_pick(msg.get("style", "s_curve"), float(msg.get("kg", 1.0)), msg.get("fault", "none"), int(msg.get("joint", 3)),
-                     name=f"live_{msg.get('style', 's_curve')}", speed=float(msg.get("speed", 0.7)), pick_xy=xy)
+def run_cycle(msg):
+    style = msg.get("style", "s_curve")
+    sc = S.live_cycle(style, msg.get("kg"), msg.get("fault", "none"), int(msg.get("joint", 3)),
+                      name=f"live_{style}", speed=float(msg.get("speed", 0.7)))
     task = sc.task
+    cell.reset_boxes(kg=sc.box_kg)
+    tool.set_vacuum(False, 0.0)
     state["run_id"] += 1
-    state["t_base"] += 0.5                      # a visible gap between picks; the dashboard restarts its window at each new run id
+    state["t_base"] += 0.5          # a visible gap; the dashboard restarts its window per run id
     begin(state["run_id"])
     f = sc.fault
-    HUB.set(state="running", run=sc.name, style=msg.get("style", "s_curve"), kg=sc.cube_kg, fault=f.type, joint=f.joint if f.type != "none" else -1,
-            loop=bool(msg.get("loop")), duration=round(sc.duration_s, 2), t=0.0, speed=round(float(msg.get('speed', 0.7)), 2), reference=bool(msg.get('reference')), fault_onset=(round(f.onset_s, 2) if f.type != 'none' else None), pick_xy=[round(float(c), 3) for c in sc.task.pick_xy])
+    HUB.set(state="running", run=sc.name, style=style, kg=sc.box_kg, fault=f.type,
+            joint=f.joint if f.type != "none" else -1, loop=bool(msg.get("loop")),
+            duration=round(sc.duration_s, 2), t=0.0, boxes=task.n_boxes, boxes_placed=0,
+            speed=round(float(msg.get("speed", 0.7)), 2),
+            fault_onset=(round(f.onset_s, 2) if f.type != "none" else None))
+
+    # When each box is expected to be on the tool, so the status can say what is held without
+    # asking the tool every step. "picked" and "placed" are the task's own event names.
+    held_windows = []
+    for i in range(task.n_boxes):
+        a = next((e[0] for e in task.events if e[1] == "picked" and e[2] == i), None)
+        b = next((e[0] for e in task.events if e[1] == "placed" and e[2] == i), None)
+        if a is not None and b is not None:
+            held_windows.append((a, b))
 
     def on_step(k, t, st):
-        state["held"] = sc.cube_kg if task.t_close <= t < task.t_open else 0.0
+        state["held"] = sc.box_kg if any(a <= t < b for a, b in held_windows) else 0.0
         if HUB.stop_flag:
             raise Abort()
+        cell.step(1.0 / HZ, visual=bool(render_every) and k % render_every == 0)
         emit(t, st["qd"], st["q_des"], st["tau"])
 
     aborted = False
@@ -232,27 +281,27 @@ def run_pick(msg):
     except Abort:
         aborted = True
         runner.inj.clear()
-        plant.set_fingers(0.04)
-    cube = np.array(cell.position())
-    err = float(np.linalg.norm(cube[:2] - np.array(task.place_xy)))
-    last = {"run": sc.name, "kg": sc.cube_kg, "fault": f.type, "aborted": aborted, "placed_error_m": round(err, 4),
-            "cube_z": round(float(cube[2]), 4), "ok": (not aborted) and err < 0.03}
+        tool.set_vacuum(False, 0.0)
+    placed = sum(1 for b in cell.boxes if b.on_belt())
+    last = {"run": sc.name, "kg": sc.box_kg, "fault": f.type, "aborted": aborted,
+            "boxes": task.n_boxes, "boxes_placed": placed,
+            "ok": (not aborted) and placed == task.n_boxes}
     state["t_base"] += sc.duration_s
     state["held"] = 0.0
-    HUB.set(state="idle", last=last)
-    print(f"[PAL] pick done: {last}", flush=True)
+    HUB.set(state="idle", last=last, boxes_placed=placed)
+    print(f"[PAL] cycle done: {last}", flush=True)
 
 
-# start-up: cube on the table at the pick location, arm at home, fingers open
-task0 = K.pick_place("s_curve", physical=True)
-cell.place(task0.pick_xy, 1.0)
-plant.set_fingers(0.04)
+# start-up: boxes on the infeed table, arm at home, vacuum off
+cell.reset_boxes()
+tool.set_vacuum(False, 0.0)
 q_home = cfg.HOME_JOINTS.copy()
-art.set_joint_positions(np.concatenate([q_home, [.04, .04]]))
-art.set_joint_velocities(np.zeros((1, 9)))
+art.set_joint_positions(np.asarray(q_home, np.float32).reshape(1, -1))
+art.set_joint_velocities(np.zeros((1, DOF), np.float32))
 begin(0)
 HUB.set(state="idle")
-print("[PAL] live simulator ready; waiting for commands from the dashboard", flush=True)
+print(f"[PAL] live simulator ready: {cfg.ROBOT_NAME}, {cell.n_boxes if hasattr(cell, 'n_boxes') else len(cell.boxes)} boxes, "
+      f"{HZ:.0f} Hz physics; waiting for commands from the dashboard", flush=True)
 
 k = 0                                   # physics steps of the current idle stretch
 while simulation_app.is_running():
@@ -261,7 +310,7 @@ while simulation_app.is_running():
     if msg is not None:
         state["t_base"] += k / HZ               # keep the stream's clock moving forward across idle stretches
         k = 0
-        run_pick(msg)
+        run_cycle(msg)
         if HUB.status["loop"] and not HUB.stop_flag:
             with HUB.lock:
                 HUB.cmds.append(dict(msg, loop=True))

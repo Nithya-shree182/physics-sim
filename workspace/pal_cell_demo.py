@@ -7,6 +7,7 @@ tool and sets them on a running conveyor, over and over, in a window.
     PAL_BOX_KG=2.5 ./start_sim_docker.sh       # heavier boxes
     PAL_STYLE=trapezoidal ./start_sim_docker.sh
     PAL_SPEED=0.5 ./start_sim_docker.sh        # fraction of the trustworthy speed band
+    PAL_CAM=side ./start_sim_docker.sh         # camera: iso (default), iso_high, side, top
 
 What it is for: watching the cell run, and judging how it looks and how smoothly it moves. It is
 not a data run — nothing is written and nothing is scored. `pal_live.py` is the same cell driven
@@ -30,7 +31,6 @@ import numpy as np                                             # noqa: E402
 
 import pal_cell as C                                           # noqa: E402
 import pal_config as cfg                                       # noqa: E402
-import pal_suction as SU                                       # noqa: E402
 import pal_tasks as K                                          # noqa: E402
 from pal_plant import build_plant                              # noqa: E402
 from pal_runner import KD_NORMAL, KP_NORMAL, Runner            # noqa: E402
@@ -46,25 +46,13 @@ SPEED = float(os.environ.get("PAL_SPEED", "0.7"))              # of the <=50% ve
 REALTIME = os.environ.get("PAL_REALTIME", "1") != "0"
 CYCLES = int(os.environ.get("PAL_CYCLES", "0"))                # 0 = forever
 
-BAND = 0.5                      # 1.0 on the speed knob is half the datasheet velocity limit (D1)
+BAND = cfg.SPEED_BAND           # 1.0 on the speed knob is half the datasheet velocity limit (D1)
 
 
 def build_task(style=STYLE):
-    """The three-box cycle, aimed at the cup faces rather than the flange."""
-    top_z = C.WORK_Z + C.BOX[2]
-    return K.palletize(
-        style,
-        [(x, C.BOX_Y) for x in C.BOX_X[:C.N_BOXES]],
-        C.PLACE_XY,
-        box_top_z=top_z,
-        # let go with the box hovering DROP_GAP over the belt, so the belt catches it
-        place_top_z=top_z + C.DROP_GAP,
-        # lift the cups a whole box height plus clearance, or the box being carried scrapes the
-        # lids of the ones still on the table
-        approach_z=top_z + C.BOX[2] + C.LIFT_CLEARANCE,
-        cup_offset=(0.0, 0.0, SU.CUP_PLANE_Z),
-        vscale=BAND * SPEED, ascale=BAND * SPEED,
-        name=f"cell_{style}")
+    """The three-box cycle. One definition, in pal_tasks.cell_cycle, shared with the live server
+    and the recorded suites, so a cycle time quoted from one is a cycle time about the others."""
+    return K.cell_cycle(style, speed=SPEED, band=BAND)
 
 
 def _ensure_view(plant, where="start"):

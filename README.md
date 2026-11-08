@@ -1,9 +1,18 @@
 # Physics Attestation Layer (PAL)
 
-A Franka Panda digital twin in NVIDIA Isaac Sim 6.0.1. The arm moves; we record what its joints actually did; an independent model
+> **2026-11-08: the arm is a UR10e, not a Franka Panda.** The Panda was removed from the runtime
+> entirely. Start with **`docs/TODO.md`** (what is left), then `docs/UR10E_PORT.md` (the arm's
+> numbers and the cell) and `docs/TELEMETRY.md` (what is in a logged row). History:
+> `changes.md`. Pages that still say "Panda" describe the project before that date.
+>
+> One thing to know before quoting any result: every recorded run in `out/` and `data/` is Panda
+> data, so **the project has no validated detection or payload number for the arm it now runs**
+> until the suites are regenerated. `docs/TODO.md` item 1.
+
+A Universal Robots UR10e digital twin in NVIDIA Isaac Sim 6.0.1. The arm moves; we record what its joints actually did; an independent model
 (Pinocchio, built from the URDF) predicts what the torques should have been. The gap, `r = tau_applied - tau_model`, is the signal.
 Full proposal: the PDF in this folder; what the project now claims: `docs/PROPOSAL_AMENDMENTS.md`.
-**Where the project stands today: `docs/HANDOFF.md`. Why each choice was made, with the evidence: `DECISIONS.md`.**
+**Where the project stands today: `docs/TODO.md`, then `docs/UR10E_PORT.md`. Why each choice was made, with the evidence: `DECISIONS.md`.**
 
 The repository holds both halves, merged on 2026-11-04 from two branches that had no common history:
 
@@ -64,8 +73,9 @@ All runs are **effort mode**: the arm is driven by explicit torques and `tau_app
 | `workspace/pal_objects.py`, `pal_view.py` | the physical table and cube; the drawn cube for modelled picks |
 | `workspace/pal_trajectories.py` | reference motions and the three movement styles |
 | `workspace/pal_kinematics.py` | independent URDF kinematics and gravity (numpy), used by the checks |
-| `workspace/pal_telemetry.py` | O1 telemetry writer in `schema/telemetry_v0.yaml` format |
-| `workspace/pal_*_test.py` and similar | one-off probes; each is the evidence for one claim in the docs |
+| `workspace/pal_telemetry.py` | O1 telemetry writer in `schema/telemetry_v1.yaml` format (docs/TELEMETRY.md) |
+| `workspace/pal_cell_geom.py` | the cell's layout as plain numbers; no USD, so the cycle and the tests can read it |
+| `workspace/pal_sensors.py` | the sensor model: ideal by default, `PAL_SENSOR_NOISE` turns noise on |
 | `tools/` | pipeline, run watchdog, Parquet converter, `check_run.py`, `check_payload.py`, `check_push.py`, `check_all.sh`, `package_handover.sh`, `run_analysis_side.py` (their real code on our runs), `preview_detect.py` (superseded stand-in) |
 | `tests/` | unit tests (no simulator) |
 | `data/` | short reference runs, tracked on purpose |

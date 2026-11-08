@@ -16,6 +16,8 @@ import sys
 from pathlib import Path
 
 import numpy as np
+
+import pal_robot
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -23,7 +25,7 @@ sys.path.insert(0, str(ROOT / "workspace"))
 from pal_kinematics import Urdf  # noqa: E402
 
 ARM = 7
-URDF = ROOT / "assets/franka_panda/panda_arm_hand.urdf"
+URDF = Path(pal_robot.active().urdf_file())   # whatever arm is loaded
 
 
 def main(out):

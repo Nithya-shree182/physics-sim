@@ -4,6 +4,9 @@ import unittest
 from pathlib import Path
 
 import numpy as np
+import pal_robot
+
+DOF = pal_robot.active().dof
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "workspace"))
 import pal_config as cfg  # noqa: E402
@@ -13,15 +16,23 @@ import pal_tasks as K  # noqa: E402
 U = K._urdf()
 
 
-def tool(q):
-    R, p, _ = U.tool_jacobian(q)
+def tool(q, offset=pal_ik.TOOL_OFFSET):
+    """Where the IK's target point actually ends up, and how the tool is oriented there.
+
+    The offset has to be the SAME one the IK aimed with. The Urdf's own default is the robot
+    spec's tool_offset (0.195 m, where a carried box's centre of mass sits), while the IK aims the
+    cup contact plane (0.110 m). Reading the first while solving for the second puts every check
+    85 mm out, which is exactly half a box and reads like a geometry bug rather than a unit slip."""
+    R, p, _ = U.tool_jacobian(q, offset=offset)
     return R, p
 
 
 class IK(unittest.TestCase):
-    def test_reaches_targets_with_the_gripper_down(self):
+    def test_reaches_targets_with_the_tool_pointing_down(self):
+        """Targets inside the cell's own working volume. The old set was chosen for an 855 mm arm
+        and sat below this one's table; these are spread across where the cell actually works."""
         R, _ = pal_ik.tool_target_from_home(U)
-        for p in ([0.45, -0.25, 0.025], [0.45, 0.25, 0.22], [0.35, 0.0, 0.40], [0.5, 0.1, 0.1]):
+        for p in ([0.45, -0.52, 0.00], [0.50, 0.55, 0.10], [0.70, 0.00, 0.40], [0.90, -0.40, 0.15]):
             q, ok, _ = pal_ik.solve(U, np.array(p), R, cfg.HOME_JOINTS)
             self.assertTrue(ok, p)
             Rq, pq = tool(q)
@@ -30,28 +41,33 @@ class IK(unittest.TestCase):
 
     def test_respects_joint_limits(self):
         R, _ = pal_ik.tool_target_from_home(U)
-        q, ok, _ = pal_ik.solve(U, np.array([0.45, -0.25, 0.025]), R, cfg.HOME_JOINTS)
+        q, ok, _ = pal_ik.solve(U, np.array([0.45, -0.52, 0.00]), R, cfg.HOME_JOINTS)
         self.assertTrue(np.all(q > cfg.Q_MIN) and np.all(q < cfg.Q_MAX))
 
     def test_unreachable_target_is_reported_not_faked(self):
         R, _ = pal_ik.tool_target_from_home(U)
-        q, ok, err = pal_ik.solve(U, np.array([1.5, 0.0, 0.3]), R, cfg.HOME_JOINTS)
+        # Past the UR10e's 1.3 m reach, so no pose can satisfy it.
+        q, ok, err = pal_ik.solve(U, np.array([1.9, 0.0, 0.3]), R, cfg.HOME_JOINTS)
         self.assertFalse(ok)
         self.assertGreater(err[0], 0.1)
 
     def test_jacobian_matches_finite_differences(self):
-        q = np.array([0.1, -0.5, 0.2, -2.0, 0.3, 1.5, 0.4])
-        J = U.tool_jacobian(q)[2]
-        for k in range(7):
-            e = np.zeros(7); e[k] = 1e-6
+        q = np.array([0.1, -0.5, 0.2, -2.0, 0.3, 1.5, 0.4, -0.3, 0.6])[:DOF]
+        J = U.tool_jacobian(q, offset=pal_ik.TOOL_OFFSET)[2]
+        for k in range(DOF):
+            e = np.zeros(DOF); e[k] = 1e-6
             num = (tool(q + e)[1] - tool(q - e)[1]) / 2e-6
             np.testing.assert_allclose(J[:3, k], num, atol=1e-7)
 
 
 class PickPlace(unittest.TestCase):
-    def test_waypoints_are_where_the_cube_is(self):
+    def test_waypoints_are_where_the_box_is(self):
+        """The cups must come down on the box's TOP FACE, which for the cell's geometry is
+        WORK_Z + the box height. A suction grip aims at the face; a finger grasp aimed at the
+        object's mid-height, which is what this used to check."""
         wp = K.waypoints(U)
-        np.testing.assert_allclose(tool(wp["pick"])[1], [*K.PICK_XY, K.CUBE / 2], atol=1e-6)
+        np.testing.assert_allclose(tool(wp["pick"])[1],
+                                   [*K.PICK_XY, K.TABLE_TOP_Z + K.BOX_H], atol=1e-6)
         np.testing.assert_allclose(tool(wp["pre_pick"])[1][:2], K.PICK_XY, atol=1e-6)
         np.testing.assert_allclose(tool(wp["pre_place"])[1][:2], K.PLACE_XY, atol=1e-6)
 
@@ -68,7 +84,7 @@ class PickPlace(unittest.TestCase):
             np.testing.assert_allclose(qe, cfg.HOME_JOINTS, atol=1e-6)
             self.assertLess(np.abs(qd0).max() + np.abs(qde).max(), 1e-6, style)
 
-    def test_grasp_and_release_happen_in_order_with_the_arm_at_the_cube(self):
+    def test_grasp_and_release_happen_in_order_with_the_arm_at_the_box(self):
         for style in ("trapezoidal", "s_curve", "torque_aware"):
             t = K.pick_place(style)
             self.assertTrue(0 < t.t_attach < t.t_release < t.duration)
@@ -97,7 +113,7 @@ class Ellipse(unittest.TestCase):
     def setUpClass(cls):
         cls.e = K.ellipse(duration=6.0)
 
-    def test_the_fingertips_trace_the_ellipse(self):
+    def test_the_tool_traces_the_ellipse(self):
         # the middle of the traj is the ellipse; check radial consistency of the tool path against the semi-axes
         t0 = self.e.traj.starts[1]
         pts = np.array([tool(self.e.traj(t0 + x)[0])[1] for x in np.linspace(0, 6.0, 600)])
@@ -106,7 +122,7 @@ class Ellipse(unittest.TestCase):
         np.testing.assert_allclose(r, 1.0, atol=1e-6)
         np.testing.assert_allclose(pts[:, 2], 0.30, atol=1e-6)
 
-    def test_gripper_stays_vertical(self):
+    def test_the_tool_stays_vertical(self):
         t0 = self.e.traj.starts[1]
         for x in np.linspace(0, 6.0, 20):
             np.testing.assert_allclose(tool(self.e.traj(t0 + x)[0])[0][:, 2], [0, 0, -1], atol=1e-6)

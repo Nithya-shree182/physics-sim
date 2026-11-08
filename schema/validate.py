@@ -1,4 +1,4 @@
-"""Validate a telemetry log (parquet + JSON manifest) against schema/telemetry_v0.yaml.
+"""Validate a telemetry log (parquet + JSON manifest) against schema/telemetry_v1.yaml.
 
     python schema/validate.py data/<run_id>.parquet
     python schema/validate.py data/<run_id>.parquet --manifest other/place.json
@@ -10,6 +10,11 @@ Checks:
   - step goes up by exactly 1, t increases, dt is positive and matches the t spacing
   - M is symmetric with a positive diagonal, ee_quat is a unit quaternion
   - fault_joint is -1 exactly when fault_type is none
+  - the torque decomposition adds up: g + inertial + coriolis + friction + unexplained == applied
+  - the energy columns are consistent: E_tot_rel == E_kin + E_pot_rel
+  - the aggregates match their parts: P_mech == sum(P_joint), tau_frac_max == max(tau_frac_i)
+  - tau_frac_i really is |tau_measured_i| / tau_max_i from the manifest
+  - a held box has an index: grip_active implies box_index >= 0
   - the manifest has every required field and its physics_hz matches dt
   - the manifest states a timing convention; mj_every > 1 comes with an mj_fresh column;
     a stated row count matches the file
@@ -23,14 +28,20 @@ import argparse
 import json
 import re
 import sys
-from itertools import product
 from pathlib import Path
+
+from itertools import product
 
 import numpy as np
 import pandas as pd
 import yaml
 
-SCHEMA_PATH = Path(__file__).resolve().parent / "telemetry_v0.yaml"
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "workspace"))
+import pal_robot  # noqa: E402
+
+SPEC = pal_robot.active()
+DOF = SPEC.dof
+SCHEMA_PATH = Path(__file__).resolve().parent / "telemetry_v1.yaml"
 
 # placeholder in a field name -> key in the field spec that gives its values
 _EXPANDERS = {"i": "range", "r": "rows", "c": "cols", "a": "axes", "b": "bodies", "k": "components"}
@@ -42,6 +53,16 @@ def load_schema(path: Path = SCHEMA_PATH) -> dict:
 
 
 def _values(spec: dict, key: str) -> list:
+    """The values a placeholder expands over.
+
+    A per-joint column says `per_joint: true` rather than a literal range, so the schema does not
+    carry the joint count: it comes from the robot spec, and the same schema validates any arm.
+    That is the whole point of the change from v0, where [0, 6] was written out seven times.
+    """
+    if key in ("range", "cols") and spec.get("per_joint" if key == "range" else "per_joint_cols"):
+        return list(range(DOF))
+    if spec.get("per_joint_matrix") and key in ("rows", "cols"):
+        return list(range(DOF))
     v = spec[key]
     if key == "axes":
         return list(v)
@@ -50,7 +71,7 @@ def _values(spec: dict, key: str) -> list:
 
 
 def expand_field(spec: dict) -> list[str]:
-    """'q_{i}' with range [0, 6] -> ['q_0', ..., 'q_6']."""
+    """'q_{i}' with per_joint -> ['q_0', ..., 'q_{dof-1}']."""
     name = spec["name"]
     holders = re.findall(r"\{(\w)\}", name)
     if not holders:
@@ -133,20 +154,68 @@ def validate_frame(df: pd.DataFrame, schema: dict) -> tuple[list[str], list[str]
         if len(df) > 1 and not np.allclose(np.diff(t), dt[1:], rtol=1e-6, atol=1e-9):
             errors.append("dt does not match the spacing of t")
 
-    m_cols = [f"M_{r}_{c}" for r in range(7) for c in range(7)]
+    def joint_cols(prefix):
+        return [f"{prefix}_{i}" for i in range(DOF)]
+
+    m_cols = [f"M_{r}_{c}" for r in range(DOF) for c in range(DOF)]
     if have(m_cols):
-        M = df[m_cols].to_numpy().reshape(-1, 7, 7)
+        M = df[m_cols].to_numpy().reshape(-1, DOF, DOF)
         asym = np.max(np.abs(M - M.transpose(0, 2, 1)))
         if asym > 1e-6:
             errors.append(f"M is not symmetric (worst asymmetry {asym:.2e})")
         if np.any(np.diagonal(M, axis1=1, axis2=2) <= 0):
             errors.append("M has a non-positive diagonal entry")
 
+    # The decomposition is an identity by construction, so any disagreement means a column was
+    # written from different state than its neighbours — a real and otherwise invisible bug.
+    parts = ["g", "coriolis", "tau_inertial", "tau_friction", "tau_unexplained"]
+    if have([c for p in parts for c in joint_cols(p)] + joint_cols("tau_applied")):
+        total = sum(df[joint_cols(p)].to_numpy() for p in parts)
+        worst = float(np.nanmax(np.abs(total - df[joint_cols("tau_applied")].to_numpy())))
+        if worst > 1e-6:
+            errors.append(f"the torque decomposition does not add up to tau_applied "
+                          f"(worst {worst:.2e} N*m)")
+
+    if have(["E_kin", "E_pot_rel", "E_tot_rel"]):
+        worst = float(np.nanmax(np.abs(df["E_kin"] + df["E_pot_rel"] - df["E_tot_rel"])))
+        if worst > 1e-9:
+            errors.append(f"E_tot_rel != E_kin + E_pot_rel (worst {worst:.2e} J)")
+        if float(df["E_kin"].min()) < -1e-12:
+            errors.append("E_kin is negative, which a positive-definite mass matrix forbids")
+        if abs(float(df["E_pot_rel"].iloc[0])) > 1e-12:
+            errors.append("E_pot_rel is relative to row 0 and must start at zero")
+
+    if have(["P_mech"] + joint_cols("P_joint")):
+        worst = float(np.nanmax(np.abs(df[joint_cols("P_joint")].to_numpy().sum(axis=1) - df["P_mech"])))
+        if worst > 1e-6:
+            errors.append(f"P_mech != sum(P_joint) (worst {worst:.2e} W)")
+
+    if have(["tau_frac_max"] + joint_cols("tau_frac")):
+        worst = float(np.nanmax(np.abs(df[joint_cols("tau_frac")].to_numpy().max(axis=1)
+                                       - df["tau_frac_max"])))
+        if worst > 1e-9:
+            errors.append(f"tau_frac_max != max(tau_frac_i) (worst {worst:.2e})")
+
+    if have(["grip_active", "box_index"]):
+        held = df["grip_active"].to_numpy().astype(bool)
+        if np.any(held & (df["box_index"].to_numpy() < 0)):
+            errors.append("grip_active is true on rows where box_index is -1")
+
+    if have(["sigma_min", "sigma_max"]):
+        if np.any(df["sigma_min"].to_numpy() > df["sigma_max"].to_numpy() + 1e-12):
+            errors.append("sigma_min exceeds sigma_max")
+
     q_cols = [f"ee_quat_{a}" for a in "wxyz"]
     if have(q_cols):
-        norm_err = np.max(np.abs(np.linalg.norm(df[q_cols].to_numpy(), axis=1) - 1.0))
-        if norm_err > 1e-4:
-            errors.append(f"ee_quat is not unit length (worst error {norm_err:.2e})")
+        quat = df[q_cols].to_numpy()
+        rows = np.all(np.isfinite(quat), axis=1)        # the pose is nullable; check what is there
+        if rows.any():
+            norm_err = np.max(np.abs(np.linalg.norm(quat[rows], axis=1) - 1.0))
+            if norm_err > 1e-4:
+                errors.append(f"ee_quat is not unit length (worst error {norm_err:.2e})")
+        if not rows.all():
+            warnings.append(f"ee_quat/ee_pos absent on {int((~rows).sum())} rows "
+                            f"(a capture with no USD stage)")
 
     if have(["fault_type", "fault_joint"]):
         no_fault = df["fault_type"] == "none"
@@ -168,6 +237,20 @@ def validate_manifest(manifest: dict, schema: dict, df: pd.DataFrame | None = No
         errors.append("manifest mj_every > 1 but the mj_fresh column is missing")
     if df is not None and "rows" in manifest and int(manifest["rows"]) != len(df):
         errors.append(f"manifest says {manifest['rows']} rows, file has {len(df)}")
+    if df is not None and "dof" in manifest and int(manifest["dof"]) != DOF:
+        errors.append(f"manifest says {manifest['dof']} joints, this build's arm "
+                      f"({SPEC.name}) has {DOF}; validate with the matching PAL_ROBOT")
+    # tau_frac is only re-derivable if the limits it was divided by are on record.
+    if df is not None and "tau_max" in manifest:
+        tm = np.asarray(manifest["tau_max"], dtype=float)
+        cols = [f"tau_frac_{i}" for i in range(DOF)]
+        meas = [f"tau_measured_{i}" for i in range(DOF)]
+        if tm.shape == (DOF,) and all(c in df for c in cols + meas):
+            want = np.abs(df[meas].to_numpy()) / tm
+            worst = float(np.nanmax(np.abs(want - df[cols].to_numpy())))
+            if worst > 1e-6:
+                errors.append(f"tau_frac does not equal |tau_measured| / manifest tau_max "
+                              f"(worst {worst:.2e})")
     if "timing" not in manifest and "timing_convention" not in manifest:
         errors.append("manifest states no timing convention ('timing' or 'timing_convention')")
     return errors

@@ -7,16 +7,18 @@ simulator also reports, so a plant that disagrees with the URDF cannot pass unno
 Arm-agnostic since 2026-11-08. Nothing here is named after a particular robot any more: the root
 link, the actuated joints, the links that `mass_scale` applies to and the tool frame are all read
 out of the URDF (and, where it needs to pick between several candidates, out of `pal_robot`). The
-Panda path is deliberately unchanged in its results — the moving-link rule below selects exactly
-`panda_link1..7`, as the old hard-coded tuple did, so recorded runs still reproduce.
+Nothing about the arm is hard-coded: the root, the arm joints, the driven links and the tool
+frame are all inferred from the URDF, so the same code reads any arm's.
 """
 import xml.etree.ElementTree as ET
 
 import numpy as np
 
+import pal_robot
+
 G = 9.81
-ARM = 7                      # kept for callers that still import it; prefer Urdf.dof
-ARM_LINKS = tuple(f"panda_link{i}" for i in range(1, 8))     # historical, Panda only
+ARM = pal_robot.active().dof      # the active arm's joint count; prefer Urdf.dof, which is
+                                  # read from the URDF being parsed rather than from the default
 
 
 def rpy(r, p, y):
@@ -71,15 +73,16 @@ class Urdf:
             raise ValueError(f"{path}: no such joint(s) {missing}")
         self.dof = len(self.arm_joints)
         self.jindex = {n: k for k, n in enumerate(self.arm_joints)}
-        # The links an arm joint drives directly. For the Panda this is exactly panda_link1..7, the
-        # set the old hard-coded ARM_LINKS tuple held, so mass_scale behaves as it always did.
+        # The links an arm joint drives directly: each arm joint's child. This is what a
+        # plant-vs-model mass mismatch is applied to, so it must be the driven links and not the
+        # whole URDF — scaling a fixed base would change nothing in g(q) and everything in a
+        # total-mass check.
         self.moving_links = tuple(by_name[n]["child"] for n in self.arm_joints)
         # The tool frame: what the tool offset and the payload hang from. Callers should pass it
-        # (pal_robot.RobotSpec.tool_frame). Inferred otherwise: the Panda's hand when this URDF has
-        # one, so every existing caller keeps the frame it always used, else the last driven link.
-        self.tool = tool_link or ("panda_hand" if "panda_hand" in links else self.moving_links[-1])
+        # (pal_robot.RobotSpec.tool_frame); inferred otherwise as the last driven link.
+        self.tool = tool_link or self.moving_links[-1]
         if payload_offset is None:
-            payload_offset = (0.0, 0.0, 0.1034) if self.tool == "panda_hand" else (0.0, 0.0, 0.0)
+            payload_offset = tuple(pal_robot.active().tool_offset)
 
         self.mass, self.com, self.inertia = {}, {}, {}
         for l in root.findall("link"):
@@ -96,7 +99,7 @@ class Urdf:
             self.mass[nm] = float(it.find("mass").get("value")) * s
             self.com[nm] = (np.array([float(x) for x in o.get("xyz").split()])
                             if o is not None and o.get("xyz") else np.zeros(3))
-            # A URDF may rotate the inertia frame relative to the link (the UR10e does; the Panda
+            # A URDF may rotate the inertia frame relative to the link (the UR10e does on three
             # does not). Rotate the tensor into link axes so every consumer sees one convention.
             if o is not None and o.get("rpy"):
                 Rin = rpy(*[float(x) for x in o.get("rpy").split()])
@@ -120,19 +123,19 @@ class Urdf:
         walk(self.root, [])
         return tuple(j["name"] for j in best if j["type"] == "revolute")
 
-    def com_positions(self, q, finger=0.04):
-        """World COM of every massive link for arm angles q and an open-finger offset."""
-        pose = self._poses(q, finger)
+    def com_positions(self, q, aux=0.0):
+        """World COM of every massive link for arm angles q and an open-aux offset."""
+        pose = self._poses(q, aux)
         out = {name: (m, pose[name][1] + pose[name][0] @ self.com[name]) for name, m in self.mass.items()}
         if self.payload[0] > 0:
             R, p = pose[self.tool]
             out["payload"] = (self.payload[0], p + R @ self.payload[1])
         return out
 
-    def _poses(self, q, finger=0.04):
-        return self._forward(q, finger)[0]
+    def _poses(self, q, aux=0.0):
+        return self._forward(q, aux)[0]
 
-    def _forward(self, q, finger=0.04):
+    def _forward(self, q, aux=0.0):
         """Link poses and world joint axes/origins for arm angles q: (pose, axis_w, origin_w, joint_of_child)."""
         pose = {self.root: (np.eye(3), np.zeros(3))}
         axis_w, origin_w, joint_of_child = {}, {}, {}
@@ -151,8 +154,8 @@ class Urdf:
                         pj = pj + Rj @ (j["axis"] * q[k])
                     else:
                         Rj = Rj @ rot_axis(j["axis"], q[k])
-                elif j["type"] == "prismatic" and finger is not None:
-                    pj = pj + Rj @ (j["axis"] * finger)   # the Panda's two mimicked fingers
+                elif j["type"] == "prismatic" and aux is not None:
+                    pj = pj + Rj @ (j["axis"] * aux)   # a non-arm prismatic joint, held open
                 pose[j["child"]] = (Rj, pj)
                 joint_of_child[j["child"]] = j
             if len(rest) == len(todo):
@@ -160,7 +163,7 @@ class Urdf:
             todo = rest
         return pose, axis_w, origin_w, joint_of_child
 
-    def mass_matrix(self, q, finger=0.04, armature=0.0):
+    def mass_matrix(self, q, aux=0.0, armature=0.0):
         """Joint-space mass matrix M(q) of the 7 arm joints, composite-rigid-body from the URDF.
 
         Sum over every massive link of  m Jv^T Jv + Jw^T (R I R^T) Jw,  with the full 3x3 inertia
@@ -168,7 +171,7 @@ class Urdf:
         through joints 1-7 only. `armature` (kg*m^2) is added to every diagonal term, which is how
         the plant's dynamics include the reflected rotor inertia.
         """
-        pose, axis_w, origin_w, joint_of_child = self._forward(q, finger)
+        pose, axis_w, origin_w, joint_of_child = self._forward(q, aux)
         parent_of = self.parent_of
 
         def ancestors(link):
@@ -197,15 +200,15 @@ class Urdf:
             M += m * Jv.T @ Jv + Jw.T @ Iw @ Jw
         return M + armature * np.eye(n)
 
-    def tool_jacobian(self, q, finger=0.04, offset=None):
+    def tool_jacobian(self, q, aux=0.0, offset=None):
         """Tool-centre-point pose and geometric Jacobian: (R 3x3, p 3, J 6xdof, rows [linear; angular], world frame).
 
-        The TCP is `offset` along the tool frame's own axes — for the Panda 0.1034 m up the hand's
+        The TCP is `offset` along the tool frame's own axes — for the UR10e 0.195 m down the flange's
         z (the fingertip centre), for the UR10e whatever the mounted tool adds below the flange.
         It is the same point the payload is attached at."""
         if offset is None:
             offset = self.payload[1]
-        pose, axis_w, origin_w, _ = self._forward(q, finger)
+        pose, axis_w, origin_w, _ = self._forward(q, aux)
         R, p0 = pose[self.tool]
         p = p0 + R @ np.asarray(offset, float)
         J = np.zeros((6, self.dof))
@@ -214,10 +217,10 @@ class Urdf:
             J[3:, k] = axis_w[k]
         return R, p, J
 
-    def gravity(self, q, finger=0.04):
+    def gravity(self, q, aux=0.0):
         """tau_g = d(U)/dq with U = sum m g z, by central differences."""
         def U(qq):
-            return sum(m * G * c[2] for m, c in self.com_positions(qq, finger).values())
+            return sum(m * G * c[2] for m, c in self.com_positions(qq, aux).values())
         tau = np.zeros(self.dof)
         for i in range(self.dof):
             e = np.zeros(self.dof); e[i] = 1e-6

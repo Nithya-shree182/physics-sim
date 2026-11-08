@@ -1,7 +1,18 @@
 # Handoff: where the project is (2026-11-05)
 
-Written for: whoever picks the project up next (a person or a Claude Code session). Read this first, then `DECISIONS.md` (repo root) for the
-evidence behind each choice, then `STATUS.md` for the open problems. Where an older page disagrees with these three, these win.
+> **OUT OF DATE since 2026-11-08. Read `docs/TODO.md`, then `docs/UR10E_PORT.md` and
+> `docs/TELEMETRY.md`.**
+>
+> This page describes the project as it was with a **Franka Panda**. The arm is now a **UR10e**,
+> the Panda has been removed, the pick is done with a **suction tool** in a conveyor cell, and
+> sim-to-real fidelity is no longer a goal. Everything below about the arm, the gripper, the cube,
+> the speed regime and the recorded results refers to the Panda and does **not** carry over.
+> What is still true: the method (plant versus independent Pinocchio model, residual as the
+> signal), the architecture, and most of the traps.
+
+Written for: whoever picks the project up next (a person or a Claude Code session). Read
+`UR10E_PORT.md`, then this, then `DECISIONS.md` (repo root) for the evidence behind each choice,
+then `STATUS.md` for the open problems.
 
 ## In one paragraph
 

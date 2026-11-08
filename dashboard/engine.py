@@ -37,7 +37,7 @@ import pal_robot  # noqa: E402
 from pose_mask import FORCE_GAIN_MAX, force_noise_gain  # noqa: E402
 from detector import (CALIBRATION_S, FAULT_LABELS, FLOOR_RESIDUAL_NM, FLOOR_TRACKING_RAD,  # noqa: E402
                       Z_THRESHOLD)
-from payload import GRAVITY_VEC, MIN_D_NORM, PAYLOAD_OFFSET_M, TAU_S, payload_offset_for  # noqa: E402
+from payload import GRAVITY_VEC, MIN_D_NORM, TAU_S, payload_offset_for  # noqa: E402
 from pinocchio_model import friction_sigmoid, load_robot  # noqa: E402
 from residual import DEFAULT_CUTOFF_HZ, TIMING_FORWARD, Run, compute_residual, lowpass  # noqa: E402
 from synth_log import (KD, KP, MASS_MISMATCH, NOISE_Q, NOISE_QD, NOISE_TAU,  # noqa: E402
@@ -53,10 +53,24 @@ BAND = 0.5                       # trusted fraction of the velocity limit (dev, 
 CONSEC_TICKS = 3                 # [CHOICE] blocks in a row (150 ms at 50 ms blocks), as detector.CONSECUTIVE but per block; Analyzer.consec scales it to the block length
 LIVE_Z = Z_THRESHOLD
 PAYLOAD_ON_KG, PAYLOAD_OFF_KG = 0.20, 0.12
-PICK_FAULT_ONSET_S = 3.02        # s into a live pick when the simulator starts a fault (pal_suites.live_pick: grasp + 0.4 s)
+# When the live simulator starts an injected fault, in seconds from the start of the run. Asked of
+# the task itself rather than written down: pal_suites.live_cycle puts the onset 0.4 s after the
+# FIRST box is on the tool, and that moment moves with the trajectory style and the speed bar. The
+# figure used to be a constant (3.02 s, the Panda pick's grasp + 0.4), which silently became wrong
+# the moment the cycle changed — and a wrong onset puts the baseline window on the wrong side of
+# the fault, so the detector calibrates on faulty data and finds nothing.
+def pick_fault_onset_s(style="s_curve", speed=0.7):
+    try:
+        import pal_suites
+        return float(pal_suites.live_cycle(style, fault="friction", speed=speed).fault.onset_s)
+    except Exception:
+        return 3.1               # a safe fallback if the suites are not importable host-side
+
+
+PICK_FAULT_ONSET_S = pick_fault_onset_s()
 ABS_MIN_NM, ABS_MIN_FRAC = 0.10, 0.005   # an alarm also needs a residual this big: 0.10 N*m and 0.5% of the joint's limit, whichever is larger
 # How many joints must be off their baseline at once before it reads as a delayed or inconsistent
-# command rather than one bad joint. Four of the Panda's seven; kept as the same share of the arm
+# command rather than one bad joint. Kept as a share of the arm
 # so a six-joint UR10e needs three, not four.
 GLOBAL_JOINTS = None             # set once DOF is known, just below
 STUCK_MIN_TRACK_RAD = 0.03          # rad: a seized joint falls this far behind its command; a slow joint with extra friction does not
@@ -64,7 +78,7 @@ SETTLE_TOP = 3                   # extra blocks the strongest joint must stay of
 LIMIT_CONSEC = 5                 # blocks in a row above 90% of the torque limit before the alert (a delay's torque spikes are not a sustained load)
 FIT_SD_NM = 0.3                  # N*m, per-joint spread assumed by the payload-signature fit when a reference run is in use
 # How many joints this dashboard is drawing. Read from the active robot (pal_robot), not fixed at
-# the Panda's seven, so the same engine serves the UR10e's six. Added with the port of 2026-11-08.
+# whatever the arm has, so the same engine serves any joint count. Added with the port of 2026-11-08.
 ROBOT = pal_robot.active()
 DOF = ROBOT.dof
 HOME_JOINTS = ROBOT.home
@@ -270,10 +284,15 @@ class IsaacSource:
             self.pending.popleft()
 
     def task_key(self):
-        """What makes two picks the same task: style, cube mass, speed bar and cube position (a healthy run of it is the baseline)."""
+        """What makes two runs the same task: style, box mass and the speed bar.
+
+        A healthy run of that task is the baseline a faulty one is compared against, so the key has
+        to name everything that changes the healthy torque trace and nothing that does not. The box
+        POSITION used to be part of it, because the pick spot could be randomised; the cell's boxes
+        sit where the cell puts them, so it is gone and the key must match what app.py builds."""
         st = self.status
-        return (st.get("style"), round(float(st.get("kg", 0.0)), 2), round(float(st.get("speed", 0.0)), 2),
-                tuple(round(float(c), 2) for c in (st.get("pick_xy") or (0.0, 0.0))))
+        return (st.get("style"), round(float(st.get("kg", 0.0)), 2),
+                round(float(st.get("speed", 0.0)), 2))
 
     def command(self, **msg) -> dict:
         import urllib.request

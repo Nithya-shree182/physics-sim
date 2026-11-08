@@ -1,8 +1,8 @@
 """The one place the plant is built.
 
-"Plant" is control-engineering for the thing being controlled: here, the simulated Franka arm
-with its masses, friction and motors. It stands in for the real robot; the analysis side's
-Pinocchio model is the separate prediction it is compared against.
+"Plant" is control-engineering for the thing being controlled: here, the simulated arm with its
+masses, friction and motors. It stands in for the real robot; the analysis side's Pinocchio model
+is the separate prediction it is compared against.
 
 Every capture / sweep script used to carry its own ~60-line copy of "build the arm, author
 the URDF inertials, set friction", and the copies drifted: that is how an invalid rate sweep
@@ -21,9 +21,10 @@ effort and a dynamic effort in N*m and a viscous coefficient in N*m*s/rad. Verif
 pal_selftest.py: 1.4 N*m injected shows up as 1.388 N*m.
 
 MASS MISMATCH. The proposal requires the twin's model to differ from the plant ("otherwise
-detection would succeed trivially"). `link_mass_scale` scales the mass and inertia of arm links
-1-7 only (not the gripper, which is part of the robot, not the payload). The analysis side's
-model keeps the URDF values.
+detection would succeed trivially"). `mass_scale` scales the mass and inertia of the DRIVEN links
+only — the ones an arm joint moves, inferred from the URDF — and not the fixed base or the tool,
+which are part of the robot rather than the payload. The analysis side's model keeps the URDF
+values, so the mismatch is known and one-directional.
 """
 import xml.etree.ElementTree as ET
 
@@ -39,11 +40,14 @@ import pal_robot
 from pal_kinematics import Urdf, rpy
 
 SPEC = cfg.ROBOT                  # the arm this process is running (pal_robot.active())
-ARM = SPEC.dof                    # 7 for the Panda, 6 for the UR10e
-PAYLOAD_TCP_Z = 0.1034        # m along panda_hand z; where the analysis side's model puts the payload
-DEFAULT_MASS_SCALE = 1.05     # [CHOICE] deliberate plant-vs-model mass mismatch on the driven arm links
-# The links mass_scale applies to: the ones an arm joint drives. For the Panda that is exactly
-# panda_link1..7, as the old hard-coded tuple said; for the UR10e, shoulder_link..wrist_3_link.
+ARM = SPEC.dof                    # the arm's driven joints; 6 on the UR10e
+# Where a carried load sits, from the robot spec, so the plant and the analysis side's model
+# agree on the lever arm. Hard-coding it once cost the estimator the whole lever: the load went
+# on the flange while the model had it half a box beyond the cups.
+PAYLOAD_TCP_Z = float(SPEC.tool_offset[2])
+DEFAULT_MASS_SCALE = cfg.LINK_MASS_SCALE   # deliberate plant-vs-model mass mismatch, driven links only
+# The links mass_scale applies to: the ones an arm joint drives, inferred from the URDF rather
+# than listed, so it is right for any arm (on the UR10e, shoulder_link..wrist_3_link).
 ARM_LINKS = Urdf(SPEC.urdf_file(), tool_link=SPEC.tool_frame).moving_links
 
 
@@ -51,10 +55,10 @@ def _urdf_inertials(path):
     """Mass, COM and the full 3x3 inertia tensor per link, with the tensor rotated into link axes.
 
     A URDF may express the inertia in a frame rotated against the link (`<inertial><origin rpy=...>`).
-    The Panda does this on one finger only, with a diagonal tensor and a 180 degree turn about a
-    principal axis, so rotating it changes nothing there (verified: 1.6e-22). The UR10e does it on
-    three links with genuinely off-diagonal tensors, where ignoring it would be the same class of
-    error as the diagonal-only bug of 2026-11-03 (REVIEW F11)."""
+    The UR10e does this on three links with genuinely off-diagonal tensors, where ignoring the
+    rotation would be the same class of error as the diagonal-only inertia bug of 2026-11-03
+    (REVIEW F11). Cross-checked against Pinocchio on the same URDF to 1e-15 kg*m^2
+    (tests/test_ur10e.py)."""
     out = {}
     for l in ET.parse(path).getroot().findall("link"):
         it = l.find("inertial")
@@ -76,10 +80,12 @@ def _urdf_inertials(path):
 
 
 def base_friction():
-    """(7, 3) static N*m, dynamic N*m, viscous N*m*s/rad: Gaz et al. x PLANT_FRICTION_SCALE."""
-    s = cfg.PLANT_FRICTION_SCALE
-    return np.stack([cfg.FRICTION_COULOMB_STATIC * s, cfg.FRICTION_COULOMB_DYNAMIC * s,
-                     cfg.FRICTION_VISCOUS * s], axis=1)
+    """(dof, 3) static N*m, dynamic N*m, viscous N*m*s/rad: the spec's friction x the plant scale.
+
+    The scale is the deliberate plant-vs-model mismatch; the model side uses the same spec values
+    unscaled and through a different law. Asked through the spec rather than rebuilt here so the
+    two sides cannot drift apart."""
+    return SPEC.friction_3col(cfg.PLANT_FRICTION_SCALE)
 
 
 def _resolve_usd(spec):
@@ -134,9 +140,15 @@ def frame_camera():
 
 
 class Plant:
-    def __init__(self, hz, kp=400.0, kd=80.0, scene=False, gripper=False, cell=False):
-        """`gripper` builds the Panda's two-finger workcell (a table and one cube); `cell` builds
-        the industrial conveyor cell with a suction tool. They are alternatives, not a pair."""
+    def __init__(self, hz, kp=None, kd=None, scene=False, cell=False):
+        """`cell` builds the industrial conveyor cell (conveyor, boxes, background) and mounts the
+        suction tool; without it the arm stands bare, which is what the sweeps and selftests want.
+
+        kp/kd are per-radian joint stiffness and damping in N*m/rad and N*m*s/rad. They default to
+        the active drive mode's, which scales with the arm's effort limits — a fixed 400 N*m/rad is
+        a stiff drive on an 87 N*m joint and a soft one on a 330 N*m joint."""
+        kp = cfg.DEFAULT_KP if kp is None else kp
+        kd = cfg.DEFAULT_KD if kd is None else kd
         self.hz, self.dt = hz, 1.0 / hz
         # A rendered step (world.step(render=True)) advances the simulation by rendering_dt. With the usual 1/30 s that is 33 physics
         # steps inside ONE call, so windowed telemetry was time-warped (33x the motion on every rendered row; found 2026-11-04).
@@ -151,15 +163,6 @@ class Plant:
         sp.CreateMinVelocityIterationCountAttr(cfg.VELOCITY_ITERATIONS)
         add_reference_to_stage(usd_path=_resolve_usd(SPEC), prim_path=cfg.ROBOT_PRIM)
         self.spec = SPEC
-        self.gripper = gripper and SPEC.name == "panda"     # two driven fingers: the Panda's hand only
-        if self.gripper:
-            # Physyk's recipe (and NVIDIA's franka_pick_up demo): the stock Franka asset's default gripper variant leaves the second
-            # finger undriven; "AlternateFinger" is the one meant for real physical grasping. Select it before the articulation exists.
-            import omni.usd
-            variants = omni.usd.get_context().get_stage().GetPrimAtPath(cfg.ROBOT_PRIM).GetVariantSet("Gripper")
-            if "AlternateFinger" in variants.GetVariantNames():
-                variants.SetVariantSelection("AlternateFinger")
-            print(f"[plant] gripper variant: {variants.GetVariantSelection()} (available {variants.GetVariantNames()})", flush=True)
         self.cell = None
         self.tool = None
         if cell:
@@ -172,26 +175,24 @@ class Plant:
             # The suction tool is geometry parented to the wrist link, so it must exist before
             # world.reset() builds the articulation; mounting it afterwards may not take.
             self.tool = self.cell.mount_tool(cfg.ROBOT_PRIM)
-        else:
-            if scene:
-                dress_scene(self.world, with_table=not gripper)
-            if self.gripper:
-                from pal_objects import Workcell
-                self.cell = Workcell(self.world)           # a table you can touch and a cube with real mass
+        elif scene:
+            dress_scene(self.world)
         self.art = Articulation(cfg.ROBOT_PRIM)
         self.world.reset(); self.art.initialize()
         self.idx = np.arange(ARM)
         if self.cell is not None:
             self.cell.initialize()
-        if self.gripper:
-            self.configure_gripper()
         self._check_joint_order()
         self.pv = self.art._physics_view
         self.bodies = list(self.art.body_names)
-        self.urdf = _urdf_inertials(cfg.URDF_PATH)
+        self.urdf = _urdf_inertials(SPEC.urdf_file())
         self.stock_masses = np.asarray(self.art.get_body_masses()).reshape(-1)
-        self.art.set_gains(kps=np.full((1, ARM), kp * cfg.DEG_PER_RAD, np.float32),
-                           kds=np.full((1, ARM), kd * cfg.DEG_PER_RAD, np.float32),
+        # Gains go in per DEGREE: the tensor API is per radian but the USD drive attribute the
+        # write lands on is per degree, and the two differ by exactly 57.3 (cfg section 3).
+        self.kp = np.broadcast_to(np.asarray(kp, float), (ARM,)).copy()
+        self.kd = np.broadcast_to(np.asarray(kd, float), (ARM,)).copy()
+        self.art.set_gains(kps=(self.kp * cfg.DEG_PER_RAD).reshape(1, ARM).astype(np.float32),
+                           kds=(self.kd * cfg.DEG_PER_RAD).reshape(1, ARM).astype(np.float32),
                            joint_indices=self.idx)
         self.art.set_armatures(cfg.ARMATURE.reshape(1, ARM).astype(np.float32), joint_indices=self.idx)
         self.base_friction = base_friction()
@@ -225,26 +226,6 @@ class Plant:
                 "Fix the order in pal_robot before running: every index downstream depends on it.")
         print(f"[plant] joint order verified: {got}", flush=True)
 
-    # -- gripper --------------------------------------------------------------------------------------------------
-    FINGERS = np.array([7, 8])
-
-    def configure_gripper(self, kp=2400.0, kd=60.0, effort=70.0):
-        """Drive BOTH fingers. Measured on this asset: even with the AlternateFinger variant the second finger has kp = kd = effort = 0 and
-        the first only 7.2 N. A 25 mm squeeze error at kp 400 is 10 N; holding 2 kg at friction 1.05 needs ~10 N per finger plus margin and
-        the datasheet's continuous grasp force is 70 N in total. Measured: with effort = 35 the fingers squeezed with only 17.5 N each (the
-        limit is shared by the two mimicked fingers), so effort = 70 is what gives 35 N each, the datasheet's 70 N. Prismatic gains are N/m,
-        no degree conversion."""
-        self.art.set_gains(kps=np.full((1, 2), kp, np.float32), kds=np.full((1, 2), kd, np.float32), joint_indices=self.FINGERS)
-        self.art.set_max_efforts(np.full((1, 2), effort, np.float32), joint_indices=self.FINGERS)
-        self.finger_effort = effort
-
-    def set_fingers(self, each):
-        """Command both fingers to `each` metres (0.04 = open, 0 = closed on nothing); the position drive does the rest.
-        A no-op on an arm with no fingers (the UR10e holds boxes with suction instead)."""
-        if not self.gripper:
-            return
-        self.art.set_joint_position_targets(np.full((1, 2), each, np.float32), joint_indices=self.FINGERS)
-
     # -- inertials ------------------------------------------------------------------------
     def set_inertials(self, payload_kg, mass_scale):
         """Author masses/COMs/inertias from the URDF, scaled arm links, payload on the hand.
@@ -261,7 +242,10 @@ class Plant:
             if b in ARM_LINKS:
                 m0, T0 = m0 * mass_scale, T0 * mass_scale
             if b == SPEC.tool_frame and payload_kg > 0:
-                # hand + point mass at the TCP: combined mass and COM; full tensor by parallel axes
+                # tool link + point mass at the TCP: combined mass and COM, full tensor by the
+                # parallel-axis theorem. A point mass is the right model here because this path
+                # exists for a payload the arm is TOLD it has; a really gripped box is a separate
+                # rigid body and reaches the joints through the suction joint instead.
                 cp = np.array([0.0, 0.0, PAYLOAD_TCP_Z])
                 m = m0 + payload_kg
                 c = (m0 * c0 + payload_kg * cp) / m
@@ -285,15 +269,20 @@ class Plant:
         self.payload_kg, self.mass_scale = payload_kg, mass_scale
 
     # -- friction -------------------------------------------------------------------------
-    def set_friction(self, props7x3):
-        """Write (dof, 3) [static N*m, dynamic N*m, viscous N*m*s/rad]; any extra dofs keep zero."""
-        props7x3 = np.asarray(props7x3, np.float64)
-        full = np.asarray(self.pv.get_dof_friction_properties()).copy()      # (1, 9, 3)
-        full[0, :ARM, :] = props7x3
+    def set_friction(self, props):
+        """Write (dof, 3) [static N*m, dynamic N*m, viscous N*m*s/rad]; any extra dofs keep zero.
+
+        This goes through the physics view's set_dof_friction_properties, which takes efforts in
+        N*m. The older set_friction_coefficients takes a DIMENSIONLESS PhysX coefficient, and
+        passing N*m values to it produced ~38 N*m of friction on one joint (REVIEW F1). Read back
+        and asserted every time, because that bug was silent."""
+        props = np.asarray(props, np.float64)
+        full = np.asarray(self.pv.get_dof_friction_properties()).copy()      # (1, ndof, 3)
+        full[0, :ARM, :] = props
         self.pv.set_dof_friction_properties(full.astype(np.float32), np.array([0], dtype=np.int32))
         back = np.asarray(self.pv.get_dof_friction_properties())[0, :ARM, :]
-        assert np.allclose(back, props7x3, atol=1e-5), "friction write did not take"
-        self.friction = props7x3.copy()
+        assert np.allclose(back, props, atol=1e-5), "friction write did not take"
+        self.friction = props.copy()
 
     def to_effort_mode(self):
         """Drive off (kp = kd = 0) and the arm joints switched to explicit torque commands."""
@@ -311,8 +300,9 @@ class Plant:
         self.pv.apply_forces_and_torques_at_position(f, t, None, np.array([0], dtype=np.int32), True)
 
 
-def build_plant(hz, payload_kg=0.0, mass_scale=DEFAULT_MASS_SCALE, kp=400.0, kd=80.0, scene=False, gripper=False, cell=False):
-    plant = Plant(hz, kp=kp, kd=kd, scene=scene, gripper=gripper, cell=cell)
+def build_plant(hz, payload_kg=0.0, mass_scale=DEFAULT_MASS_SCALE, kp=None, kd=None,
+                scene=False, cell=False):
+    plant = Plant(hz, kp=kp, kd=kd, scene=scene, cell=cell)
     if scene:
         frame_camera()
     plant.set_inertials(payload_kg, mass_scale)

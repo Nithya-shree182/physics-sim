@@ -6,7 +6,7 @@
 For each run the arm is held by a soft torque controller and a known world-frame force is applied
 at the hand. The estimate comes from the residual of the APPLIED torque, no trained model:
 
-    r = tau_applied - (M qdd + C + g)        F_est = -(J^T)^+ r        (the Jacobian row is panda_hand)
+    r = tau_applied - (M qdd + C + g)        F_est = -(J^T)^+ r        (the Jacobian row is the arm's tool frame)
 
 compared with the logged `push_force_*` columns over the SETTLED part of the push (from 0.6 s after
 it starts to 0.05 s before it ends, read from the columns, not hardcoded). Pass condition, fixed

@@ -2,7 +2,7 @@
 
 Why suction and not fingers. The cell this arm works in moves cardboard boxes, and in a real
 warehouse those are moved by vacuum, not by a parallel gripper. It also removes a measurement
-problem the Panda had: a finger grasp carries part of the box's weight through finger-contact
+problem a finger grasp has: it carries part of the box's weight through finger-contact
 friction, a load path whose stiffness depends on the solver timestep, which is the leading
 suspect for the unexplained 2 kg payload error at 1000 Hz (STATUS problem 11/18). A suction grip
 is modelled here as a rigid attachment, so the whole of the box's weight and inertia reaches the

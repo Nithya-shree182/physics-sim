@@ -473,7 +473,7 @@ class ControlBox:
 
 
 def relight(stage, floor_z):
-    """Soften the Panda-era studio lighting for a room this size.
+    """Soften the bare-arm studio lighting for a room this size.
 
     The old key light was aimed at a single arm on a table; in a building with a roof it throws
     hard diagonal bars of shadow across everything. More ambient, less key, plus a couple of

@@ -15,10 +15,14 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+# Which columns are not float64. Everything else is, including the energy and conditioning
+# channels. Named explicitly rather than inferred from the array dtype, because npz round-trips
+# a bool array as bool but a column that happened to hold only 0.0 and 1.0 would otherwise come
+# back as float and fail the schema's dtype check.
 INT_COLS = {"step"}
-INT8_COLS = {"fault_joint"}
-BOOL_COLS = {"payload_attached", "fault_active", "attack_active", "mj_fresh"}
-STR_COLS = {"run_id", "traj_type", "drive_mode", "fault_type", "attack_type"}
+INT8_COLS = {"fault_joint", "box_index"}
+BOOL_COLS = {"payload_attached", "fault_active", "grip_active", "mj_fresh"}
+STR_COLS = {"run_id", "traj_type", "drive_mode", "fault_type", "phase"}
 
 
 def convert(npz_path: Path) -> Path:

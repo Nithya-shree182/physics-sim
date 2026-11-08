@@ -23,7 +23,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "observers"), str(ROOT / "model")]
 from detector import CALIBRATION_S, detect, evaluate         # noqa: E402
-from pinocchio_model import load_panda                         # noqa: E402
+from pinocchio_model import load_robot                         # noqa: E402
 from residual import DEFAULT_CUTOFF_HZ, compute_residual, load_run  # noqa: E402
 
 
@@ -54,7 +54,7 @@ def kind(e, name):
 
 
 def main(paths):
-    model = load_panda()
+    model = load_robot()
     runs = [load_run(p) for p in paths]
     out = {}
     for mode in ("none", "gain", "gainfr"):

@@ -33,7 +33,7 @@ import numpy as np
 HERE = Path(__file__).resolve().parent
 sys.path[:0] = [str(HERE), str(HERE.parent / "model")]
 from pose_mask import FORCE_GAIN_MAX, force_noise_gain  # noqa: E402
-from pinocchio_model import load_panda  # noqa: E402
+from pinocchio_model import load_robot  # noqa: E402
 from payload import estimate_payload, payload_torque_per_kg                                  # noqa: E402
 from residual import DEFAULT_CUTOFF_HZ, Residual, Run, compute_residual, fault_torque, load_run  # noqa: E402
 
@@ -267,7 +267,7 @@ def main() -> int:
     ap.add_argument("--consecutive", type=int, default=None, help="the same in rows (overrides --consecutive-s)")
     args = ap.parse_args()
 
-    model = load_panda()
+    model = load_robot()
     print(f"{'run':40s} {'fault':36s} {'detected':>8s} {'delay s':>8s} {'false':>6s} {'joint':>9s}  channel")
     for p in args.parquet:
         run = load_run(p)

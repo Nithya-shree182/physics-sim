@@ -106,7 +106,7 @@ def main():
     ap.add_argument("parquet", nargs="+", type=Path)
     ap.add_argument("--torque", default="applied", choices=("applied", "measured"))
     a = ap.parse_args()
-    urdf = Urdf(ROOT / "assets/franka_panda/panda_arm_hand.urdf")          # nominal: no mismatch, no payload
+    urdf = Urdf(pal_robot.active().urdf_file())          # nominal: no mismatch, no payload
     rows = [run_one(p, a.torque, urdf) for p in a.parquet]
     print(f"torque signal: tau_{a.torque}\n")
     print(f"{'run':<34}{'fault':<13}{'joint':>6}{'detected':>10}{'delay s':>9}{'false alarm':>13}  first alarm")

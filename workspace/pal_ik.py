@@ -12,7 +12,13 @@ import numpy as np
 
 import pal_config as cfg
 
-TOOL_OFFSET = (0.0, 0.0, 0.1034)           # the Franka TCP; the physical grasp uses the pad centre instead (pal_tasks.GRASP_TOOL_OFFSET)
+# What the IK aims. For a suction tool that is the CUP CONTACT PLANE: the point that has to land
+# on a box's top face. Note this is NOT the same as the robot spec's tool_offset (0.195 m), which
+# is where a CARRIED box's centre of mass sits — the cup plane plus half a box. Two different
+# points for two different jobs, and confusing them puts every pick half a box too low.
+import pal_suction as _SU                     # constants only; pulls in no USD
+
+TOOL_OFFSET = (0.0, 0.0, _SU.CUP_PLANE_Z)
 DOWN = np.diag([1.0, -1.0, -1.0])         # tool z axis pointing straight down (a rotation of pi about x)
 
 
@@ -30,7 +36,7 @@ def solve(urdf, p_target, R_target, q_seed, q_ref=None, tol_pos=1e-9, tol_rot=1e
           null_gain=0.1, offset=TOOL_OFFSET):
     """Return (q, converged, (position error m, rotation error rad)). Joint limits are enforced by clipping each step.
 
-    Works for a redundant arm (the Panda's 7 joints, where the null-space bias holds the elbow on
+    Works for a redundant arm (7+ joints, where the null-space bias holds the elbow on
     one branch) and for a square one (the UR10e's 6, where the null space is empty and the bias
     term falls out of the arithmetic by itself)."""
     n = urdf.dof

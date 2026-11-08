@@ -28,6 +28,11 @@ OFFSET = np.array([0.6, -0.3, 0.3, 0.4, 0.3, -0.4, 0.3])[:cfg.DOF]   # the O6 "p
 Q_HOME, Q_PICK = cfg.HOME_JOINTS, cfg.HOME_JOINTS + OFFSET
 
 
+# The wrist joint, by index. Written as the arm's last rather than a number so a fault aimed at
+# "the far end of the chain" stays aimed there when the arm changes.
+LAST_JOINT = cfg.DOF - 1
+
+
 def _kg(kg):
     return f"{kg:g}kg".replace(".", "p")
 
@@ -56,7 +61,12 @@ def o5():
     specs = [FaultSpec("none")] * 6
     specs += [FaultSpec("friction", j, m, onset) for m in (2.0, 4.0, 8.0) for j in (1, 2, 3, 5)]
     specs += [FaultSpec("stuck_joint", 3, 200.0, onset)]
-    specs += [FaultSpec("backlash", 0, w, onset) for w in (0.02, 0.06, 0.12)] + [FaultSpec("backlash", 6, 0.12, onset)]
+    # Backlash on the base joint across three widths, plus one on the LAST joint: the two ends of
+    # the chain are the interesting cases, because backlash at the base moves the whole arm while
+    # backlash at the wrist moves only the tool. `LAST_JOINT` rather than a literal 6, which was the
+    # Panda's last index and is out of range on a six-joint arm — pal_faults now rejects it instead
+    # of applying the fault to a joint that does not exist.
+    specs += [FaultSpec("backlash", 0, w, onset) for w in (0.02, 0.06, 0.12)] + [FaultSpec("backlash", LAST_JOINT, 0.12, onset)]
     specs += [FaultSpec("delay", 0, s, onset) for s in (0.010, 0.030, 0.050)]
     runs, nh = [], 0
     for f in specs:
@@ -80,7 +90,7 @@ def clean():
 def fast(frac=0.40):
     specs = [FaultSpec("none"),
              FaultSpec("friction", 3, 2.0, 3.0), FaultSpec("friction", 3, 4.0, 3.0), FaultSpec("friction", 3, 8.0, 3.0),
-             FaultSpec("backlash", 0, 0.02, 3.0), FaultSpec("backlash", 0, 0.12, 3.0), FaultSpec("backlash", 6, 0.12, 3.0),
+             FaultSpec("backlash", 0, 0.02, 3.0), FaultSpec("backlash", 0, 0.12, 3.0), FaultSpec("backlash", LAST_JOINT, 0.12, 3.0),
              FaultSpec("delay", 0, 0.010, 3.0), FaultSpec("delay", 0, 0.030, 3.0), FaultSpec("stuck_joint", 3, 200.0, 3.0)]
     return [Scenario(name=f"fast_{f.tag}", traj=T.multisine(frac), traj_type="excitation", duration_s=6.0, fault=f, noise_seed=1000)
             for f in specs]
@@ -105,7 +115,7 @@ def extra():
 
 def push():
     runs = []
-    # Poses are whatever the arm names (cfg.PROBE_POSES). The Panda had five; the UR10e has home.
+    # Poses are whatever the arm names (cfg.PROBE_POSES). The UR10e has only home.
     named = tuple(cfg.PROBE_POSES)
     for friction_scale, label, poses, mags in ((1.0, '', named, (10.0, 20.0)),
                                                (0.0, 'nofric_', named, (10.0,))):
@@ -169,7 +179,7 @@ def pickphys(masses=(0.5, 1.0, 2.0)):
 
     def scen(name, task, kg, fault=None, seed=5200):
         return Scenario(name=name, traj=task.traj, traj_type="pick", duration_s=task.duration + 0.5, payload_physical=True,
-                        payload_events=((task.t_attach, kg), (task.t_open, 0.0)), cube_kg=kg, noise_seed=seed, task=task,
+                        payload_events=((task.t_attach, kg), (task.t_release, 0.0)), box_kg=kg, noise_seed=seed, task=task,
                         **({"fault": fault} if fault else {}))
     for style in ("trapezoidal", "s_curve", "torque_aware"):
         task = K.pick_place(style, physical=True)
@@ -198,13 +208,13 @@ def pickfar(masses=(0.5, 1.0, 2.0)):
         for kg in kgs:
             runs.append(Scenario(name=f"pickfar_x{round(xy[0] * 100)}y{round(xy[1] * 100):+d}_{_kg(kg)}".replace("+", "p").replace("-", "m"),
                                  traj=task.traj, traj_type="pick", duration_s=task.duration + 0.5, payload_physical=True,
-                                 payload_events=((task.t_attach, kg), (task.t_open, 0.0)), cube_kg=kg, noise_seed=5300, task=task))
+                                 payload_events=((task.t_attach, kg), (task.t_release, 0.0)), box_kg=kg, noise_seed=5300, task=task))
     # faults at the far spot, for the detector's gate: a healthy reference (another noise seed) and faults after the grasp; the 1 kg run
     # above (same seed 5300) is their healthy twin
     task = K.pick_place("s_curve", physical=True, pick_xy=FAR_PICKS[0])
     onset = task.t_attach + 0.4
     base = dict(traj=task.traj, traj_type="pick", duration_s=task.duration + 0.5, payload_physical=True,
-                payload_events=((task.t_attach, 1.0), (task.t_open, 0.0)), cube_kg=1.0, task=task)
+                payload_events=((task.t_attach, 1.0), (task.t_release, 0.0)), box_kg=1.0, task=task)
     runs.append(Scenario(name="pickfar_x74ym25_1kg_ref", noise_seed=5301, **base))
     for f in (FaultSpec("friction", 3, 8.0, onset), FaultSpec("friction", 5, 8.0, onset),
               FaultSpec("stuck_joint", 0, 200.0, onset), FaultSpec("delay", 0, 0.050, onset)):
@@ -212,7 +222,9 @@ def pickfar(masses=(0.5, 1.0, 2.0)):
     return runs
 
 
-LIVE_SPEED_CAP = 0.5                                                                        # fraction of each joint's velocity limit
+# The trusted speed band (DECISIONS.md D1), as a fraction of each joint's velocity limit. Lives in
+# pal_config so the dashboard, the cell demo and the suites cannot disagree about it.
+LIVE_SPEED_CAP = cfg.SPEED_BAND
 
 
 def peak_speed_fraction(task, step_s=0.02):
@@ -224,41 +236,38 @@ def peak_speed_fraction(task, step_s=0.02):
 LIVE_FAULTS = {"friction": 8.0, "stuck_joint": 200.0, "delay": 0.050}       # what the dashboard's fault choices mean in the simulator
 
 
-def random_pick_xy(rng, tries=60):
-    """A random cube position on the table that is a little away from the fixed demo spot (0.51 m from the base) but well short of the
-    arm's reach: 0.53-0.65 m out, on the side away from the place point, kept only if the IK solves. Never stretched far enough to
-    close the confidence gates (tests/test_suites.py checks it over the whole pick)."""
-    for _ in range(tries):
-        r, th = rng.uniform(0.53, 0.65), rng.uniform(np.radians(-65.0), 0.0)
-        xy = (round(float(r * np.cos(th)), 3), round(float(r * np.sin(th)), 3))
-        if xy[0] < 0.35:
-            continue
-        try:
-            K.waypoints(pick_xy=xy, offset=K.GRASP_TOOL_OFFSET, lift=K.GRASP_LIFT)
-        except ValueError:
-            continue
-        return xy
-    return tuple(K.PICK_XY)
+def live_cycle(style="s_curve", kg=None, fault="none", joint=3, name="live_cycle", speed=0.7,
+               n_boxes=None):
+    """One real cell cycle for the live dashboard: the conveyor cell's boxes at `kg` each, in the
+    given style, with an optional fault 0.4 s after the first box is gripped.
 
+    This replaced live_pick, which was a single cube picked by two fingers. The cell's cycle is the
+    run the project now has, so the live view and the recorded suites exercise the same motion.
 
-def live_pick(style="s_curve", kg=1.0, fault="none", joint=3, name="live_pick", speed=0.7, pick_xy=None):
-    """One real pick for the live dashboard: the physical cube at `kg`, the given style, and optionally a fault that starts 0.4 s after the grasp.
-    Same scenario recipe as pickphys(), without sensor noise (the live server adds its own to what it streams).
-    `speed` is the dashboard's speed bar as a fraction (1.0 = the bar's 100% = LIVE_SPEED_CAP of the velocity limit); 0.7 is the original 35%."""
+    `speed` is the dashboard's speed bar as a fraction: 1.0 on the bar is cfg.SPEED_BAND of the
+    datasheet velocity limit (DECISIONS.md D1), so the arm cannot be driven out of the trustworthy
+    regime from the dashboard however the bar is set."""
+    import pal_cell_geom as G
     if style not in ("trapezoidal", "s_curve", "torque_aware"):
         raise ValueError(f"unknown style {style!r}")
-    if not 0.2 <= kg <= 3.0:
-        raise ValueError("cube mass must be 0.2-3 kg")
+    kg = G.BOX_DEFAULT_KG if kg is None else float(kg)
+    if not 0.2 <= kg <= cfg.PAYLOAD_RATED_MAX_KG:
+        raise ValueError(f"box mass must be 0.2-{cfg.PAYLOAD_RATED_MAX_KG:g} kg, got {kg:g}")
     if not 0.05 <= speed <= 1.0:
         raise ValueError("speed must be 0.05-1.0 of the speed bar")
-    v = LIVE_SPEED_CAP * speed * 0.99                 # 1% under the cap: an s-curve overshoots its nominal peak by a hair
-    task = K.pick_place(style, physical=True, vscale=v, ascale=v, tfac=2.5 * 0.35 / v, **({"pick_xy": tuple(pick_xy)} if pick_xy else {}))
+    task = K.cell_cycle(style, n_boxes=n_boxes, speed=speed)
     peak = peak_speed_fraction(task)
-    if peak > LIVE_SPEED_CAP:                      # the live demo stays in the trusted regime (DECISIONS.md D1)
-        raise ValueError(f"{style} pick peaks at {peak:.0%} of the velocity limit; the live cap is {LIVE_SPEED_CAP:.0%}")
-    f = FaultSpec() if fault == "none" else FaultSpec(fault, 0 if fault == "delay" else int(joint), LIVE_FAULTS[fault], task.t_attach + 0.4)
-    return Scenario(name=name, traj=task.traj, traj_type="pick", duration_s=task.duration + 0.5, payload_physical=True,
-                    payload_events=((task.t_attach, kg), (task.t_open, 0.0)), cube_kg=kg, task=task, fault=f)
+    if peak > cfg.SPEED_BAND + 1e-6:          # the live demo stays in the trusted regime (D1)
+        raise ValueError(f"{style} cycle peaks at {peak:.0%} of the velocity limit; "
+                         f"the band is {cfg.SPEED_BAND:.0%}")
+    # The fault starts shortly after the FIRST box is on the tool, so the arm is loaded and moving
+    # when it hits — a fault injected at rest shows up only as a step and is the easy case.
+    t_first_grip = next((ev[0] for ev in task.events if ev[1] == "picked"), 0.0)
+    f = (FaultSpec() if fault == "none"
+         else FaultSpec(fault, 0 if fault == "delay" else int(joint), LIVE_FAULTS[fault],
+                        t_first_grip + 0.4))
+    return Scenario(name=name, traj=task.traj, traj_type="cycle", duration_s=task.duration + 0.5,
+                    payload_physical=True, box_kg=kg, task=task, fault=f)
 
 
 def o6pick():
@@ -282,5 +291,7 @@ SUITES = {"reference": ("data", reference), "o4": ("out/o4", o4), "o5": ("out/o5
           "push": ("out/push", push), "o6": ("out/o6", o6), "pick": ("out/pick", pick), "o6pick": ("out/o6pick", o6pick),
           "pickphys": ("out/pickphys", pickphys), "pickfar": ("out/pickfar", pickfar)}
 ORDER = ["reference", "o4", "o5", "clean", "fast", "extra", "push", "o6", "pick", "o6pick", "pickphys", "pickfar"]
-NEEDS_GRIPPER = {"pickphys", "pickfar"}       # suites that need the gripper asset variant, finger drives and a physical cube; they cannot share
-                                   # a process with the others (a different asset variant would change the other suites' physics)
+# Suites whose payload is a REAL gripped box rather than a mass folded into the tool link, so they
+# need the conveyor cell and its suction tool built into the stage. They cannot share a process
+# with the others: the cell adds collision geometry the bare-arm suites must not see.
+NEEDS_CELL = {"pickphys", "pickfar"}

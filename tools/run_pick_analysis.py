@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "observers"), str(ROOT / "model")]
 from detector import against_reference, compensate_payload, detect, evaluate       # noqa: E402
 from payload import estimate_payload                            # noqa: E402
-from pinocchio_model import load_panda                          # noqa: E402
+from pinocchio_model import load_robot                          # noqa: E402
 from residual import DEFAULT_CUTOFF_HZ, compute_residual, fault_torque, load_run  # noqa: E402
 
 
@@ -35,7 +35,7 @@ def known_mass(run, t):
 def main(out, hz=1000):
     suf = f"_{hz}hz"                      # score one physics rate at a time: runs of different rates are never paired
     out = Path(out)
-    model = load_panda()
+    model = load_robot()
     print(f"{'PAYLOAD':<34}{'known kg':>9}{'tare kg':>9}{'carried est':>12}{'error kg':>10}{'error %':>9}{'settles in s':>14}")
     ok = True
     n = 0
@@ -49,7 +49,7 @@ def main(out, hz=1000):
         t = est.t
         if task:
             ta = task["t_attach_s"]
-            tr = task.get("t_open_s") or task["t_release_s"]       # a physical cube stops loading the arm when the fingers open
+            tr = task["t_release_s"]       # a carried box stops loading the arm when the vacuum bleeds
             known = known_mass(run, 0.5 * (ta + tr))
             empty = (t > 1.0) & (t < ta - 0.3)
             carry = (t > ta + 1.0) & (t < tr - 0.3)

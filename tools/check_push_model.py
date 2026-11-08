@@ -15,7 +15,7 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "observers"), str(ROOT / "model")]
-from pinocchio_model import load_panda          # noqa: E402
+from pinocchio_model import load_robot          # noqa: E402
 from residual import DEFAULT_CUTOFF_HZ, compute_residual, load_run  # noqa: E402
 
 REL_TOL, OFFAXIS_TOL_N, SPEED_LIMIT = 0.15, 1.5, 0.5
@@ -23,7 +23,7 @@ QD_MAX = np.array([2.175, 2.175, 2.175, 2.175, 2.61, 2.61, 2.61])
 
 
 def main(paths):
-    model = load_panda()
+    model = load_robot()
     print(f"  {'run':<34}{'applied N':>22}{'estimated N':>26}{'err %':>8}{'off-axis N':>12}")
     worst_rel = worst_off = worst_speed = 0.0
     n = 0

@@ -21,17 +21,23 @@ import pal_ik
 import pal_trajectories as T
 from pal_kinematics import Urdf
 
-CUBE = cfg.PAYLOAD_SIZE                      # m, cube edge
-TABLE_TOP_Z = 0.0
-PICK_XY = (0.45, -0.25)                      # m, in the robot base frame
-PLACE_XY = (0.45, 0.25)
-APPROACH_Z = 0.22                            # m, tool height for the carry
+# The single-object pick takes its geometry from the real cell, so a one-box experiment and the
+# three-box cycle are the same scene measured two ways rather than two sets of numbers that can
+# drift apart. The object is the cell's first box; it is set down where the cycle sets boxes down.
+import pal_cell_geom as _G
+
+BOX_H = _G.BOX[2]                            # m, box height
+TABLE_TOP_Z = _G.WORK_Z                      # the infeed table's top face
+PICK_XY = _G.box_positions()[0]              # the first box on the infeed table
+PLACE_XY = tuple(_G.PLACE_XY)                # over the belt, where the cycle releases
+APPROACH_Z = _G.CARRY_Z                      # cup-plane height while carrying
 GRASP_DWELL_S = 0.4
-# Physical grasp. Measured in the simulator (pal_gripper_probe.py): the finger pads span 0.0584-0.1124 m along the hand's z axis, so a
-# 0.05 m cube is held with its centre ~0.09 m from the hand origin, which leaves the fingertips ~2 mm above a table the cube rests on; the
-# 4 mm lift below raises them a little more. (The modelled pick keeps the TCP at 0.1034 m.)
-GRASP_TOOL_OFFSET = (0.0, 0.0, 0.09)
-GRASP_LIFT = 0.004
+# A suction grip holds the box by its TOP FACE, so the point the IK aims is the cup plane and the
+# target height is the face itself, not the object's centre. A finger grasp was different: it took
+# the cube at its mid-height, which is why this used to be an offset of its own.
+GRASP_TOOL_OFFSET = tuple(pal_ik.TOOL_OFFSET)
+CUP_CONTACT_GAP = 0.002                      # m, how far above the box face the cups stop
+GRASP_LIFT = CUP_CONTACT_GAP
 
 
 def _urdf(path=None):
@@ -51,18 +57,30 @@ class Task:
     place_xy: tuple = None
     waypoints: dict = None
     name: str = ""
-    physical: bool = False            # a real cube and real finger contact (the fingers close at t_close and open at t_open)
-    t_close: float = None
-    t_open: float = None
-    events: tuple = ()                # ((t, "vacuum_on"|"vacuum_off"|"picked"|"placed", box index), ...)
+    physical: bool = False            # a real box, really gripped, rather than a mass folded
+                                      # into the tool link's inertia
+    events: tuple = ()                # ((t, what, box index), ...) where what is one of
+                                      # "vacuum_on" | "vacuum_off" | "picked" | "placed".
+                                      # This is the ONE way a task drives the gripper. The arm
+                                      # used to carry separate finger-close and finger-open
+                                      # times, which only worked for a single-object pick; a
+                                      # three-box cycle needs a list, and a suction seal is an
+                                      # outcome the tool reports rather than a time to assume.
     n_boxes: int = 0
+
+    def vacuum_schedule(self):
+        """[(t, on)] from `events`, in time order: what the gripper is commanded to do."""
+        return [(ev[0], ev[1] == "vacuum_on") for ev in self.events
+                if ev[1] in ("vacuum_on", "vacuum_off")]
 
 
 def waypoints(urdf=None, pick_xy=PICK_XY, place_xy=PLACE_XY, approach_z=APPROACH_Z, offset=pal_ik.TOOL_OFFSET, lift=0.0):
     """Joint configurations for the pick-and-place, from IK. Raises if a target is unreachable or the arm jumps branch."""
     urdf = urdf or _urdf()
     R, _ = pal_ik.tool_target_from_home(urdf)
-    zc = TABLE_TOP_Z + CUBE / 2 + lift                         # the grasp point is at the cube's centre when grasping
+    # The cups meet the box's TOP FACE. `lift` holds them a hair clear of it so a solver tolerance
+    # cannot drive them into the carton.
+    zc = TABLE_TOP_Z + BOX_H + lift
     pts = {"pre_pick": (*pick_xy, approach_z), "pick": (*pick_xy, zc), "pre_place": (*place_xy, approach_z),
            "place": (*place_xy, zc + 0.003)}
     order = ["pre_pick", "pick", "pre_place", "place"]
@@ -112,9 +130,14 @@ def pick_place(style, vscale=0.35, ascale=0.35, tfac=2.5, urdf=None, physical=Fa
             t += part.duration
         parts.append(part)
     traj = T.sequence(parts)
-    return Task(traj, traj.duration, t_attach, t_release, kw.get("pick_xy", PICK_XY), kw.get("place_xy", PLACE_XY), wp,
+    # A physical pick commands the vacuum one dwell before the payload is expected to be on the
+    # tool, so the cups have time to seal; the same offset the palletize cycle uses.
+    events = ((t_attach - GRASP_DWELL_S, "vacuum_on", 0), (t_attach, "picked", 0),
+              (t_release - GRASP_DWELL_S, "vacuum_off", 0), (t_release, "placed", 0)) if physical else ()
+    return Task(traj, traj.duration, t_attach, t_release, kw.get("pick_xy", PICK_XY),
+                kw.get("place_xy", PLACE_XY), wp,
                 f"pick_{style}" + ("_physical" if physical else ""), physical=physical,
-                t_close=t_attach - GRASP_DWELL_S if physical else None, t_open=t_release - GRASP_DWELL_S if physical else None)
+                events=events, n_boxes=1 if physical else 0)
 
 
 @functools.lru_cache(maxsize=4)
@@ -141,7 +164,6 @@ def ellipse(center=(0.42, 0.0, 0.30), a=0.12, b=0.08, cycles=2, duration=12.0, h
 
 # ── the conveyor cell's cycle: three boxes, infeed table to moving belt ───────────────────────
 VACUUM_DWELL_S = 0.45            # held still while the cups seal, and again while they bleed
-CUP_CONTACT_GAP = 0.002          # m, how far above the box face the cups stop
 
 
 def palletize(style, boxes_xy, place_xy, box_top_z, place_top_z, cup_offset,
@@ -210,3 +232,42 @@ def palletize(style, boxes_xy, place_xy, box_top_z, place_top_z, cup_offset,
     return Task(traj, traj.duration, pick_xy=tuple(boxes_xy[0]), place_xy=tuple(place_xy),
                 waypoints={"home": q_home}, name=name or f"palletize_{style}", physical=True,
                 events=tuple(events), n_boxes=len(boxes_xy))
+
+
+def cell_cycle(style="s_curve", n_boxes=None, speed=1.0, band=None, urdf=None, name=None):
+    """THE cycle this project runs: the conveyor cell's boxes, picked and placed in order.
+
+    One definition, shared by the watched demo (pal_cell_demo), the live server (pal_live) and the
+    recorded suites, so a number quoted from one is a number about the others. Every height comes
+    from pal_cell_geom; nothing here is a literal.
+
+    `speed` is the user-facing knob, 0 to 1, and `band` is the fraction of the datasheet velocity
+    limit that 1.0 on that knob means — cfg.SPEED_BAND, which is 0.5 (DECISIONS.md D1). So the arm
+    cannot be commanded past half its velocity limit however the knob is set, which is the regime
+    the residual is trustworthy in.
+    """
+    import pal_cell_geom as G
+    import pal_suction as SU_const                    # constants only; this import pulls in no USD
+
+    band = cfg.SPEED_BAND if band is None else band
+    if not 0.0 < speed <= 1.0:
+        raise ValueError(f"speed must be in (0, 1], got {speed}")
+    # 1% under the band. An s-curve's velocity profile overshoots its nominal peak by a hair, so
+    # commanding exactly the band puts the realised peak a fraction above it and the cycle is
+    # rejected by its own speed check. Measured, not guessed: without this the s_curve cycle at
+    # speed 1.0 lands at 50.0...% of a 50% band.
+    v = band * speed * 0.99
+    return palletize(
+        style,
+        tuple(G.box_positions(G.N_BOXES if n_boxes is None else n_boxes)),
+        tuple(G.PLACE_XY),
+        box_top_z=G.BOX_TOP_Z,
+        place_top_z=G.PLACE_TOP_Z,
+        approach_z=G.CARRY_Z,
+        cup_offset=(0.0, 0.0, SU_const.CUP_PLANE_Z),
+        vscale=v, ascale=v,
+        # A torque-aware leg takes tfac seconds per radian of the largest joint move, so it has to
+        # scale with the speed knob or the style stops responding to it at all.
+        tfac=2.5 * band / v,
+        urdf=urdf,
+        name=name or f"cell_{style}")

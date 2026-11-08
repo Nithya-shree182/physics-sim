@@ -21,8 +21,11 @@ from pal_faults import FaultInjector, FaultSpec
 from pal_sensors import SensorNoise
 from pal_telemetry import TelemetryWriter
 
-ARM = cfg.DOF          # driven arm joints; the articulation may hold more (the Panda's two fingers)
-KP_NORMAL, KD_NORMAL = 400.0, 40.0     # acceleration-space feedback gains
+ARM = cfg.DOF          # driven arm joints; the articulation may hold more
+# Acceleration-space feedback gains. These multiply a position/velocity error to give a desired
+# ACCELERATION, which M then turns into torque, so they are 1/s^2 and 1/s and do not scale with
+# the arm the way a stiffness in N*m/rad does — the same numbers are right on any arm.
+KP_NORMAL, KD_NORMAL = 400.0, 40.0
 KP_LOW, KD_LOW = 40.0, 12.0             # "low-gain torque mode" for the validation push (proposal 7.7): ten times
                                         # softer than normal but critically damped. Kp = 4 let a 10 N push drive the
                                         # arm to its velocity limit, where the residual is not valid (docs/VALIDATION.md)
@@ -45,14 +48,16 @@ class Scenario:
     payload_kg: float = 0.0
     mass_scale: float = 1.05
     fault: FaultSpec = field(default_factory=FaultSpec)
-    noise_seed: int = None               # None = no sensor noise
+    noise_seed: int = None               # seed for the logged sensor noise (None = seed 0)
+    noise_scale: float = None            # multiplier on pal_sensors.REFERENCE_SIGMA;
+                                         # None = read $PAL_SENSOR_NOISE, which defaults to 0 (ideal)
     gains: str = "normal"                # "normal" | "low"
     push: PushSpec = None
     tau_limit: bool = True               # clip the command to the datasheet torque limits
     diagnostics: bool = False            # also return net = M qdd + C + g and the Jacobian per step
     payload_events: tuple = ()           # ((t_s, kg), ...): payload changes mid-run, e.g. a pickup at 3 s
     payload_physical: bool = False       # the payload is a real object (the cube): payload_events then only update the labels
-    cube_kg: float = None                # mass of the physical cube for this run (needs a plant built with gripper=True)
+    box_kg: float = None                 # mass of the physical carried box (needs a plant built with cell=True)
     task: object = None                  # a pal_tasks.Task: its grasp and release times, for the manifest and the drawn cube
     friction_scale: float = 1.0          # multiplier on the plant's base friction for this run (0 = friction off, the push control)
 
@@ -66,12 +71,19 @@ class Runner:
         self.inj = FaultInjector(plant, plant.hz)
         plant.to_effort_mode()
         self.art = plant.art
-        self.ndof = int(np.asarray(self.art.get_joint_positions()).reshape(-1).shape[0])   # 9 on the Panda (7 + 2 fingers), 6 on the UR10e
+        # The articulation's full joint count, which may exceed the arm's own (6 on the UR10e).
+        self.ndof = int(np.asarray(self.art.get_joint_positions()).reshape(-1).shape[0])
         self._tau = np.zeros(self.ndof, np.float32)
 
     @staticmethod
     def _v(x, n=ARM):
         return np.asarray(x).flatten()[:n]
+
+    def _pad(self, v):
+        """An arm-length vector widened to the articulation's full joint count, zero-filled."""
+        out = np.zeros(self.ndof, dtype=np.float32)
+        out[:ARM] = np.asarray(v, dtype=float)[:ARM]
+        return out
 
     def _command(self, traj, t, kp, kd, tau_limit):
         art = self.art
@@ -101,42 +113,55 @@ class Runner:
         kp, kd = (KP_LOW, KD_LOW) if sc.gains == "low" else (KP_NORMAL, KD_NORMAL)
 
         cell = getattr(p, "cell", None)
-        if cell is not None:
-            if sc.cube_kg is not None and sc.task is not None:
-                cell.place(sc.task.pick_xy, sc.cube_kg)
-            else:
-                cell.park()
-            p.set_fingers(0.04)
+        if cell is not None and sc.box_kg is not None:
+            cell.reset_boxes(kg=sc.box_kg)
         q0, qd0, _ = sc.traj(0.0)
-        art.set_joint_positions(np.concatenate([q0, [.04, .04]]))
-        art.set_joint_velocities(np.concatenate([qd0, [0., 0.]]).reshape(1, -1))
+        # The articulation may carry joints past the arm's own (none on the UR10e). Pad rather
+        # than assume a width: a mismatched concatenate here is a silent joint-order bug.
+        art.set_joint_positions(self._pad(q0))
+        art.set_joint_velocities(self._pad(qd0).reshape(1, -1))
         for _ in range(int(SETTLE_S * hz)):
             tau, *_ = self._command(sc.traj, 0.0, KP_NORMAL, KD_NORMAL, sc.tau_limit)
             self._apply(tau); p.world.step(render=False)
 
-        noise = SensorNoise(sc.noise_seed) if sc.noise_seed is not None else None
+        # Ideal sensing unless asked for: pal_sensors honours $PAL_SENSOR_NOISE and an ideal
+        # sensor is a no-op, so this is always an object and the writer never branches on None.
+        noise = SensorNoise(sc.noise_seed if sc.noise_seed is not None else 0, scale=sc.noise_scale)
         run_id = f"{sc.name}_{int(hz)}hz"
         f = sc.fault
         writer = TelemetryWriter(
-            art, run_id, out_dir=self.out_dir, ee_body_index=cfg.EE_JACOBIAN_ROW,
-            ee_prim=f"{cfg.ROBOT_PRIM}/panda_hand", mj_every=self.mj_every, noise=noise,
+            art, run_id, out_dir=self.out_dir, ee_body_name=cfg.TOOL_FRAME,
+            ee_prim=f"{cfg.ROBOT_PRIM}/{cfg.TOOL_FRAME}", mj_every=self.mj_every, noise=noise,
             labels={"traj_type": sc.traj_type, "drive_mode": "torque", "payload_kg": sc.payload_kg,
                     "payload_attached": sc.payload_kg > 0, "fault_type": f.type,
                     "fault_joint": f.joint, "fault_param": f.param, "attack_type": "none"},
             manifest=self._manifest(sc))
         steps = int(sc.duration_s * hz)
+        grip = False
+        # The vacuum schedule as step indices, resolved once rather than compared per step.
+        vacuum_steps = ([(int(round(tv * hz)), on) for tv, on in sc.task.vacuum_schedule()]
+                        if (sc.task is not None and sc.task.physical) else [])
         qdd_last = np.zeros(ARM)
         qd_prev = self._v(art.get_joint_velocities())
         log = {"q": [], "qd": [], "qdd": [], "cmd": [], "q_des": [], "net": [], "J": []}
-        cube_path = []
+        box_path = []
         for k in range(steps):
             t = k / hz
             active = self.inj.update(t)
-            if cell is not None and sc.task is not None and sc.task.physical:
-                if k == int(round(sc.task.t_close * hz)):
-                    p.set_fingers(0.0)                 # close: the position drive squeezes until the cube stops the fingers
-                elif k == int(round(sc.task.t_open * hz)):
-                    p.set_fingers(0.04)
+            # Suction, not fingers. The vacuum is switched at t_attach / t_release and the tool
+            # decides for itself whether a seal actually happened, from where the cups are: a
+            # commanded grip is not the same event as a grip. The fixed joints it toggles are
+            # pre-created before world.reset(), because creating or deleting one mid-run changes
+            # stage topology and tears down the articulation's physics view.
+            if p.tool is not None and sc.task is not None and sc.task.physical:
+                for step_k, on in vacuum_steps:
+                    if k == step_k:
+                        p.tool.set_vacuum(on, t)
+                ev = p.tool.update(t, cell.boxes if cell is not None else [])
+                if ev == "grip":
+                    grip = True
+                elif ev == "release":
+                    grip = False
             for ev_t, ev_kg in sc.payload_events:
                 if k == int(round(ev_t * hz)):
                     if not sc.payload_physical:
@@ -154,20 +179,21 @@ class Runner:
             qdd_last = (qd_now - qd_prev) / self.dt; qd_prev = qd_now
             if write:
                 writer.capture(k, (k + 1) / hz, self.dt, q_cmd=qs, qd_cmd=qds, qdd_cmd=qdds,
+                               tau_applied=tau,
                                push_force=(sc.push.force if (sc.push and sc.push.start_s <= t < sc.push.end_s)
                                            else (0.0, 0.0, 0.0)) if sc.push else None,
-                               fault_active=active)
+                               fault_active=active, grip_active=grip)
             if sc.diagnostics:
                 g1 = self._v(art.get_generalized_gravity_forces())
                 c1 = self._v(art.get_coriolis_and_centrifugal_forces())
                 M1 = np.asarray(art.get_mass_matrices()).reshape(self.ndof, self.ndof)[:ARM, :ARM]
                 log["net"].append(M1 @ qdd_last + c1 + g1)
                 J = np.asarray(art.get_jacobians())
-                log["J"].append(J.reshape(J.shape[0], -1, J.shape[-2], J.shape[-1])[0, cfg.EE_JACOBIAN_ROW][:, :ARM])
+                log["J"].append(J.reshape(J.shape[0], -1, J.shape[-2], J.shape[-1])[0, writer.ee_body_index][:, :ARM])
             if on_step is not None:
                 on_step(k, t, {"qd": qd_now, "tau": tau, "q_des": qs})
-            if cell is not None and sc.cube_kg is not None and k % 10 == 0:
-                cube_path.append(cell.position())
+            if cell is not None and sc.box_kg is not None and k % 10 == 0:
+                box_path.append(cell.position())
             q_now = self._v(art.get_joint_positions())
             if self.viz is not None and self.render_every and k % self.render_every == 0:
                 self.viz.update(sc.task, t, q_now)
@@ -181,13 +207,16 @@ class Runner:
         frac = np.max(np.abs(out["qd"]), axis=0) / cfg.QD_MAX
         writer.manifest_extra["speed_fraction"] = float(frac.max())
         writer.manifest_extra["speed_fraction_per_joint"] = [round(float(x), 4) for x in frac]
-        if cube_path:
-            cp = np.array(cube_path)
+        if box_path:
+            cp = np.array(box_path)
             tgt = np.array(sc.task.place_xy)
-            writer.manifest_extra["cube"] = {
-                "mass_kg": sc.cube_kg, "mass_readback_kg": getattr(cell, "mass_readback", None), "start_xyz": [round(float(x), 4) for x in cp[0]], "end_xyz": [round(float(x), 4) for x in cp[-1]],
-                "max_z": round(float(cp[:, 2].max()), 4), "end_xy_error_to_place_m": round(float(np.linalg.norm(cp[-1, :2] - tgt)), 4),
-                "lifted": bool(cp[:, 2].max() > cfg.PAYLOAD_SIZE / 2 + 0.05)}
+            writer.manifest_extra["box"] = {
+                "mass_kg": sc.box_kg,
+                "start_xyz": [round(float(x), 4) for x in cp[0]],
+                "end_xyz": [round(float(x), 4) for x in cp[-1]],
+                "max_z": round(float(cp[:, 2].max()), 4),
+                "end_xy_error_to_place_m": round(float(np.linalg.norm(cp[-1, :2] - tgt)), 4),
+                "lifted": bool(cp[:, 2].max() > cp[0, 2] + 0.05)}
         if sc.payload_events:
             writer.manifest_extra["payload_schedule"] = [[0.0, sc.payload_kg]] + [[t, kg] for t, kg in sc.payload_events]
         if write:
@@ -210,7 +239,7 @@ class Runner:
                 "plant_friction_scale": cfg.PLANT_FRICTION_SCALE,
                 "friction_values": self.p.base_friction.tolist(),
                 "friction_units": "columns: static N*m, dynamic N*m, viscous N*m*s/rad",
-                "torque_convention": cfg.TORQUE_CONVENTION, "finger_q_ref": cfg.FINGER_OPEN,
+                "torque_convention": cfg.TORQUE_CONVENTION,
                 # Measured, not assumed (docs/REVIEW.md F2): tau_measured is the net joint torque and contains no friction;
                 # tau_applied is the commanded effort and does carry friction compensation. The analysis side uses this to
                 # decide whether its model's friction term belongs in the residual.
@@ -219,17 +248,19 @@ class Runner:
                 "control": {"mode": "effort", "law": "computed torque with the plant's own M, C, g",
                             "kp": KP_LOW if sc.gains == "low" else KP_NORMAL,
                             "kd": KD_LOW if sc.gains == "low" else KD_NORMAL},
-                "payload_attachment": ({"body": "pick cube", "offset_m": [0, 0, 0.09],
-                                        "model": "a real rigid cube held by the fingers; its weight reaches the joints through contact"}
+                "payload_attachment": ({"body": "carried box", "offset_m": cfg.TCP_OFFSET.tolist(),
+                                        "model": "a real rigid box held by a suction fixed joint; "
+                                                 "the whole load reaches the wrist as a rigid attachment"}
                                        if sc.payload_physical else
-                                       {"body": "panda_hand", "offset_m": [0, 0, 0.1034],
-                                        "model": "point mass folded into the hand's composite"}),
+                                       {"body": cfg.TOOL_FRAME, "offset_m": cfg.TCP_OFFSET.tolist(),
+                                        "model": "point mass folded into the tool link's composite"}),
                 "payload_physical": bool(sc.payload_physical),
-                "payload_in_dynamics_terms": not sc.payload_physical,   # a physical cube is not in the articulation's M or g
+                "payload_in_dynamics_terms": not sc.payload_physical,   # a physical box is not in the articulation's M or g
                 "fault": {"type": f.type, "joint": f.joint, "param": f.param, "onset_s": f.onset_s},
                 "scenario": sc.name,
                 **({"task": {"name": sc.task.name, "duration_s": sc.task.duration, "t_attach_s": sc.task.t_attach,
                              "t_release_s": sc.task.t_release,
-                             "t_close_s": sc.task.t_close, "t_open_s": sc.task.t_open, "physical": sc.task.physical,
+                             "physical": sc.task.physical, "n_boxes": sc.task.n_boxes,
+                             "events": [[round(float(e[0]), 4), e[1], int(e[2])] for e in sc.task.events],
                              "note": "grasp and release are modelled: the payload mass appears at the TCP at t_attach and leaves at t_release"}}
                    if sc.task is not None else {})}

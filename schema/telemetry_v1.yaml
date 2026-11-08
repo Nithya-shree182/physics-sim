@@ -1,0 +1,255 @@
+# Physics Attestation Layer — telemetry frame, version 1
+#
+# The contract between the simulator side and the analysis side: one row per physics step,
+# written by workspace/pal_telemetry.py and read by observers/. Any change needs a version bump.
+#
+# WHAT CHANGED FROM v0 (2026-11-08):
+#   - Six joints, not seven. The arm is a UR10e; the column ranges follow the robot spec
+#     (workspace/pal_robot.py), and schema/validate.py reads the count from there rather than
+#     carrying a literal.
+#   - The gripper group is gone. A suction tool has no driven fingers; what is logged instead is
+#     whether the vacuum is actually holding something (grip_active) and which box (box_index).
+#   - qdd is logged. v0 left joint acceleration to the analysis side, which had to difference a
+#     velocity that had already been filtered; differencing in-sim, at the physics rate, before
+#     anything touches it, is a different and better-conditioned operation.
+#   - The torque is DECOMPOSED. tau_inertial, tau_friction and tau_unexplained join g and
+#     coriolis, so a reader can see where a joint's torque went without re-deriving it.
+#   - Energy, power and pose-conditioning channels are new. These are what turn a residual from
+#     one number into something explainable: a payload moves the work budget, a friction fault
+#     moves the friction term, and a residual measured near a singularity is not the same
+#     measurement as one taken in the middle of the workspace.
+#   - The attack_* labels are gone (DECISIONS.md: O5 is fault injection, not attacks).
+
+schema: pal_telemetry
+version: 1
+
+conventions:
+  units: >
+    SI throughout. Angles in rad, angular velocity in rad/s, acceleration in rad/s^2, torque in
+    N*m, length in m, force in N, energy in J, power in W. Gains and friction per RADIAN as
+    returned by the articulation tensor API, never the per-degree values authored in USD
+    (pal_config.py section 3, the 57x trap).
+  residual: >
+    r = tau_measured - tau_model, computed by the analysis side against an INDEPENDENT Pinocchio
+    model (model/pinocchio_model.py). It is deliberately not a column: the frame carries
+    measurements, and the residual is a comparison of a measurement with a prediction.
+    tau_unexplained below is NOT that residual — it is the simulator checked against its own
+    decomposition, which is a different and much weaker statement.
+  dof_order: >
+    The arm's own joints, in the robot spec's order, as columns _0.._(dof-1). For the UR10e that
+    is shoulder_pan, shoulder_lift, elbow, wrist_1, wrist_2, wrist_3. The simulator may return
+    wider arrays if the articulation carries extra joints; only the arm's are logged. The order
+    is asserted at start-up (pal_plant._check_joint_order), because a silent permutation would
+    put one joint's torque under another's name and poison every residual.
+  gravity_sign: >
+    g_i is get_generalized_gravity_forces() as returned: the torque the joint must SUPPLY to hold
+    the arm against gravity. Measured equal to tau_measured at rest, which is what fixes the sign.
+  mass_matrix: "dof x dof arm block of get_mass_matrices(), columns M_<row>_<col>. Includes armature."
+  jacobian: >
+    6 x dof, rows [vx, vy, vz, wx, wy, wz] (linear first, then angular), world-aligned, arm
+    columns only, at the tool frame. get_jacobians() has shape (1, n_bodies, 6, n_dof) and
+    excludes the fixed base, so the body-axis index is the body list's index minus one.
+    pal_telemetry resolves it from the body NAME rather than a literal, because a wrong index is
+    silently wrong: it reports the neighbouring link's Jacobian, which differs by one link offset
+    and biases every wrench estimate. The resolved value is recorded as ee_body_index.
+  rate: One row per PHYSICS step (1000 Hz for data runs, 250 Hz live), not per rendered frame.
+  energy: >
+    E_kin = 0.5 qd' M qd with armature in M. E_pot_rel is RELATIVE to the first row, integrated
+    from dV/dt = g(q)' qd, because the absolute potential needs link centres of mass that the
+    articulation does not hand back cheaply; only differences are meaningful. E_tot_rel is their
+    sum and is conserved on a frictionless free swing, which makes it a check on the integrator.
+    The host-side model can give the absolute potential (RobotModel.potential_energy).
+  sensors: >
+    Ideal by default: no noise is added to any logged channel unless $PAL_SENSOR_NOISE asks for
+    it, and the manifest's sensor_noise block says exactly what was injected. When noise IS on it
+    touches q, qd and both torques — what a sensor would corrupt — and never the simulator's own
+    decomposition (g, C, M, J), which is a cross-check rather than a reading.
+
+file:
+  format: parquet
+  one_file_per_run: "<run_id>.parquet"
+  written_as: >
+    "<run_id>.npz, converted by tools/npz_to_parquet.py. The Isaac Sim container has neither
+    pandas nor pyarrow, which is the only reason for the two-step; parquet is still what the
+    analysis side receives."
+  manifest: "<run_id>.json, same folder, fields listed under manifest below"
+  location: out/ and data/ (not in git)
+
+# Column groups. "{i}" expands over the given range, which is [0, dof-1] for per-joint columns.
+# dtype is the parquet type. nullable: true means NaN/null is allowed.
+columns:
+  - group: time
+    fields:
+      - {name: t, dtype: float64, unit: s, source: "simulation time since run start"}
+      - {name: step, dtype: int64, unit: "-", source: "physics step counter, starts at 0"}
+      - {name: dt, dtype: float64, unit: s, source: "physics step size of this step"}
+
+  - group: state
+    fields:
+      - {name: "q_{i}", per_joint: true, dtype: float64, unit: rad, source: "get_joint_positions()"}
+      - {name: "qd_{i}", per_joint: true, dtype: float64, unit: rad/s, source: "get_joint_velocities()"}
+      # Matched to the row's own torque by the manifest's timing convention: an Isaac run
+      # assembles the row after the step, so qdd[k] = (qd[k] - qd[k-1])/dt and step 0 is zero; a
+      # synthetic run knows the acceleration its integrator used and logs that, which pairs with
+      # its forward convention. Either way the acceleration in a row belongs to the torque in
+      # that row, which is the only thing the residual needs.
+      - {name: "qdd_{i}", per_joint: true, dtype: float64, unit: rad/s^2,
+         source: "joint acceleration belonging to this row's torque, per the manifest timing"}
+
+  - group: commands
+    note: "What the controller was asked to do this step. Needed for the tracking-error signal."
+    fields:
+      - {name: "q_cmd_{i}", per_joint: true, dtype: float64, unit: rad, nullable: true, source: "trajectory setpoint"}
+      - {name: "qd_cmd_{i}", per_joint: true, dtype: float64, unit: rad/s, nullable: true, source: "trajectory setpoint"}
+      - {name: "qdd_cmd_{i}", per_joint: true, dtype: float64, unit: rad/s^2, nullable: true, source: "trajectory setpoint"}
+
+  - group: efforts
+    note: >
+      The two are NOT interchangeable. tau_measured is the net joint torque and obeys Newton's law
+      whatever produced it, so friction, backlash and a locked joint cannot appear in it
+      (measured: ~0.001 N*m with friction x8, docs/REVIEW.md F2). tau_applied is what the
+      controller commanded and does show all three, but exists only in effort mode — it is
+      identically zero under a position drive. Fault detection uses applied; payload and wrench
+      estimation use measured, because an external load IS in the net torque and friction is not.
+    fields:
+      - {name: "tau_applied_{i}", per_joint: true, dtype: float64, unit: N*m,
+         source: "the commanded effort for this step (effort mode), else get_applied_joint_efforts()"}
+      - {name: "tau_measured_{i}", per_joint: true, dtype: float64, unit: N*m, source: "get_measured_joint_efforts()"}
+
+  - group: dynamics_terms
+    note: >
+      The simulator's own decomposition of the torque it applied. Used to cross-check the
+      independent Pinocchio model and to explain a residual, never as tau_model.
+      gravity + inertial + coriolis + friction + unexplained = tau_applied, exactly.
+    fields:
+      - {name: "g_{i}", per_joint: true, dtype: float64, unit: N*m, source: "get_generalized_gravity_forces()"}
+      - {name: "coriolis_{i}", per_joint: true, dtype: float64, unit: N*m, source: "get_coriolis_and_centrifugal_forces()"}
+      - {name: "tau_inertial_{i}", per_joint: true, dtype: float64, unit: N*m, source: "(M @ qdd)_i"}
+      # The friction the plant applied. Isaac does not hand back its PhysX static/dynamic/viscous
+      # contribution per step, so an in-sim run logs the model's sigmoid at the measured qd as the
+      # best available estimate of it, and the two representations differ by design (that gap is
+      # part of what the residual legitimately measures, pal_config section 4). A synthetic run,
+      # whose plant IS the sigmoid, logs the exact value. Which one a run used is implied by its
+      # manifest's friction_source.
+      - {name: "tau_friction_{i}", per_joint: true, dtype: float64, unit: N*m,
+         source: "the plant's friction torque at this step"}
+      - {name: "tau_unexplained_{i}", per_joint: true, dtype: float64, unit: N*m,
+         source: "tau_applied - (inertial + coriolis + g + friction); the discretisation floor on a healthy arm"}
+      - {name: "M_{r}_{c}", per_joint_matrix: true, dtype: float64, unit: kg*m^2, source: "get_mass_matrices(), armature included"}
+
+  - group: energy_and_power
+    fields:
+      - {name: E_kin, dtype: float64, unit: J, source: "0.5 qd' M qd"}
+      - {name: E_pot_rel, dtype: float64, unit: J, source: "integral of g(q)' qd dt; relative to row 0"}
+      - {name: E_tot_rel, dtype: float64, unit: J, source: "E_kin + E_pot_rel"}
+      - {name: "P_joint_{i}", per_joint: true, dtype: float64, unit: W,
+         source: "tau_measured_i * qd_i; positive = the motor drives the arm, negative = the joint brakes"}
+      - {name: P_mech, dtype: float64, unit: W, source: "sum of P_joint"}
+      - {name: P_grav, dtype: float64, unit: W, source: "g(q)' qd = dV/dt"}
+      - {name: W_mech, dtype: float64, unit: J, source: "cumulative integral of P_mech dt"}
+
+  - group: headroom
+    fields:
+      - {name: "tau_frac_{i}", per_joint: true, dtype: float64, unit: "-", source: "|tau_measured_i| / tau_max_i"}
+      - {name: tau_frac_max, dtype: float64, unit: "-", source: "the worst joint's tau_frac this step"}
+
+  - group: conditioning
+    note: >
+      How trustworthy this pose is. Computed from the Jacobian's LINEAR block only: the full 6xn
+      Jacobian mixes m/s rows with rad/s rows, so its singular values have no single unit and its
+      condition number is not a physical quantity. Held between M/J reads when decimating.
+    fields:
+      - {name: sigma_min, dtype: float64, unit: m/rad, source: "smallest singular value of J[:3]"}
+      - {name: sigma_max, dtype: float64, unit: m/rad, source: "largest singular value of J[:3]"}
+      - {name: cond_J, dtype: float64, unit: "-", source: "sigma_max / sigma_min; inf at a singularity"}
+      - {name: manip, dtype: float64, unit: "m^3/rad^3", source: "sqrt(det(J[:3] J[:3]')), Yoshikawa"}
+      - {name: cond_M, dtype: float64, unit: "-", source: "condition number of the mass matrix"}
+
+  - group: kinematics
+    fields:
+      - {name: "J_{r}_{c}", rows: [0, 5], per_joint_cols: true, dtype: float64,
+         unit: "m/rad (rows 0-2), rad/rad (rows 3-5)", source: "get_jacobians() at the tool body"}
+      # Nullable because they are read off the USD stage, and a capture driven without one (a
+      # unit test, or a replay) genuinely has no tool prim to ask. Everything else in this group
+      # comes from the articulation and is always present. When they ARE present ee_quat is a
+      # unit quaternion, which the validator checks on the non-null rows.
+      - {name: "ee_pos_{a}", axes: [x, y, z], dtype: float64, unit: m, nullable: true,
+         source: "world position of the manifest's ee_frame"}
+      - {name: "ee_quat_{a}", axes: [w, x, y, z], dtype: float64, unit: "-", nullable: true,
+         source: "world orientation of ee_frame, unit quaternion"}
+      - {name: "ee_vel_{a}", axes: [x, y, z], dtype: float64, unit: m/s, source: "(J qd)[:3]"}
+      - {name: "ee_omega_{a}", axes: [x, y, z], dtype: float64, unit: rad/s, source: "(J qd)[3:]"}
+
+  - group: labels
+    note: "Ground truth for evaluation. Constant per run except the *_active flags and box_index."
+    fields:
+      - {name: run_id, dtype: string, unit: "-"}
+      - {name: traj_type, dtype: string, unit: "-",
+         allowed: [hold, slow_reference, trapezoidal, s_curve, torque_aware, pick, cycle, excitation, push, ellipse]}
+      - {name: drive_mode, dtype: string, unit: "-", allowed: [position_stiff, position_soft, torque]}
+      - {name: payload_kg, dtype: float64, unit: kg, note: "the box mass this run uses"}
+      - {name: payload_attached, dtype: bool, unit: "-", note: "the run INTENDS a load to be on the tool"}
+      - {name: grip_active, dtype: bool, unit: "-",
+         note: "the suction tool is actually holding a box. Not the same as payload_attached: a
+                commanded grip that failed to seal has payload_attached true and grip_active false,
+                which is exactly the case worth being able to see."}
+      - {name: box_index, dtype: int8, unit: "-", note: "which box is held, or -1"}
+      - {name: phase, dtype: string, unit: "-", nullable: true,
+         allowed: ["", approach, descend, seal, lift, traverse, place, bleed, retreat, home]}
+      - {name: fault_type, dtype: string, unit: "-", allowed: [none, friction, backlash, stuck_joint, delay]}
+      - {name: fault_joint, dtype: int8, unit: "-", note: "0..dof-1, or -1 when fault_type is none"}
+      - {name: fault_param, dtype: float64, unit: "depends on fault_type", nullable: true}
+      - {name: fault_active, dtype: bool, unit: "-"}
+      - {name: "push_force_{a}", axes: [x, y, z], dtype: float64, unit: N, nullable: true,
+         source: "known applied force for the validation push, world frame"}
+
+# Optional, not required by the validator.
+optional_columns:
+  - group: decimation
+    note: >
+      Present only when M and J are read every Nth step (manifest mj_every > 1). Between reads the
+      last M and J are held, along with everything derived from them (the energy and conditioning
+      scalars); mj_fresh is True on the rows where they were actually read.
+    fields:
+      - {name: mj_fresh, dtype: bool, unit: "-", source: "pal_telemetry.py"}
+
+# One JSON per run, next to the parquet file.
+manifest:
+  required:
+    - schema_version          # 1
+    - run_id
+    - robot                   # ur10e
+    - dof                     # 6
+    - created_utc
+    - git_commit              # of the code that produced the run
+    - machine
+    - isaac_sim_version
+    - physics_hz
+    - solver                  # {type: TGS, position_iterations: 32, velocity_iterations: 4}
+    - drive_mode
+    - asset                   # USD path, and which URDF the link masses were read from
+    - ee_frame                # prim the Jacobian and ee_pos refer to
+    - ee_body_index           # resolved from ee_body_name, not assumed
+    - ee_body_name
+    - armature                # per joint, kg*m^2
+    - tau_max                 # per joint, so tau_frac can be re-derived
+    - qd_max                  # per joint, so speed_fraction can be re-derived
+    - friction_source
+    - plant_friction_scale
+    - friction_values         # what actually reached the plant, per joint
+    - torque_convention       # unverified | link_side | motor_side
+    - gravity                 # [0, 0, -9.81]
+    - seed
+    - payload_kg
+    - sensor_noise            # {ideal: true} when nothing was injected
+    - timing_convention       # which step's torque goes with which row
+    - energy_convention       # what E_pot_rel is relative to
+  optional:
+    - timing                  # synthetic logs: "tau at row k moves qd[k] to qd[k+1]"
+    - mj_every                # M/J read every Nth step; > 1 requires the mj_fresh column
+    - payload_attachment      # {body, offset_m, model}
+    - rows                    # row count written by the capture
+    - summary                 # per-run energy / headroom / conditioning facts (pal_telemetry.summary)
+    - speed_fraction          # peak joint speed as a fraction of the velocity limit
+    - box                     # {mass_kg, start_xyz, end_xyz, max_z, end_xy_error_to_place_m, lifted}
+    - task                    # {name, duration_s, physical, n_boxes, events}

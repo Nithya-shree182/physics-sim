@@ -50,13 +50,13 @@ def frame_hook(sc):
     return hook
 
 
-gripper = [n in S.NEEDS_GRIPPER for n in names]
-if any(gripper) and not all(gripper):
-    raise SystemExit(f"suites needing the gripper plant ({sorted(S.NEEDS_GRIPPER)}) cannot share a process with the others; "
+needs_cell = [n in S.NEEDS_CELL for n in names]
+if any(needs_cell) and not all(needs_cell):
+    raise SystemExit(f"suites needing the conveyor cell ({sorted(S.NEEDS_CELL)}) cannot share a process with the others; "
                      f"run them separately (tools/pal_suite.sh does)")
-plant = build_plant(HZ, scene=not HEADLESS, gripper=any(gripper))
+plant = build_plant(HZ, scene=not HEADLESS, cell=any(needs_cell))
 viz = None
-if not HEADLESS and not any(gripper):          # a physical cube needs no drawn stand-in
+if not HEADLESS and not any(needs_cell):       # a really gripped box needs no drawn stand-in
     from pal_kinematics import Urdf
     from pal_view import PickScene
     viz = PickScene(Urdf(cfg.URDF_PATH))

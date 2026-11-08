@@ -7,8 +7,7 @@
 #   PAL_BOX_KG=2.5 ./start_sim_docker.sh       # heavier boxes
 #   PAL_STYLE=trapezoidal ./start_sim_docker.sh        # trapezoidal | s_curve | torque_aware
 #   PAL_SPEED=0.4 PAL_RENDER_HZ=30 ./start_sim_docker.sh
-#   PAL_SCRIPT=pal_scene.py ./start_sim_docker.sh      # the old physics audit, writes out/physics_audit.json
-#   PAL_ROBOT=panda PAL_SCRIPT=pal_scene.py ./start_sim_docker.sh   # the original Franka scene
+#   PAL_SCRIPT=pal_live.py ./start_sim_docker.sh       # the cell driven by the dashboard
 #   PAL_DRIVE_MODE=torque ./start_sim_docker.sh
 #   PAL_PHYSICS_HZ=1000 PAL_PAYLOAD_KG=3.0 ./start_sim_docker.sh
 #
@@ -52,6 +51,8 @@ docker run --name "$NAME" --init --rm --gpus all --network host \
   ${PAL_SHOTS:+-e PAL_SHOTS="$PAL_SHOTS"} \
   ${PAL_REALTIME:+-e PAL_REALTIME="$PAL_REALTIME"} \
   ${PAL_DRIVE_MODE:+-e PAL_DRIVE_MODE="$PAL_DRIVE_MODE"} \
+  ${PAL_SENSOR_NOISE:+-e PAL_SENSOR_NOISE="$PAL_SENSOR_NOISE"} \
+  ${PAL_CAM:+-e PAL_CAM="$PAL_CAM"} \
   ${PAL_BACKGROUND:+-e PAL_BACKGROUND="$PAL_BACKGROUND"} \
   ${PAL_PAYLOAD_KG:+-e PAL_PAYLOAD_KG="$PAL_PAYLOAD_KG"} \
   -e PAL_OUT=/workspace/out \
@@ -62,7 +63,6 @@ docker run --name "$NAME" --init --rm --gpus all --network host \
   -v "$CACHE/glcache:/root/.cache/nvidia/GLCache:rw" \
   -v "$CACHE/computecache:/root/.nv/ComputeCache:rw" \
   -v "$ROOT/workspace:/workspace:rw" \
-  -v "$ROOT/assets/franka_panda:/workspace/assets:ro" \
   -v "$ROOT/assets:/workspace/assets_all:ro" \
   -v "$ROOT/out:/workspace/out:rw" \
   -v "$ROOT/../Physyk_AI-master/workspace:/physyk_workspace:ro" \

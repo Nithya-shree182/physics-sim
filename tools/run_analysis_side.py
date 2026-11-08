@@ -30,11 +30,11 @@ def main():
     a = ap.parse_args()
     sys.path[:0] = [str(a.nithya / "observers"), str(a.nithya / "model")]
     from detector import FORCE_GAIN_MAX, Z_THRESHOLD, detect, evaluate        # noqa: E402
-    from pinocchio_model import load_panda                                     # noqa: E402
+    from pinocchio_model import load_robot                                     # noqa: E402
     from residual import DEFAULT_CUTOFF_HZ, compute_residual, load_run         # noqa: E402
 
     cutoff = DEFAULT_CUTOFF_HZ if a.cutoff is None else a.cutoff
-    model = load_panda()
+    model = load_robot()
     kw = {"z_threshold": a.z or Z_THRESHOLD}
     if a.no_gate:
         kw["force_gain_max"] = 1e18

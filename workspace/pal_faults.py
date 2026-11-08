@@ -4,7 +4,7 @@ Faults, not attacks: a joint gets more friction, locks up, develops backlash, or
 path gets slower. Each fault changes ONLY the simulated plant. The analysis side's Pinocchio
 model never sees it: that gap is the signal the detector reads.
 
-The fault types are the ones schema/telemetry_v0.yaml allows. All are applied through the
+The fault types are the ones schema/telemetry_v1.yaml allows. All are applied through the
 torque command path (effort mode), because friction, backlash and a locked joint only show up
 in the APPLIED torque (docs/REVIEW.md F2).
 
@@ -27,7 +27,9 @@ from dataclasses import dataclass
 
 import numpy as np
 
-ARM = 7
+import pal_config as cfg
+
+ARM = cfg.DOF
 TYPES = ("none", "friction", "backlash", "stuck_joint", "delay")
 
 
@@ -46,7 +48,7 @@ class FaultSpec:
         if (self.type == "none") != (self.joint == -1):
             raise ValueError("joint must be -1 exactly when type is none (schema rule)")
         if self.type != "none" and not 0 <= self.joint < ARM:
-            raise ValueError(f"{self.type} needs joint 0-6, got {self.joint}")
+            raise ValueError(f"{self.type} needs joint 0-{ARM - 1}, got {self.joint}")
 
     @property
     def tag(self):

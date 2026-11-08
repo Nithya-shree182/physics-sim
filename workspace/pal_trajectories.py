@@ -21,7 +21,7 @@ import numpy as np
 import pal_config as cfg
 
 ARM = cfg.DOF
-# Multisine base frequencies, one per joint. The seven are the Panda's, chosen so no two joints
+# Multisine base frequencies, one per joint, chosen so no two joints
 # share a harmonic; a different arm takes the first `ARM` of them, which keeps that property.
 F0_ALL = np.array([.55, .45, .60, .50, .75, .70, .80])
 F0 = F0_ALL[:ARM]

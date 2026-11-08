@@ -3,7 +3,7 @@
 # boot from a real hang.
 #
 #   tools/run_sim.sh pal_selftest.py [logfile]
-#   HEADLESS=0 tools/run_sim.sh pal_experiment.py      # with a window on the host display
+#   HEADLESS=0 tools/run_sim.sh pal_cell_demo.py      # with a window on the host display
 #   PAL_SUITE=o5 tools/run_sim.sh pal_run_suite.py logs/o5.log   (tools/pal_suite.sh wraps this)
 #
 # Why this exists: the previous inline watchdog detected "booted" by counting lines in
@@ -48,10 +48,9 @@ for attempt in $(seq 1 "$ATTEMPTS"); do
     -e ACCEPT_EULA=Y -e PRIVACY_CONSENT=Y -e OMNI_KIT_ACCEPT_EULA=YES \
     -e NVIDIA_DRIVER_CAPABILITIES=all -e ISAAC_SIM_HEADLESS="${HEADLESS:-1}" \
     "${X11_ARGS[@]}" \
-    $(env | grep -E '^PAL_(STEPS|TRAJ|PAYLOAD_KG|PHYSICS_HZ|MJ_EVERY|RUN_ID|DRIVE_MODE|FRAC|SEED|GIT_COMMIT|MACHINE|NO_FRICTION|FRICTION_API|FAST_FRAC|SUITE|ONLY|RENDER_EVERY|FRAMES|DURATION_S|ONSET_S|LIVE_PORT|LIVE_REALTIME|LIVE_RENDER_HZ|SEED_OFFSET|ROBOT|RENDER_HZ|STYLE|BOX_KG|SPEED|CYCLES|REALTIME|SHOTS)=' | sed 's/^/-e /') \
+    $(env | grep -E '^PAL_(STEPS|TRAJ|PAYLOAD_KG|PHYSICS_HZ|MJ_EVERY|RUN_ID|DRIVE_MODE|FRAC|SEED|GIT_COMMIT|MACHINE|NO_FRICTION|FRICTION_API|FAST_FRAC|SUITE|ONLY|RENDER_EVERY|FRAMES|DURATION_S|ONSET_S|LIVE_PORT|LIVE_REALTIME|LIVE_RENDER_HZ|SEED_OFFSET|ROBOT|RENDER_HZ|STYLE|BOX_KG|SPEED|CYCLES|REALTIME|SHOTS|SENSOR_NOISE|CAM)=' | sed 's/^/-e /') \
     -v "$CACHE/kit:/isaac-sim/kit/cache:rw" -v "$CACHE/ov:/root/.cache/ov:rw" \
     -v "$ROOT/workspace:/workspace:rw" \
-    -v "$ROOT/assets/franka_panda:/workspace/assets:ro" \
     -v "$ROOT/assets:/workspace/assets_all:ro" \
     -v "$ROOT/data:/workspace/data:rw" -v "$ROOT/out:/workspace/out:rw" \
     -w /workspace --entrypoint /isaac-sim/python.sh \

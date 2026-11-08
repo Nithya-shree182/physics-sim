@@ -7,7 +7,8 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "workspace"))
 from pal_faults import FaultInjector, FaultSpec  # noqa: E402
-from pal_sensors import DEFAULT_SIGMA, SensorNoise  # noqa: E402
+import pal_config as cfg  # noqa: E402
+from pal_sensors import REFERENCE_SIGMA, SensorNoise  # noqa: E402
 
 
 class StubPlant:
@@ -103,27 +104,59 @@ class Backlash(unittest.TestCase):
 
 
 class Noise(unittest.TestCase):
+    """The sensor model. Noise is OFF by default since 2026-11-08, so every test that wants it
+    asks for it explicitly with scale=1.0; `test_the_default_is_ideal` pins the default itself."""
+
     def row(self):
         r = {}
-        for i in range(7):
-            r.update({f"q_{i}": 0.0, f"qd_{i}": 0.0, f"tau_measured_{i}": 0.0, f"tau_applied_{i}": 0.0})
+        for i in range(cfg.DOF):
+            r.update({f"q_{i}": 0.0, f"qd_{i}": 0.0,
+                      f"tau_measured_{i}": 0.0, f"tau_applied_{i}": 0.0})
         return r
+
+    def test_the_default_is_ideal_sensing(self):
+        n = SensorNoise(5)
+        self.assertTrue(n.ideal)
+        self.assertFalse(bool(n))
+        r = self.row(); n.apply(r)
+        self.assertEqual(r, self.row())
+        self.assertEqual(n.manifest()["applied_to"], [])
 
     def test_same_seed_same_noise_different_seed_differs(self):
         a, b, c = self.row(), self.row(), self.row()
-        SensorNoise(5).apply(a); SensorNoise(5).apply(b); SensorNoise(6).apply(c)
+        SensorNoise(5, scale=1.0).apply(a)
+        SensorNoise(5, scale=1.0).apply(b)
+        SensorNoise(6, scale=1.0).apply(c)
         self.assertEqual(a, b); self.assertNotEqual(a, c)
 
     def test_sigma_is_what_was_asked(self):
-        n = SensorNoise(1)
+        n = SensorNoise(1, scale=1.0)
         vals = []
         for _ in range(4000):
             r = self.row(); n.apply(r); vals.append(r["tau_applied_0"])
-        self.assertAlmostEqual(float(np.std(vals)), DEFAULT_SIGMA["tau"], delta=0.1 * DEFAULT_SIGMA["tau"])
+        want = REFERENCE_SIGMA["tau"]
+        self.assertAlmostEqual(float(np.std(vals)), want, delta=0.1 * want)
+
+    def test_scaling_scales_the_sigma(self):
+        n = SensorNoise(3, scale=0.25)
+        vals = []
+        for _ in range(4000):
+            r = self.row(); n.apply(r); vals.append(r["tau_measured_0"])
+        want = 0.25 * REFERENCE_SIGMA["tau"]
+        self.assertAlmostEqual(float(np.std(vals)), want, delta=0.1 * want)
 
     def test_unrelated_columns_untouched(self):
+        """g, C, M and J are the simulator's own cross-check, not sensor readings, so noise must
+        never reach them however it is configured."""
         r = self.row(); r["g_0"] = 1.234
-        SensorNoise(2).apply(r); self.assertEqual(r["g_0"], 1.234)
+        SensorNoise(2, scale=1.0).apply(r); self.assertEqual(r["g_0"], 1.234)
+
+    def test_a_row_missing_a_field_is_not_an_error(self):
+        """The live server passes a partial row (no commands, no M). Noise must take what is
+        there rather than raising on the first absent column."""
+        r = {f"tau_measured_{i}": 0.0 for i in range(cfg.DOF)}
+        SensorNoise(4, scale=1.0).apply(r)
+        self.assertTrue(all(v != 0.0 for v in r.values()))
 
 
 if __name__ == "__main__":

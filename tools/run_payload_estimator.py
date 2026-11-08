@@ -14,14 +14,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "observers"), str(ROOT / "model")]
 from payload import estimate_payload              # noqa: E402
-from pinocchio_model import load_panda            # noqa: E402
+from pinocchio_model import load_robot            # noqa: E402
 from residual import compute_residual, load_run   # noqa: E402
 
 
 def main(out):
     out = Path(out)
     runs = json.loads((out / "index.json").read_text())["runs"]
-    model = load_panda()
+    model = load_robot()
     est = lambda rid, tare=0.0: estimate_payload(compute_residual(load_run(out / f"{rid}.parquet"), model), model, tare_kg=tare).final[0]
     print(f"  {'run':<30}{'known kg':>9}{'raw est kg':>12}{'tared est kg':>14}{'error kg':>10}{'error %':>9}")
     ok, n = True, 0

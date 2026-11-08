@@ -1,30 +1,42 @@
-"""Independent Franka Panda dynamics model, built from the URDF with Pinocchio.
+"""The independent dynamics model: the arm's URDF read by Pinocchio, and nothing else.
 
 This is the "model torque" side of the residual:
 
     residual r = tau_measured - tau_model
     tau_model  = M(q) qdd + C(q, qd) qd + g(q) + tau_f(qd)
 
-where tau_f is joint friction (see below), which Pinocchio's rnea does not include.
+where tau_f is joint friction, which Pinocchio's rnea does not include.
 
 It must stay independent of the simulator: nothing here reads Isaac Sim. The only inputs are
-the URDF and the handful of settings below, each with its source.
+the URDF and the robot spec (`workspace/pal_robot.py`). The plant derives from the SAME URDF
+with a deliberate, documented mismatch (5% on driven-link mass, 15% on friction, and a
+different friction law), so a residual is a measurement of that mismatch and of any injected
+fault, never of two unrelated models disagreeing.
 
-Settings that change M(q) or g(q), and where they come from:
-  - Any non-arm joints are locked, so the model is the
-    arm with the hand and both fingers as rigid tool mass (0.93 kg total).
-  - Armature (reflected rotor inertia between motor and joint) 0.0061 kg*m^2 per arm joint,
-    the value dev's pal_config.py applies to the simulated plant. A URDF has none, so it is
-    set on the model as model.armature, and Pinocchio adds it to the diagonal of M and as
-    armature * qdd in rnea. gravity_check.py verifies that the installed Pinocchio does this.
-  - Gravity is (0, 0, -9.81), set explicitly.
-  - Friction is the Gaz et al. 2019 sigmoid (supplementary material, Table I), the same model
-    and values as dev's pal_config.friction_sigmoid() and docs/SOURCES.md. It is smooth
-    through zero velocity and exactly zero at rest, so it does not affect the gravity check.
-    Each joint's friction can be scaled (friction_scale), which the synthetic plant uses for
-    the deliberate 1.15x mismatch and for friction faults.
+What enters M(q) and g(q), and where it comes from:
+
+  - Every joint that is not one of the arm's own is locked at a reference configuration
+    rather than deleted, so the mass it carries stays on its parent link. The UR10e's URDF
+    has none; the hook stays for an arm that does.
+  - Armature (reflected rotor inertia between motor and joint) comes from the robot spec. A
+    URDF cannot express it, so it is set as model.armature, and Pinocchio adds it to the
+    diagonal of M and as armature*qdd in rnea. model/gravity_check.py verifies that the
+    installed Pinocchio actually does this, because a version that ignored it would make the
+    model quietly lighter than the plant.
+  - Gravity is set explicitly to (0, 0, -9.81) rather than left to a default.
+  - Friction is a sigmoid whose parameters live on the robot spec. It is smooth through zero
+    velocity and exactly zero at rest, so it does not disturb a static gravity check. Each
+    joint can be scaled (friction_scale) for a friction fault or for the plant-vs-model
+    mismatch.
+
+A HELD BOX IS PART OF THE MODEL, NOT A CORRECTION TO IT. `with_payload()` returns a model
+with the carried object's real rigid-body inertia appended to the tool frame: a box's
+m/12*diag(y^2+z^2, ...) tensor at its own centre of mass, half a box beyond the suction cups.
+That is not the same as adding m*g to the wrist, and the difference is the whole reason the
+payload shows up in C(q,qd)qd and M(q)qdd as well as in g(q). The point-mass form is still
+available (`point_mass=True`) because the payload ESTIMATOR models an unknown load that way —
+it cannot know a shape it has not measured.
 """
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -43,7 +55,7 @@ DEFAULT_URDF = Path(_SPEC.urdf_file())
 ARM_JOINTS = list(_SPEC.joint_names)
 
 ARMATURE_DEFAULT = _SPEC.armature    # kg*m^2 per joint, reflected rotor inertia (pal_robot)
-FINGER_OPEN = 0.0              # kept only so the reduced-model call has a reference value
+LOCK_AT = 0.0                  # reference value any non-arm joint is locked at
 GRAVITY = (0.0, 0.0, -9.81)
 
 # tau_f(qd) = phi1/(1+exp(-phi2(qd+phi3))) - phi1/(1+exp(-phi2 phi3)). The parameters live on the
@@ -56,14 +68,13 @@ FRICTION_PHI3 = _SPEC.friction_phi3       # rad/s
 def friction_sigmoid(qd, spec=None) -> np.ndarray:
     """Joint friction torque (N*m) for a vector of joint velocities. Zero at rest.
 
-    The parameters come from the robot spec, so this works for any arm; with no spec it uses the
-    one matching the length of `qd`, which keeps every Panda caller written before the UR10e port
-    working untouched."""
+    The parameters live on the robot spec, because they are a property of the arm. With no
+    spec the active one is used; a `qd` whose length does not match it is an error rather
+    than something to guess at."""
     qd = np.asarray(qd, dtype=float)
-    if spec is None:
-        spec = pal_robot.active()
-        if qd.shape[-1] != spec.dof:                  # a caller with a Panda-length vector
-            spec = next((r for r in pal_robot.ROBOTS.values() if r.dof == qd.shape[-1]), spec)
+    spec = spec or pal_robot.active()
+    if qd.shape[-1] != spec.dof:
+        raise ValueError(f"qd has {qd.shape[-1]} joints, {spec.name} has {spec.dof}")
     a, b, c = spec.friction_phi1, spec.friction_phi2, spec.friction_phi3
     return a / (1.0 + np.exp(-b * (qd + c))) - a / (1.0 + np.exp(-b * c))
 
@@ -75,6 +86,9 @@ class RobotModel:
     ee_frame: str
     friction_scale: np.ndarray = field(default_factory=lambda: np.ones(pal_robot.active().dof))
     spec: object = None            # the pal_robot.RobotSpec this was built from
+    payload_kg: float = 0.0        # a carried object folded into the model by with_payload()
+    payload_offset: tuple = (0.0, 0.0, 0.0)
+    payload_size: tuple | None = None
 
     @property
     def armature(self) -> np.ndarray:
@@ -135,7 +149,7 @@ class RobotModel:
         return pin.aba(self.model, self.data, q, qd, tau - self.friction(qd)).copy()
 
     def jacobian(self, q, frame: str | None = None) -> np.ndarray:
-        """6x7 geometric Jacobian in the world-aligned frame. Rows 0-2 linear (m/s per rad/s),
+        """The 6xn geometric Jacobian in the world-aligned frame. Rows 0-2 linear (m/s per rad/s),
         rows 3-5 angular (rad/s per rad/s). The two blocks have different units, which matters
         for any conditioning score built from singular values."""
         fid = self.model.getFrameId(frame or self.ee_frame)
@@ -171,15 +185,133 @@ class RobotModel:
         w = v.angular
         return a.linear + np.cross(a.angular, p) + np.cross(w, np.cross(w, p))
 
+    # ── energy and power ────────────────────────────────────────────────────────────────
     def potential_energy(self, q) -> float:
+        """Gravitational potential energy (J), absolute: measured from the world origin with
+        g = -9.81 z. Only differences between poses mean anything physically, but having the
+        absolute value makes the two sides comparable, which the in-sim log cannot do (it only
+        has dV/dt = g'qd to integrate)."""
         return float(pin.computePotentialEnergy(self.model, self.data, self._q(q)))
+
+    def kinetic_energy(self, q, qd) -> float:
+        """0.5 qd' M(q) qd (J), armature included.
+
+        Computed through M rather than pin.computeKineticEnergy. The two agree exactly on the
+        installed Pinocchio (4.1: both include model.armature, checked to 1e-15 in
+        tests/test_energy.py), but going through M is the version that cannot silently drop the
+        rotors' share — about 1.8% of the energy at 1 rad/s on this arm — if a future Pinocchio
+        changes what its energy helper accounts for. The test pins both facts, so a change in
+        that behaviour fails loudly instead of making the twin quietly lighter than the plant."""
+        q, qd = self._q(q), self._q(qd)
+        return 0.5 * float(qd @ self.M(q) @ qd)
+
+    def total_energy(self, q, qd) -> float:
+        """Kinetic plus potential (J). Conserved on a frictionless, torque-free swing, which
+        makes it the cheapest check that an integrator or a mass matrix is right."""
+        return self.kinetic_energy(q, qd) + self.potential_energy(q)
+
+    def joint_power(self, qd, tau) -> np.ndarray:
+        """Mechanical power per joint, tau * qd (W). Positive = the motor is doing work on the
+        arm; negative = the arm is driving the motor and the joint is braking."""
+        return self._q(qd) * self._q(tau)
+
+    def gravity_power(self, q, qd) -> float:
+        """g(q)' qd (W) = dV/dt: how fast potential energy is being gained. The identity is
+        what lets the in-sim log carry a relative potential without link centres of mass."""
+        return float(self.g(q) @ self._q(qd))
+
+    def decompose(self, q, qd, qdd) -> dict:
+        """The model torque split into the four terms that make it up, each in N*m.
+
+        gravity + inertial + coriolis + friction = tau_model. This is what turns the residual
+        from one number into an explanation: a friction fault moves the friction term, a
+        payload moves gravity and inertial together, a stuck joint moves none of them and
+        shows up entirely in what is left over.
+        """
+        q, qd, qdd = self._q(q), self._q(qd), self._q(qdd)
+        g = self.g(q)
+        inertial = self.M(q) @ qdd
+        # rnea(q, qd, qdd) - rnea(q, 0, qdd) isolates the velocity-dependent part exactly,
+        # including the armature's contribution, instead of forming C and multiplying.
+        full = pin.rnea(self.model, self.data, q, qd, qdd).copy()
+        coriolis = full - g - inertial
+        friction = self.friction(qd)
+        return {"gravity": g, "inertial": inertial, "coriolis": coriolis,
+                "friction": friction, "total": full + friction}
+
+    # ── pose quality ────────────────────────────────────────────────────────────────────
+    def operational_space_inertia(self, q, frame: str | None = None) -> np.ndarray:
+        """The 3x3 apparent mass (kg) at the tool, (J_v M^-1 J_v')^-1.
+
+        How heavy the tool feels to a push from each direction. A payload estimator pushed
+        near a singularity is reading a direction the arm is nearly infinitely stiff in, which
+        is why this and sigma_min belong in the same conversation as the residual."""
+        Jv = self.jacobian(q, frame)[:3]
+        Minv = np.linalg.inv(self.M(self._q(q)))
+        return np.linalg.inv(Jv @ Minv @ Jv.T)
+
+    def manipulability(self, q, frame: str | None = None) -> float:
+        """Yoshikawa's measure sqrt(det(J_v J_v')) (m^3/rad^3), on the LINEAR block only.
+
+        The full 6xn Jacobian mixes m/s rows with rad/s rows, so its determinant has no single
+        unit and its condition number is not a physical quantity. Taking the SVD of the whole
+        thing is the obvious wrong move; this does not."""
+        Jv = self.jacobian(q, frame)[:3]
+        return float(np.sqrt(max(np.linalg.det(Jv @ Jv.T), 0.0)))
+
+    def singular_values(self, q, frame: str | None = None) -> np.ndarray:
+        """Singular values of the Jacobian's linear block (m/rad), largest first."""
+        return np.linalg.svd(self.jacobian(q, frame)[:3], compute_uv=False)
+
+    def gravity_headroom(self, q) -> np.ndarray:
+        """|g(q)| as a fraction of each joint's effort limit: how much of the arm's strength
+        is spent just holding the pose."""
+        return np.abs(self.g(q)) / self.spec.tau_max
+
+    # ── a carried object ────────────────────────────────────────────────────────────────
+    def with_payload(self, mass_kg: float, size=None, offset=None, *, point_mass=False,
+                     frame: str | None = None) -> "RobotModel":
+        """A copy of this model carrying `mass_kg` rigidly attached to the tool frame.
+
+        `size` is the box's (x, y, z) extent in metres; with none given the payload is a point
+        mass, which is also what `point_mass=True` forces. `offset` is where its centre of mass
+        sits in the tool frame, defaulting to the spec's tool_offset — for the UR10e that is
+        0.195 m down the flange's z, which is the cup plane plus half a box.
+
+        The returned model is independent: this one is not modified, so a caller can hold a
+        loaded and an unloaded model side by side, which is exactly what a payload test needs.
+        """
+        if mass_kg < 0:
+            raise ValueError(f"payload mass must not be negative, got {mass_kg}")
+        model = self.model.copy()
+        fid = model.getFrameId(frame or self.ee_frame)
+        f = model.frames[fid]
+        off = np.asarray(self.spec.tool_offset if offset is None else offset, dtype=float)
+        if mass_kg > 0:
+            if point_mass or size is None:
+                I = np.zeros((3, 3))
+            else:
+                x, y, z = (float(v) for v in size)
+                I = mass_kg / 12.0 * np.diag([y * y + z * z, x * x + z * z, x * x + y * y])
+            # Inertia(mass, lever, tensor): the tensor is about the body's own centre of mass,
+            # the lever is zero because the placement already puts the frame there.
+            body = pin.Inertia(float(mass_kg), np.zeros(3), I)
+            placement = f.placement * pin.SE3(np.eye(3), off)
+            model.appendBodyToJoint(f.parentJoint, body, placement)
+        out = RobotModel(model=model, data=model.createData(), ee_frame=self.ee_frame,
+                         friction_scale=self.friction_scale.copy(), spec=self.spec)
+        out.payload_kg = float(mass_kg)
+        out.payload_offset = tuple(off)
+        out.payload_size = None if (point_mass or size is None) else tuple(float(v) for v in size)
+        return out
+
 
 
 def load_robot(
     spec=None,
     urdf: str | Path | None = None,
     armature=None,
-    finger_open: float = FINGER_OPEN,
+    lock_at: float = LOCK_AT,
     gravity: tuple[float, float, float] = GRAVITY,
     ee_frame: str | None = None,
     friction: bool = True,
@@ -189,9 +321,9 @@ def load_robot(
     `spec` is a pal_robot.RobotSpec and supplies the URDF, the expected joint names and order, the
     armature and the tool frame; leaving it out takes the active robot.
 
-    Any extra joints the URDF carries that are not the arm's own are locked at `finger_open`
-    rather than deleted, so the mass they carry stays on their parent link. The UR10e's URDF has
-    none. friction=False gives a rigid-body-only model (friction_scale all zero)."""
+    Any extra joints the URDF carries that are not the arm's own are locked at `lock_at` rather
+    than deleted, so the mass they carry stays on their parent link. The UR10e's URDF has none.
+    friction=False gives a rigid-body-only model (friction_scale all zero)."""
     spec = spec or pal_robot.active()
     urdf = Path(urdf) if urdf is not None else Path(spec.urdf_file())
     ee_frame = ee_frame or spec.tool_frame
@@ -211,7 +343,7 @@ def load_robot(
         if name in arm:
             continue
         lock_ids.append(jid)
-        q_ref[full.joints[jid].idx_q] = finger_open
+        q_ref[full.joints[jid].idx_q] = lock_at
     model = pin.buildReducedModel(full, lock_ids, q_ref) if lock_ids else full
 
     model.gravity.linear = np.array(gravity, dtype=float)
@@ -234,14 +366,3 @@ def load_robot(
         friction_scale=np.ones(model.nv) if friction else np.zeros(model.nv),
         spec=spec,
     )
-
-
-# Names from before the Franka Panda was dropped on 2026-11-08. Everything that used to say
-# "panda" now means "the one arm this project has", so the old spellings are kept as aliases
-# rather than touched in thirty call sites. New code should use RobotModel and load_robot.
-PandaModel = RobotModel
-
-
-def load_panda(*args, **kwargs) -> RobotModel:
-    """Deprecated alias for load_robot(). There is no Panda any more; this loads the active arm."""
-    return load_robot(*args, **kwargs)

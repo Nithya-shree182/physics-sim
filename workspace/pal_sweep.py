@@ -31,7 +31,7 @@ from isaacsim.storage.native import get_assets_root_path
 from isaacsim.core.prims import Articulation
 import pal_config as cfg
 
-ARM = 7
+ARM = cfg.DOF
 HZ = float(os.environ.get("PAL_PHYSICS_HZ", 1000.0))
 KP = float(os.environ.get("PAL_KP", 400.0))
 DT = 1.0 / HZ

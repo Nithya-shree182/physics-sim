@@ -39,13 +39,13 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from pinocchio_model import DEFAULT_URDF, PandaModel, load_panda  # noqa: E402
+from pinocchio_model import DEFAULT_URDF, RobotModel, load_robot  # noqa: E402
 from poses import PROBE_POSES  # noqa: E402
 
 EXPECTED_EFFORT = np.array([87, 87, 87, 87, 12, 12, 12], dtype=float)
 
 
-def urdf_moving_mass(urdf: Path, base_link: str = "panda_link0") -> float:
+def urdf_moving_mass(urdf: Path, base_link: str | None = None) -> float:
     """Sum of every link mass in the URDF except the base, which is fixed to the world and so
     is not part of the articulated model."""
     root = ET.parse(urdf).getroot()
@@ -56,7 +56,7 @@ def urdf_moving_mass(urdf: Path, base_link: str = "panda_link0") -> float:
     )
 
 
-def numerical_gravity(p: PandaModel, q: np.ndarray, eps: float = 1e-6) -> np.ndarray:
+def numerical_gravity(p: RobotModel, q: np.ndarray, eps: float = 1e-6) -> np.ndarray:
     """dU/dq by central differences. Independent of Pinocchio's own gravity routine."""
     grad = np.zeros(p.nq)
     for i in range(p.nq):
@@ -66,7 +66,7 @@ def numerical_gravity(p: PandaModel, q: np.ndarray, eps: float = 1e-6) -> np.nda
     return grad
 
 
-def run_self_tests(p: PandaModel, urdf: Path) -> bool:
+def run_self_tests(p: RobotModel, urdf: Path) -> bool:
     ok = True
 
     def report(name: str, passed: bool, detail: str) -> None:
@@ -96,7 +96,7 @@ def run_self_tests(p: PandaModel, urdf: Path) -> bool:
 
     # Armature must reach both M(q) and rnea, or the residual gets an acceleration-proportional
     # error that looks like a payload. Compare against the same URDF loaded with zero armature.
-    bare = load_panda(urdf, armature=0.0)
+    bare = load_robot(urdf, armature=0.0)
     q, qdd = PROBE_POSES["home"], rng.uniform(-2.0, 2.0, 7)
     dM = np.diag(p.M(q) - bare.M(q))
     dtau = p.tau_model(q, np.zeros(7), qdd) - bare.tau_model(q, np.zeros(7), qdd)
@@ -146,7 +146,7 @@ def main() -> int:
     ap.add_argument("--armature", type=float, default=0.0061)
     args = ap.parse_args()
 
-    p = load_panda(args.urdf, armature=args.armature)
+    p = load_robot(args.urdf, armature=args.armature)
     print(f"Model: {p.nq} DOF, joints {p.joint_names[0]}..{p.joint_names[-1]}, "
           f"total mass {p.total_mass:.4f} kg, armature {args.armature} kg*m^2\n")
 

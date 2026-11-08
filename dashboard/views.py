@@ -65,8 +65,8 @@ def twin_figure(snap, alerts, load):
                                  text=[f"J{i + 1} {abs(snap['tau_meas'][i] / TL[i] * 100):.0f}%"] if show else None,
                                  textposition="top right", textfont=dict(color=SEV_COLOR[sv] if sv else "#c7cbd1", size=12, family=MONO),
                                  hoverinfo="skip", showlegend=False))
-    # The frame has to hold whatever arm is loaded: a UR10e reaches 1.3 m where a Panda reached
-    # 0.855 m, so the view is sized from the points actually drawn rather than fixed to the Panda.
+    # The frame has to hold whatever arm is loaded, so the view is sized from the points actually
+    # drawn rather than fixed to one arm's reach.
     xs = [p[0] for p in pts]; zs = [p[2] for p in pts]
     pad = 0.18
     x0, x1 = min(xs) - pad, max(xs) + pad
@@ -160,9 +160,10 @@ def summary_card(snap, status, ctl):
         last = st.get("last") if not running else None
         chip = _chip("RUNNING", "run") if running else (_chip("FINISHED", "ok") if (info and last) else _chip("READY", "idle"))
         if info:
-            xy = info.get("pick_xy")
-            rows += [_kv("Task", f"{STYLE_NAME.get(info.get('style'), '—')} · {info.get('kg', 0):g} kg cube · speed {round(100 * info.get('speed', 0))}%"),
-                     _kv("Cube position", f"x {xy[0]:.2f} m, y {xy[1]:.2f} m" if xy else "—"),
+            boxes = info.get("boxes") or 0
+            rows += [_kv("Task", f"{STYLE_NAME.get(info.get('style'), '—')} · {info.get('kg', 0):g} kg boxes "
+                                 f"· speed {round(100 * info.get('speed', 0))}%"),
+                     _kv("Boxes placed", f"{info.get('boxes_placed', 0)} of {boxes}" if boxes else "—"),
                      _kv("Fault", FAULT_NAME.get(info.get("fault", "none"), "None") + (f" on joint {info['joint'] + 1}" if info.get("fault", "none") not in ("none", "delay") else ""))]
             dur = info.get("duration") or 0
             if running and dur:
@@ -174,18 +175,21 @@ def summary_card(snap, status, ctl):
                 rows.append(_kv("Payload", f"set {info.get('kg', 0):.2f} kg · estimated {ce:.2f} kg ({ce - info.get('kg', 0):+.2f})" + (" · a fault was active, so this is unreliable" if alerts else ""),
                                 "#34d399" if (abs(ce - info.get("kg", 0)) <= max(0.05 * info.get("kg", 1), 0.06) and not alerts) else "#fab219"))
             else:
-                rows.append(_kv("Payload", "estimated once the cube is lifted" if running else "—"))
+                rows.append(_kv("Payload", "estimated once a box is lifted" if running else "—"))
             rows.append(_kv("Typical peak residual", f"J{j + 1} · {pk:.1f}% of its torque limit"))
             rows.append(_kv("Alarms", "None" if not alerts else "; ".join(alerts), "#34d399" if not alerts else "#fb923c"))
-            det = {"recorded": "Healthy run: saved as the reference for this pick",
-                   "compared": "Compared with the healthy reference for this pick",
-                   "none": "No healthy reference for this pick: fault alarms are off"}[sm["ref"]]
+            det = {"recorded": "Healthy run: saved as the reference for this cycle",
+                   "compared": "Compared with the healthy reference for this cycle",
+                   "none": "No healthy reference for this cycle: fault alarms are off"}[sm["ref"]]
             rows.append(_kv("Fault detection", det))
             if last:
-                verdict = ("Cube placed, %.0f mm from the target" % (last["placed_error_m"] * 1000)) if last["ok"] else ("Stopped" if last["aborted"] else "Pick failed: cube not at the target")
+                n, total = last.get("boxes_placed", 0), last.get("boxes", 0)
+                verdict = (f"All {total} boxes placed on the belt" if last["ok"] else
+                           "Stopped" if last["aborted"] else
+                           f"Cycle incomplete: {n} of {total} boxes placed")
                 rows.append(_kv("Result", verdict, "#34d399" if last["ok"] else "#f87171"))
         else:
-            rows.append(html.Div("Press Run pick. The task, the payload estimate, the largest residual and every alarm are summarised here as the pick runs.", className="muted"))
+            rows.append(html.Div("Press Run pick. The task, the payload estimate, the largest residual and every alarm are summarised here as the cycle runs.", className="muted"))
     else:
         chip = _chip("LIVE", "run")
         est = snap["est"]
@@ -217,7 +221,7 @@ def stat_cards(snap, cal, status=None, ctl=None):
     fault_active = any(a.startswith(("fric", "stuck", "delay")) for a in snap["alerts"])
     holding = snap["load"] > 0
     state, state_col = ("fault alarm active: the estimate may be off", "#fab219") if fault_active else (
-        ("holding the cube" if holding else "gripper empty") if snap["summary"]["picks"] else ("estimating", "#9ca3af")[0], "#9ca3af")
+        ("holding a box" if holding else "tool empty") if snap["summary"]["picks"] else ("estimating", "#9ca3af")[0], "#9ca3af")
     return [
         html.Div(className="kpis", children=[
             html.Div(className="kpi", children=[html.Span("PAYLOAD ESTIMATE", className="lbl"),
@@ -311,7 +315,7 @@ def drawer_body(kind, snap, an, hist, load_truth):
             b("Reference logs.", "Empty arm, matched twin, no noise, 22% of the speed limit: 0.01% of limit on joints 1–4 and 0.08% on joints 5–6. 1 kg reads 1.000 kg. "
                                  "With the plant's deliberate 5% mass mismatch the elbow (joint 4) shows a steady 0.8 N·m, and a wrist joint that barely moves can show "
                                  "up to its static friction, about 0.2 N·m, which is 1.7% of its 12 N·m limit."),
-            b("Limits.", "Stand-in numbers are not Isaac Sim's. The URDF parameters make twin and plant agree; they are not a real Panda's. "
+            b("Limits.", "Stand-in numbers are not Isaac Sim's. The URDF parameters make twin and plant agree; they are not a real arm's. "
                                 "Faults are found by comparing a pick with a healthy run of the same pick. Live, the residual lags by 0.15 s (filter edge)."),
             b("Why the speed bar tops out at half speed.", "The bar runs from 0 to 100%, and 100% on the bar is half of each joint's maximum velocity. "
                              "In this range the torque the model predicts and the torque the arm applies agree to within about 2% of a joint's limit, "

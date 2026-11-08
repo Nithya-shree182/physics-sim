@@ -1,7 +1,7 @@
 """Named joint poses (rad), shared by the gravity check and the analysis side.
 
 Everything here follows the active robot (pal_robot). The UR10e has only a home pose: the others
-were Franka Panda configurations chosen for the confidence score that D6 removed, and the Panda
+were configurations chosen for the confidence score that D6 removed, and the arm
 itself went on 2026-11-08.
 """
 
