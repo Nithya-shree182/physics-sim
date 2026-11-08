@@ -1,3 +1,36 @@
+# Residual floor — UR10e (2026-11-09)
+
+Written for: whoever picks this up next. **Everything below this section is the Panda's and describes a different robot and a
+different drive.** `pal_suites.speedband` at 1000, 500 and 250 Hz; reference multisine, empty gripper, matched plant, ideal sensing.
+
+Worst-joint RMS of the measured-torque residual, % of the joint's torque limit:
+
+| speed | 1000 Hz | 500 Hz | 250 Hz |
+|---|---|---|---|
+| 10% | 0.042 | 0.043 | 0.043 |
+| 20% | 0.075 | 0.075 | 0.075 |
+| 30% | 0.110 | 0.110 | 0.109 |
+| 40% | 0.145 | 0.145 | 0.145 |
+| 50% | 0.180 | 0.180 | 0.180 |
+| 60% | 0.216 | 0.215 | 0.215 |
+| 75% | 0.269 | 0.269 | 0.269 |
+| 100% | 0.358 | 0.358 | 0.358 |
+
+- **No knee and no rate dependence.** The residual rises in a straight line with speed and is the same to three digits at 250, 500 and
+  1000 Hz. The Panda's artifact (a residual that doubled with each doubling of the rate above ~50%) is absent: that arm was driven
+  through an implicit position drive, this one by explicit computed torque.
+- **So the 50% band is now a decision, not a measurement.** Nothing here shows 50% is where the residual stops being trustworthy; at 100%
+  the residual is still 0.36% of a limit. D1 keeps 50% on the grounds the project chose it for (conservative, and the regime the
+  detection results were scored in), and the old wording that blames a simulator artifact above 50% should not be repeated for this arm.
+- **250 Hz is supported for the residual** (D3): the live cell's rate gives the same floor as 1000 Hz. It does not say anything about
+  contact (a suction grip), which was only run at 1000 Hz.
+- **What the floor is.** It grows with acceleration, which is the signature of the rotor inertia: the measured torque is link-side
+  (`TORQUE_CONVENTION`, settled 2026-11-09) and the analysis model carries the armature, so `armature * qdd` is left over. Building the
+  model without armature for the measured-torque residual would remove most of it (0.00-0.015 N*m at 20% speed against 0.03-0.10);
+  left as is, because the payload and fault results above were scored with the model as shipped.
+
+---
+
 # The residual floor: two regimes, and where the measurement stops being physical
 
 > **2026-11-05:** the live view now runs at 250 Hz, which this table supports at or below 50% speed (`DECISIONS.md` D3). The wrist-joint residual at rest is static friction, not a model error (D8).

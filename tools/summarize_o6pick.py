@@ -17,7 +17,11 @@ import numpy as np
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
-TAU_MAX = np.array([87.0, 87.0, 87.0, 87.0, 12.0, 12.0, 12.0])
+sys.path.insert(0, str(ROOT / "workspace"))
+import pal_config as cfg  # noqa: E402
+
+TAU_MAX = np.asarray(cfg.TAU_MAX, float)        # the active arm's datasheet effort limits (was the Panda's, hard-coded)
+DOF = cfg.DOF
 BUDGETS = (0.40, 0.55, 0.70)
 
 
@@ -27,7 +31,7 @@ def main(out, svg):
     for p in sorted(out.glob("o6pick_*.parquet")):
         d = pd.read_parquet(p)
         man = json.loads(p.with_suffix(".json").read_text())
-        arr = lambda c: np.stack([d[f"{c}_{i}"].to_numpy() for i in range(7)], axis=1)
+        arr = lambda c: np.stack([d[f"{c}_{i}"].to_numpy() for i in range(DOF)], axis=1)
         tau, qd, q, qc = arr("tau_applied"), arr("qd"), arr("q"), arr("q_cmd")
         dt = float(d["dt"].iloc[0])
         power = tau * qd

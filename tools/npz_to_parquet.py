@@ -18,11 +18,25 @@ import pandas as pd
 # Which columns are not float64. Everything else is, including the energy and conditioning
 # channels. Named explicitly rather than inferred from the array dtype, because npz round-trips
 # a bool array as bool but a column that happened to hold only 0.0 and 1.0 would otherwise come
-# back as float and fail the schema's dtype check.
+# back as float and fail the schema's dtype check. A few label arrays are stored as object arrays
+# of Python strings (for example `fault_type` and `attack_type` when they are the sentinel
+# literal "none"), so make the string detection resilient instead of assuming a fixed column set.
 INT_COLS = {"step"}
 INT8_COLS = {"fault_joint", "box_index"}
-BOOL_COLS = {"payload_attached", "fault_active", "grip_active", "mj_fresh"}
-STR_COLS = {"run_id", "traj_type", "drive_mode", "fault_type", "phase"}
+BOOL_COLS = {"payload_attached", "fault_active", "grip_active", "mj_fresh", "attack_active"}
+STR_COLS = {"run_id", "traj_type", "drive_mode", "fault_type", "phase", "attack_type"}
+
+
+def _is_text_like(v: np.ndarray) -> bool:
+    if v.dtype.kind in ("U", "S"):
+        return True
+    if v.dtype.kind != "O":
+        return False
+    sample = np.asarray(v).ravel()
+    if sample.size == 0:
+        return False
+    sample = sample[: min(64, sample.size)]
+    return all(isinstance(x, (str, bytes, np.str_, np.bytes_)) or x is None for x in sample)
 
 
 def convert(npz_path: Path) -> Path:
@@ -31,8 +45,8 @@ def convert(npz_path: Path) -> Path:
     out = {}
     for c in cols:
         v = z[c]
-        if c in STR_COLS:
-            out[c] = v.astype(str)
+        if c in STR_COLS or _is_text_like(v):
+            out[c] = np.asarray(v, dtype=object).astype(str)
         elif c in BOOL_COLS:
             out[c] = v.astype(bool)
         elif c in INT8_COLS:

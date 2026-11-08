@@ -1,0 +1,241 @@
+attempt 1: script started after 25s
+done -> /home/thinkspace/Desktop/Physics_Based_RoboArm/logs/pal_run_suite.log
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/o4/o4_hold_home_0kg_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/o4/o4_hold_home_0p5kg_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/o4/o4_hold_home_1kg_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/o4/o4_hold_home_2kg_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/o4/o4_hold_home_3kg_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/o4/o4_move_0kg_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/o4/o4_move_0p5kg_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/o4/o4_move_1kg_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/o4/o4_move_3kg_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+== o4 (out/o4): 9 runs, 9 failed checks
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/o5/o5_backlash_j0_0.02_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/o5/o5_backlash_j0_0.06_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/o5/o5_backlash_j0_0.12_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/o5/o5_backlash_j5_0.12_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/o5/o5_delay_all_10ms_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/o5/o5_delay_all_30ms_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/o5/o5_delay_all_50ms_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/o5/o5_friction_j1_2_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/o5/o5_friction_j1_4_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/o5/o5_friction_j1_8_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/o5/o5_friction_j2_2_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/o5/o5_friction_j2_4_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/o5/o5_friction_j2_8_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/o5/o5_friction_j3_2_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/o5/o5_friction_j3_4_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/o5/o5_friction_j3_8_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/o5/o5_friction_j5_2_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/o5/o5_friction_j5_4_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/o5/o5_friction_j5_8_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/o5/o5_healthy_s0_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/o5/o5_healthy_s1_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/o5/o5_healthy_s2_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/o5/o5_healthy_s3_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/o5/o5_healthy_s4_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/o5/o5_healthy_s5_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/o5/o5_stuck_joint_j3_200_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+== o5 (out/o5): 26 runs, 26 failed checks
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/clean/clean_delay_all_50ms_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/clean/clean_friction_j1_2_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/clean/clean_friction_j1_4_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/clean/clean_friction_j1_8_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/clean/clean_friction_j3_2_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/clean/clean_friction_j3_4_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/clean/clean_friction_j3_8_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/clean/clean_healthy_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/clean/clean_stuck_joint_j3_200_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+== clean (out/clean): 9 runs, 9 failed checks
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/fast/fast_backlash_j0_0.02_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/fast/fast_backlash_j0_0.12_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/fast/fast_backlash_j5_0.12_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/fast/fast_delay_all_10ms_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/fast/fast_delay_all_30ms_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/fast/fast_friction_j3_2_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/fast/fast_friction_j3_4_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/fast/fast_friction_j3_8_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/fast/fast_healthy_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/fast/fast_stuck_joint_j3_200_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+== fast (out/fast): 10 runs, 10 failed checks
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/extra/c2_excitation_0kg_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/extra/c2_excitation_1kg_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/extra/c4b_delay_all_50ms_1kg_s1000_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/extra/c4b_friction_j2_3_1kg_s1000_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/extra/c4b_friction_j5_3_1kg_s1000_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/extra/c4b_healthy_1kg_s1000_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/extra/c4b_stuck_joint_j3_200_1kg_s1000_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/extra/c4_delay_all_50ms_0kg_s1000_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/extra/c4_delay_all_50ms_0kg_s2001_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/extra/c4_delay_all_50ms_0kg_s2002_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/extra/c4_friction_j2_3_0kg_s1000_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/extra/c4_friction_j2_3_0kg_s2001_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/extra/c4_friction_j2_3_0kg_s2002_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/extra/c4_friction_j5_3_0kg_s1000_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/extra/c4_friction_j5_3_0kg_s2001_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/extra/c4_friction_j5_3_0kg_s2002_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/extra/c4_healthy_0kg_s1000_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/extra/c4_healthy_0kg_s2001_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/extra/c4_healthy_0kg_s2002_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/extra/c4_stuck_joint_j3_200_0kg_s1000_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/extra/c4_stuck_joint_j3_200_0kg_s2001_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/extra/c4_stuck_joint_j3_200_0kg_s2002_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/extra/c5_healthy_60s_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/extra/c6_pickup_0to1kg_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+== extra (out/extra): 24 runs, 24 failed checks

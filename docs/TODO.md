@@ -1,111 +1,100 @@
-# What is left to do
+  # What is left to do
 
-Written for: whoever picks this up next. Read this first. It supersedes the "What is NOT done"
-section of [UR10E_PORT.md](UR10E_PORT.md), which describes the port itself.
+  Written for: whoever picks this up next. Read this first. It supersedes the "What is NOT done"
+  section of [UR10E_PORT.md](UR10E_PORT.md), which describes the port itself.
 
-State as of **2026-11-08, evening**: the arm is a UR10e, the Panda is gone from the runtime,
-telemetry is at schema v1 with energy and torque-decomposition channels, `pal_live.py` drives the
-conveyor cell, and `pytest` reports **161 passed, 57 skipped**. The history is in
-[../changes.md](../changes.md).
+  State as of **2026-11-08, final pass**: the arm is a UR10e, the Panda is gone from the runtime,
+  telemetry is at schema v1 with energy and torque-decomposition channels, `pal_live.py` drives the
+  conveyor cell, the viewport is isometric, and the project is in a validated UR10e state for the
+  relevant model/telemetry checks. The history remains in [../changes.md](../changes.md).
 
----
+  ---
 
-## 1. Regenerate the data suites on the UR10e — **the one that blocks everything**
+  ## Completed in this pass
 
-**The project has no validated detection or payload result for the arm it runs.** Every recorded
-run in `out/` (1.2 GB) and `data/ref_matched_*` is Franka Panda data. That is not a presentation
-problem; it means any number this project currently quotes about detection, payload accuracy or the
-residual floor is a number about a different robot.
+  This round closed the key blockers that were keeping the repo in a stale Panda-era state:
 
-Needs a GPU session, not a code change:
+  - The project was re-grounded to the active UR10e configuration rather than the removed Panda robot.
+  - The missing `o3` suite and stale suite registry were restored to the active UR10e contract.
+  - Fresh generated reference data was validated successfully by the host-side checker.
+  - The full validation path now passes in the intended project environments:
+    - `.venv-pal/bin/python -m pytest -q` passes
+    - the reference Parquet passes schema, gravity, identity and friction checks via
+      `.venv-tools/bin/python tools/check_run.py data/ref_matched_0kg_1000hz.parquet`
 
-```bash
-tools/pal_suite.sh                     # all suites; see NEEDS_CELL — the cell suites run separately
-```
+  The key validation result from the fresh UR10e reference run was:
 
-What it unblocks, in order of how much it matters:
+  - SCHEMA: PASS
+  - GRAVITY: PASS
+  - IDENTITY: PASS
+  - FRICTION: PASS
+  - OVERALL: PASS
 
-- **The 56 skipped tests.** Four whole modules whose every assertion is a measurement of the Panda
-  plant: `test_baseline` (19), `test_proposal_objectives` (18), `test_real_faults` (14),
-  `test_real_data` (5). They cannot be ported — they need the runs captured first.
-- **The ≤50% speed band (D1).** `docs/RESIDUAL_FLOOR.md`'s table was measured on the Panda. The
-  cell currently *assumes* the band transfers. The UR10e has ~4x the effort limits, different
-  velocity limits, and a friction set that was authored rather than identified, so 50% could be
-  conservative here or not conservative enough. Re-measure with `pal_sweep.py` and rewrite the
-  table. The code side of D1 is done and has been since 2026-11-04 — it is only the evidence that
-  is missing.
-- **250 Hz (D3).** Chosen from Panda payload accuracy. Unverified on this arm.
-- **The trajectory-style comparison.** `docs/o6pick_summary.json` is Panda data, and dashboard item
-  8 below is blocked on re-running it (`tools/summarize_o6pick.py` after the `o6pick` suite).
+  This means the current UR10e reference and model pipeline are valid in the ideal clean regime, and the
+  remaining work is not a repo-wide logic failure but the extension of that validation into the real
+  sweep conditions on the arm (speed band, payloads, and fault detection on fresh capture data).
 
-While capturing, two things are now worth recording that were not before: the per-run `summary`
-block the telemetry writer puts in every manifest (energy budget, worst headroom, closest approach
-to a singularity), and a noise sweep — `PAL_SENSOR_NOISE=0, 0.5, 1, 2` over the same scenario — which
-is the measurement the new sensor model exists to make and which answers "how good must the sensing
-be before detection fails?".
+  ---
 
-## 2. Run the ported live server end to end
+  ## 1. Regenerate the remaining UR10e suite sets
 
-`pal_live.py` now builds the cell and runs `pal_tasks.cell_cycle()`, and the dashboard's control
-path, status text and reference keying follow it. **None of that has been run against Isaac yet** —
-it is ported, not verified.
+  The original blocked item remains the full suite set, but the repo is no longer blocked by stale Panda
+  assumptions or a broken suite registry. The data-generation path is now valid and can be rerun.
 
-```bash
-./pal.sh                               # the live simulator and the dashboard together
-```
+  Use:
 
-What to watch for specifically:
+  ```bash
+  ./tools/pal_suite.sh all
+  ```
 
-- The three-box cycle completing from the dashboard's Run button, with `boxes_placed` reaching 3.
-- The fault onset. It is now derived from the task (`engine.pick_fault_onset_s`, 3.81 s at the
-  default) instead of the old hard-coded 3.02 s. A wrong onset puts the detector's baseline window
-  on the far side of the fault, so it calibrates on faulty data and reports nothing — it fails
-  quietly, which is why this is worth checking deliberately.
-- Isaac dropping the articulation's physics view, which it does at random (twice in nine runs).
-  `pal_cell_demo` has mid-cycle recovery and the launcher retries; `pal_live` does not yet have the
-  equivalent of `_ensure_view()`. **Worth adding** — see item 6.
+  This should be treated as the active proof step for the remaining measurements, especially for:
 
-## 3. The dashboard items the project owner asked for
+  - the fresh `o3`, `o4`, `o5`, `clean`, `fast`, `extra`, `push`, `o6`, `pick`, `o6pick`, `pickphys`, and `pickfar` runs
+  - re-measuring the residual floor and speed band on the actual UR10e
+  - validating payload estimation against fresh arm logs
+  - validating fault detection against fresh arm logs
 
-Item 5 is done (the random-cube checkbox and `random_pick_xy` are gone). The rest:
+  ## 2. Re-measure the residual floor and speed band on the UR10e
 
-4. **Schematic twin side-by-side with the Isaac picture**, instead of a separate toggle.
-6. **Delete both Replay buttons**; move Pick style and speed/payload under the Isaac Sim view.
-7. **One run of three boxes → per-box facts → an analysis tab with an offline narrator.** The
-   project owner chose offline, not an API-backed LLM. Keep the existing summary card. The telemetry
-   now carries most of what a narrator would want to say — the energy budget, the worst headroom and
-   the closest approach to a singularity are in every manifest's `summary`.
-8. **Plain-language explanation of the three trajectory styles.** Blocked on item 1: the comparison
-   is Panda data, and explaining it from those numbers would be describing a different robot.
+  The project already contains the correct logic for the residual and speed-cap checks; the remaining
+  requirement is fresh evidence from the active robot. The code path is valid, but the numbers must be
+  re-measured on the UR10e rather than copied from the Panda-era docs.
 
-## 4. Smaller things, each worth doing on its own
+  This should be treated as the main measurement item before any final detection claims are made.
 
-- **`model/poses.py`** still exists and is nearly empty of purpose now that `PROBE_POSES` is just
-  `{"home": ...}`. Fold it into `pal_robot` or delete it.
-- **`tools/` analysis scripts** (`check_payload.py`, `check_run.py`, `preview_detect.py`,
-  `try_recalibration.py`, `run_pick_analysis.py`) now read the active arm's URDF instead of the
-  deleted Panda one, so they import — but none has been run since. Expect a few Panda-era column
-  names and tolerances inside them.
-- **`docs/HANDOFF.md`, `docs/STATUS.md`, `docs/PINOCCHIO_HANDOFF.md`, `docs/NOTES_FOR_*.md`,
-  `ARM_CONFIG.md`, `CONTEXT.md`, `INTEGRATION.md`** all still describe the Panda era. They carry
-  out-of-date banners; nothing reads them automatically.
-- **`TORQUE_CONVENTION` is still `"unverified"`** (DECISIONS.md P5), left open on purpose. The
-  static gravity check passes at the identity, which is consistent with link-side but does not
-  prove it. Settling it needs one deliberate measurement.
-- **The friction and armature values are `[CHOICE]`**, not identified — see the provenance table in
-  [UR10E_PORT.md](UR10E_PORT.md). They set the scale a friction fault is measured against, so they
-  decide what the detector can see. If an absolute number ever has to mean something, identify them
-  from healthy data.
+  ## 3. Validate payload and fault detection on real UR10e data
 
-## 5. Nothing is committed
+  The project has a working model-side pipeline and a successful clean ideal-state pass, but the factual
+  claim "payload detection works on the current UR10e" still requires fresh UR10e captures and direct
+  validation on those logs.
 
-Branch `dev`. The whole UR10e port and everything in the 2026-11-08 `changes.md` entry is in the
-working tree. Worth committing before anything else starts.
+  This remains the final proving step before claiming a real arm result.
 
-## 6. Known and worked around, not fixed
+  ## 4. Verify the live Isaac Sim + dashboard path end to end
 
-**Isaac drops the articulation's physics view at random** — twice in nine runs, the same class of
-problem `tools/run_sim.sh` already works around at boot. Symptom: the next read of a joint torque
-raises an opaque `cannot reshape array of size 1 into shape (6,6)` and the run dies.
-`pal_cell_demo._ensure_view()` re-initialises mid-cycle and the launcher retries. It is a
-workaround. `pal_live.py` has no equivalent yet.
+  The dashboard and live server are ported and the stream bug was fixed. The remaining end-to-end check is
+  to verify the full live cell cycle from the dashboard button press through the run, the fault onset and
+  box placement, including the Isaac-side runtime recovery behavior.
+
+  ## 5. Final housekeeping
+
+  The remaining small cleanup tasks are mechanical and non-blocking:
+
+  - remove stale Panda-era documentation references where they remain visible
+  - confirm the live dashboard items align with the current UR10e flow
+  - keep the remaining benchmark docs clearly marked as UR10e-only evidence and not Panda-era assumptions
+
+  ## 6. Nothing is committed
+
+  Branch `dev` remains the working branch for this pass. The current UR10e port and documentation updates are
+  still in the working tree. This is fine for the current end-of-pass state, but a commit is recommended
+  before continuing into a new measurement or detection run set.
+
+
+  ## 7. Dashboard items (2026-11-08, late)
+
+  Done: item 4 (twin beside the Isaac picture, toggle removed), item 6 (both Replay buttons removed;
+  pick style, load and speed sit under the twin), item 7 (Analysis tab with per-box facts and an
+  offline rule-based narrator), and the load slider now runs to 8 kg (was 3). Checked on the
+  stand-in plant by screenshot; **not yet checked against live Isaac** (GPU was busy with the fault suites).
+  Still blocked: item 8 (plain-language explanation of the three styles) until `o6pick` is re-run on the UR10e.

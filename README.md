@@ -12,7 +12,9 @@
 A Universal Robots UR10e digital twin in NVIDIA Isaac Sim 6.0.1. The arm moves; we record what its joints actually did; an independent model
 (Pinocchio, built from the URDF) predicts what the torques should have been. The gap, `r = tau_applied - tau_model`, is the signal.
 Full proposal: the PDF in this folder; what the project now claims: `docs/PROPOSAL_AMENDMENTS.md`.
-**Where the project stands today: `docs/TODO.md`, then `docs/UR10E_PORT.md`. Why each choice was made, with the evidence: `DECISIONS.md`.**
+**Current project state: the repo is now validated on the active UR10e configuration for the clean reference and model path, and the remaining work is re-measuring the real-arm speed band, payload and fault behavior on fresh UR10e captures.**
+
+The source of truth remains: `docs/TODO.md`, then `docs/UR10E_PORT.md`. Why each choice was made, with the evidence: `DECISIONS.md`.
 
 The repository holds both halves, merged on 2026-11-04 from two branches that had no common history:
 

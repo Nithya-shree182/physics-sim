@@ -1,0 +1,49 @@
+##### payload 00:50:23
+attempt 1: script started after 25s
+done -> /home/thinkspace/Desktop/Physics_Based_RoboArm/logs/pal_run_suite.log
+== payload (out/payload): 30 runs, 0 failed checks
+##### pick 00:58:11
+attempt 1: no script output in 420s — genuine boot hang, killing
+attempt 2: script started after 25s
+done -> /home/thinkspace/Desktop/Physics_Based_RoboArm/logs/pal_run_suite.log
+tools/pal_suite.sh: line 45: 0: command not found
+== pick (out/pick): 14 runs, 0 failed checks
+##### o6 01:12:56
+attempt 1: script started after 25s
+done -> /home/thinkspace/Desktop/Physics_Based_RoboArm/logs/pal_run_suite.log
+== o6 (out/o6): 26 runs, 0 failed checks
+##### o6pick 01:16:26
+attempt 1: script started after 25s
+done -> /home/thinkspace/Desktop/Physics_Based_RoboArm/logs/pal_run_suite.log
+== o6pick (out/o6pick): 18 runs, 0 failed checks
+##### pickphys 01:23:53
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/pickphys/pickphys_s_curve_1kg_ref_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/pickphys/pickphys_s_curve_2kg_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/pickphys/pickphys_torque_aware_0p5kg_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/pickphys/pickphys_torque_aware_1kg_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/pickphys/pickphys_torque_aware_2kg_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/pickphys/pickphys_trapezoidal_0p5kg_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/pickphys/pickphys_trapezoidal_1kg_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+FAILED /home/thinkspace/Desktop/Physics_Based_RoboArm/out/pickphys/pickphys_trapezoidal_2kg_1000hz.parquet
+1 SCHEMA    FAIL   (schema/validate.py exit 1)
+OVERALL FAIL
+== pickphys (out/pickphys): 15 runs, 15 failed checks
+##### pickfar 01:33:16
+attempt 1: script started after 25s
+done -> /home/thinkspace/Desktop/Physics_Based_RoboArm/logs/pal_run_suite.log
+== pickfar (out/pickfar): 9 runs, 0 failed checks
+##### CHAIN DONE 01:37:49

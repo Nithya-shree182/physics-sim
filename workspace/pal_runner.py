@@ -14,6 +14,8 @@ whose inertials and friction are rewritten and read back at the start of each on
 """
 from dataclasses import dataclass, field
 
+import os
+
 import numpy as np
 
 import pal_config as cfg
@@ -26,6 +28,19 @@ ARM = cfg.DOF          # driven arm joints; the articulation may hold more
 # ACCELERATION, which M then turns into torque, so they are 1/s^2 and 1/s and do not scale with
 # the arm the way a stiffness in N*m/rad does — the same numbers are right on any arm.
 KP_NORMAL, KD_NORMAL = 400.0, 40.0
+# Friction feed-forward. Computed torque scales its feedback by the mass matrix, and the UR10e's wrists
+# are light: M[4,4] and M[5,5] are a few hundredths of a kg*m^2, so a 0.07 rad error asks for about
+# 0.5 N*m, which is BELOW the wrist's 0.62 N*m breakaway friction. Without this term joints 5 and 6 never
+# moved in any run (q range 0.0002 rad against 0.16 rad commanded), so no fault on them could ever show.
+# The term uses the plant's BASELINE friction (a fault changes the plant's friction, not the baseline), so a
+# friction fault is still an unmodelled disturbance. Set PAL_FRICTION_FF=0 to reproduce the old data.
+FRICTION_FF = os.environ.get("PAL_FRICTION_FF", "1") != "0"
+# PhysX's mass matrix is the links' alone; the rotor inertia (armature) acts in the solver and is not in it. On the
+# UR10e's wrists that left the controller believing the joint weighs about 0.001 kg*m^2 when it moves like 0.02, so
+# its feedback gain was under 1 N*m/rad against 0.62 N*m of breakaway friction: a dead band of about a radian, and a
+# wrist that sat 0.2 rad off its command. The model side (pinocchio_model) already includes the armature in M.
+ARMATURE_IN_CONTROLLER = os.environ.get("PAL_CONTROLLER_ARMATURE", "1") != "0"
+FF_WIDTH = 0.02          # rad/s, width of the tanh that smooths sign(qd_des)
 KP_LOW, KD_LOW = 40.0, 12.0             # "low-gain torque mode" for the validation push (proposal 7.7): ten times
                                         # softer than normal but critically damped. Kp = 4 let a 10 N push drive the
                                         # arm to its velocity limit, where the residual is not valid (docs/VALIDATION.md)
@@ -68,7 +83,7 @@ class Runner:
         self.p, self.out_dir, self.mj_every, self.render_every = plant, out_dir, mj_every, render_every
         self.viz = viz                      # optional pal_view.PickScene, updated whenever a frame is drawn
         self.hz, self.dt = plant.hz, plant.dt
-        self.inj = FaultInjector(plant, plant.hz)
+        self.inj = FaultInjector(plant, plant.hz, motor_inertia=cfg.ARMATURE)
         plant.to_effort_mode()
         self.art = plant.art
         # The articulation's full joint count, which may exceed the arm's own (6 on the UR10e).
@@ -85,14 +100,55 @@ class Runner:
         out[:ARM] = np.asarray(v, dtype=float)[:ARM]
         return out
 
-    def _command(self, traj, t, kp, kd, tau_limit):
+    def _held_index(self, cell):
+        """Index in the cell's box list of the box the suction tool holds, or 0 if it cannot be told. The schema requires a
+        held box to have an index (grip_active implies box_index >= 0); the runner used to log -1 here, which failed the
+        validator on every physical-box run."""
+        held = getattr(getattr(self.p, "tool", None), "held", None)
+        for i, b in enumerate(getattr(cell, "boxes", None) or []):
+            if getattr(b, "path", None) == held:
+                return i
+        return 0
+
+    def ensure_view(self, where=""):
+        """Rebuild the articulation's physics view if Isaac dropped it. Returns whether a view exists afterwards.
+
+        Isaac drops the view at random (twice in nine runs); the next read of a joint quantity then raises an opaque
+        'cannot reshape array of size 1'. pal_cell_demo already recovers from this; the live server and the suites go
+        through the Runner, so the recovery lives here for all of them. Re-initialising does not move the arm."""
         art = self.art
+        if getattr(art, "_physics_view", None) is not None:
+            return True
+        print(f"[PAL] physics view missing {where}; re-initialising the articulation", flush=True)
+        try:
+            art.initialize()
+        except Exception as exc:                      # noqa: BLE001 - say why and let the caller decide
+            print(f"[PAL] re-initialise failed: {exc!r}", flush=True)
+            return False
+        return getattr(art, "_physics_view", None) is not None
+
+    def _state(self, art):
         q, qd = self._v(art.get_joint_positions()), self._v(art.get_joint_velocities())
         g = self._v(art.get_generalized_gravity_forces())
         c = self._v(art.get_coriolis_and_centrifugal_forces())
         M = np.asarray(art.get_mass_matrices()).reshape(self.ndof, self.ndof)[:ARM, :ARM]
+        return q, qd, g, c, M
+
+    def _command(self, traj, t, kp, kd, tau_limit):
+        art = self.art
+        try:
+            q, qd, g, c, M = self._state(art)
+        except (ValueError, AttributeError):
+            if not self.ensure_view(f"at t={t:.2f}s"):
+                raise
+            q, qd, g, c, M = self._state(art)          # one retry on the rebuilt view
+        if ARMATURE_IN_CONTROLLER:
+            M = M + np.diag(cfg.ARMATURE[:ARM])
         qs, qds, qdds = traj(t)
         tau = M @ (qdds + kp * (qs - q) + kd * (qds - qd)) + c + g
+        if FRICTION_FF:
+            fr = np.asarray(self.p.base_friction, float)[:ARM]
+            tau = tau + fr[:, 1] * np.tanh(np.asarray(qds, float)[:ARM] / FF_WIDTH) + fr[:, 2] * np.asarray(qds, float)[:ARM]
         if tau_limit:
             tau = np.clip(tau, -cfg.TAU_MAX, cfg.TAU_MAX)
         return tau, qs, qds, qdds
@@ -182,7 +238,7 @@ class Runner:
                                tau_applied=tau,
                                push_force=(sc.push.force if (sc.push and sc.push.start_s <= t < sc.push.end_s)
                                            else (0.0, 0.0, 0.0)) if sc.push else None,
-                               fault_active=active, grip_active=grip)
+                               fault_active=active, grip_active=grip, box_index=self._held_index(cell) if grip else -1)
             if sc.diagnostics:
                 g1 = self._v(art.get_generalized_gravity_forces())
                 c1 = self._v(art.get_coriolis_and_centrifugal_forces())
@@ -245,7 +301,7 @@ class Runner:
                 # decide whether its model's friction term belongs in the residual.
                 "tau_measured_includes_friction": False,
                 "plant_link_mass_scale": sc.mass_scale,
-                "control": {"mode": "effort", "law": "computed torque with the plant's own M, C, g",
+                "control": {"mode": "effort", "law": "computed torque with the plant's own M, C, g" + (" plus baseline friction feed-forward" if FRICTION_FF else ""),
                             "kp": KP_LOW if sc.gains == "low" else KP_NORMAL,
                             "kd": KD_LOW if sc.gains == "low" else KD_NORMAL},
                 "payload_attachment": ({"body": "carried box", "offset_m": cfg.TCP_OFFSET.tolist(),

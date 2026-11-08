@@ -11,8 +11,8 @@ BUILT = {name: mk() for name, (_, mk) in S.SUITES.items()}          # built once
 # Retallied 2026-11-08 for the UR10e: the o3 suite went with the confidence score D6 removed, and
 # o4 and push shrank from 19 and 24 because both sweep cfg.PROBE_POSES, which the Panda gave five
 # named configurations and this arm gives one (home). Nothing else about them changed.
-COUNTS = {"reference": 2, "o4": 9, "o5": 26, "clean": 9, "fast": 10, "extra": 24, "push": 9,
-          "o6": 26, "pick": 14, "o6pick": 18, "pickphys": 15, "pickfar": 9}
+COUNTS = {"reference": 2, "o3": 2, "o4": 9, "o5": 26, "clean": 9, "fast": 10, "extra": 24, "push": 9,
+          "o6": 26, "pick": 14, "o6pick": 18, "pickphys": 15, "pickfar": 9, "payload": 30, "detect": 96, "detectfast": 43, "detectlimits": 22, "speedband": 8, "pickdetect": 69}
 
 
 class Suites(unittest.TestCase):
@@ -72,7 +72,7 @@ class Suites(unittest.TestCase):
             self.assertLess(off[0], sc.task.t_release, sc.name)
 
     def test_only_the_physical_suite_needs_the_cell_plant(self):
-        self.assertEqual(S.NEEDS_CELL, {"pickphys", "pickfar"})
+        self.assertEqual(S.NEEDS_CELL, {"pickphys", "pickfar", "pickdetect"})
 
     def test_modelled_picks_do_not_use_a_cube(self):
         for sc in BUILT['pick'] + BUILT['o6pick']:

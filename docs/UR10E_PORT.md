@@ -92,6 +92,14 @@ which is what lets `tests/test_suites.py` check it at all.
   scuffing it.
 - **Belt**: flat surface whose top and collision plane are the same, with running seam lines. It
   used to be rollers, drawn 32 mm proud of the plane boxes rest on, so every box sat half sunk.
+- **Camera**: named views in `pal_cell_geom.CAM_VIEWS`, chosen with `PAL_CAM`. The default `iso`
+  is a three-quarter view looking down 30 degrees; it replaced an almost level 16-degree shot that
+  flattened the infeed table and the belt into one another. Each view is a distance and two angles
+  rather than three coordinates, and `tests/test_cell_geometry.py` checks every one against the
+  real 22 mm / 1280x720 frustum — horizontally and vertically separately, because a 16:9 frame is
+  much narrower vertically (15.0 degree half-angle against 25.5) and an isometric view is exactly
+  the one that pushes things off the top. Measured: the arm spans 42% of the frame's height from
+  `iso` against 27% from the old `side`, so raising the camera cost no apparent size.
 
 ### Performance
 
@@ -144,6 +152,7 @@ PAL_CYCLES=1 PAL_SHOTS=3,15 ./start_sim_docker.sh    # one cycle, save viewport 
 PAL_RENDER_HZ=20 ./start_sim_docker.sh      # real time, fewer frames
 PAL_BOX_KG=2.5 PAL_STYLE=trapezoidal ./start_sim_docker.sh
 PAL_SENSOR_NOISE=1 ./start_sim_docker.sh    # switch the sensor noise on (off by default)
+PAL_CAM=iso_close ./start_sim_docker.sh     # iso (default) | iso_high | iso_close | side | top
 ./pal.sh                                    # the live cell plus the dashboard
 tools/pal_suite.sh                          # record the data suites (GPU; see TODO.md item 1)
 .venv-pal/bin/python -m pytest -q           # 161 pass, 57 skipped with reasons

@@ -76,6 +76,7 @@ class SuctionTool:
     def __init__(self, stage, robot_prim: str, box_paths=(), wrist_link: str = "wrist_3_link"):
         self.stage = stage
         self.wrist_path = f"{robot_prim}/{wrist_link}"
+        self.tool_path = f"{robot_prim}/tool0"
         if not stage.GetPrimAtPath(self.wrist_path).IsValid():
             # Isaac's own asset may nest the links; find the link by name anywhere under the robot.
             found = [p.GetPath().pathString for p in stage.Traverse()
@@ -84,7 +85,12 @@ class SuctionTool:
                 raise RuntimeError(f"no link named {wrist_link!r} under {robot_prim}; "
                                    f"cannot mount the suction tool")
             self.wrist_path = found[0]
-        self.root = f"{self.wrist_path}/SuctionTool"
+        if not stage.GetPrimAtPath(self.tool_path).IsValid():
+            # `tool0` is the true end-effector frame on the UR10e, while `wrist_3_link` is the last
+            # rigid body that carries the wrist. Mount the visual tool under the tool frame when it
+            # exists so the cups follow the real gripper instead of sitting at the wrist's visual stem.
+            self.tool_path = self.wrist_path
+        self.root = f"{self.tool_path}/SuctionTool"
         self._build()
         self._wrist_view = None
         self.held = None            # the prim path of the box currently gripped
@@ -122,11 +128,20 @@ class SuctionTool:
         self.on = bool(on)
 
     def _wrist(self):
-        """The wrist link as a rigid body. Made on first use: the view needs a running simulation."""
+        """The rigid body that carries the end effector. Prefer the tool frame when it exists,
+        otherwise fall back to the wrist link so the visual cups stay on the same kinematic tree."""
         if getattr(self, "_wrist_view", None) is None:
             from isaacsim.core.prims import RigidPrim
-            self._wrist_view = RigidPrim(self.wrist_path)
-            self._wrist_view.initialize()
+            for path in (self.tool_path, self.wrist_path):
+                try:
+                    view = RigidPrim(path)
+                    view.initialize()
+                    self._wrist_view = view
+                    break
+                except Exception:
+                    continue
+            if getattr(self, "_wrist_view", None) is None:
+                raise RuntimeError(f"cannot find a rigid body for the tool under {self.tool_path!r} or {self.wrist_path!r}")
         return self._wrist_view
 
     def cup_pose(self):

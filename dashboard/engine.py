@@ -346,7 +346,7 @@ class Analyzer:
         self.refs: dict = {}                         # healthy run of the same task is the baseline (key -> {"t", "u", "e"} arrays)
         self.run_key, self.run_t0, self.cur_ref, self.recording, self.rec = None, 0.0, None, False, []
         self.cal_until = PICK_FAULT_ONSET_S - 0.1
-        self.run_info, self.run_stats = {}, {"res": [], "held": [], "alerts": {}}
+        self.run_info, self.run_stats = {}, {"res": [], "held": [], "alerts": {}, "segs": [], "prev": False}
         self.limit = twin.effort_limit
         self.reset_window()
         self.tare = 0.0
@@ -371,6 +371,12 @@ class Analyzer:
         self.fault_hold = False
         self.zpeak = np.zeros(DOF)
 
+    @staticmethod
+    def _box_fact(seg):
+        """One box's payload estimate: the settled end of its carry (the running mean needs a moment after the grasp)."""
+        carry = seg[-18:-8] if len(seg) > 45 else seg[-10:]
+        return {"est": float(np.mean(carry)) if len(carry) >= 5 else None, "n": len(seg)}
+
     def reset_window(self):
         self.buf = {k: deque(maxlen=WINDOW_ROWS) for k in ("t", "q", "qd", "tau", "qc", "ta")}
 
@@ -392,7 +398,7 @@ class Analyzer:
         self.run_info = dict(info or {})
         self.auto_tare = 0.0
         self.zpeak = np.zeros(DOF)
-        self.run_stats = {"res": [], "held": [], "alerts": {}}
+        self.run_stats = {"res": [], "held": [], "alerts": {}, "segs": [], "prev": False}
         self.cur_ref = self.refs.get(key)
         self.recording = self.cur_ref is None and fault == "none"
 
@@ -484,6 +490,12 @@ class Analyzer:
             rs["res"].append(np.abs(nowpct))
             if blk.truth.get("load", 0.0) > 0:
                 rs["held"].append(mass)
+                if not rs["prev"]:                                   # a new box has just been lifted: start its own list
+                    rs["segs"].append([])
+                rs["segs"][-1].append(mass)
+                rs["prev"] = True
+            else:
+                rs["prev"] = False
             for aid, a in self.alerts.items():
                 if a["sev"] > 0 and aid != "payload":                       # the payload is what the demo is about, not a fault
                     rs["alerts"][aid] = (a["where"], a["title"])
@@ -498,6 +510,7 @@ class Analyzer:
                    "elapsed": (blk.t - self.run_t0) if self.run_key is not None else None,
                    "peak": (int(np.argmax(peak)), float(np.max(peak))),
                    "carry_est": carry_est,
+                   "boxes": [self._box_fact(seg) for seg in self.run_stats["segs"]],
                    "alerts": list(self.run_stats["alerts"].values()),
                    "ref": "recorded" if self.recording else ("compared" if self.cur_ref is not None else "none")}
         comp = {"gravity": self.twin.g(q), "inertia": self.twin.M(q) @ res.qdd[k],

@@ -70,47 +70,58 @@ SCREEN_COL = (0.04, 0.05, 0.07)
 BAR_COL = (0.21, 0.72, 0.95)
 
 # ── the viewport camera ───────────────────────────────────────────────────────────────────────
-# Named views rather than one pair of coordinates, because what you want to look at depends on
-# what you are looking FOR, and because an eye position is much easier to get right as a distance
-# and two angles than as three metres.
+# Named views rather than one pair of coordinates, because what you want to look at depends on what
+# you are looking FOR, and because an eye position is far easier to get right as a distance and two
+# angles than as three metres.
 #
-# What has to fit in frame: the arm (base at the origin), the three boxes on the infeed table at
-# y = -0.52, the belt at y = +0.55, and the sign and telemetry screen on the back wall. That is
-# about 2.4 m across, which at the 22 mm lens (a 51 degree horizontal field) needs roughly 2.5 m
-# of standoff; the distances below carry a little margin on top.
-CAM_TARGET = (0.60, 0.00, 0.05)     # between the box row and the belt, at about carry height
+# What has to be on screen: the arm (base at the origin), the three boxes on the infeed table at
+# y = -0.52, the place point over the belt at y = +0.55, and the carry height above each box. The
+# NTT sign at (-0.62, 1.70) and the telemetry screen at (0.95, 1.42) are BACKGROUND — nice to have
+# in shot, and the wide views keep them, but framing for them forces the camera so far back that
+# the arm itself goes small. That trade is what separates the views below.
+#
+# All of them are checked against the real 22 mm / 1280x720 frustum in tests/test_cell_geometry.py,
+# horizontally and vertically separately: a 16:9 frame is much narrower vertically (15.0 degree
+# half-angle against 25.5), so a view can look fine on the horizontal check and still be cropped
+# off the top — which is exactly the mistake an isometric view invites.
 
-# (distance m, azimuth deg, elevation deg). Azimuth is measured in the xy plane from +x towards
-# +y, so a negative value puts the camera in front of the cell (-y) and to its right (+x), which
-# is the side the conveyor runs away from and leaves the back wall visible behind the arm.
+# (distance m, azimuth deg, elevation deg, target). Azimuth is measured in the xy plane from +x
+# towards +y, so a negative value puts the camera in front of the cell (-y) and to its right (+x):
+# the side the conveyor runs away from, which leaves the back wall visible behind the arm.
 CAM_VIEWS = {
-    # The default. A three-quarter view looking down about 30 degrees: enough to read the depth of
-    # the cell and see into the boxes, without going so steep that the sign and the screen on the
-    # back wall foreshorten away.
-    "iso": (3.20, -52.0, 30.0),
-    # A true isometric, 35.26 degrees — the angle at which the three axes foreshorten equally.
-    # Reads as a technical drawing; slightly more top-down than most people mean by "isometric".
-    "iso_high": (3.40, -45.0, 35.26),
-    # The original framing: low and almost level, like the reference photograph. Keeps the arm
-    # against the factory background but flattens the table and the belt into one another.
-    "side": (3.30, -62.0, 11.0),
+    # The default, since 2026-11-08. A three-quarter view looking down 30 degrees. It replaced an
+    # almost level 16-degree shot that flattened the infeed table and the belt into one another;
+    # measured against the frustum, this is better on both counts at once — the arm spans 42% of
+    # the frame's height where the old view gave it 27%, and the sign and the screen are still in
+    # shot. 30 rather than a true isometric 35.26 because the sign foreshortens away above that.
+    "iso": (3.20, -45.0, 30.0, (0.65, 0.30, 0.25)),
+    # A true isometric: 35.26 degrees is the elevation at which the three axes foreshorten equally,
+    # so it reads as a technical drawing. Pulled back a little to keep the cell in frame.
+    "iso_high": (3.50, -45.0, 35.26, (0.65, 0.30, 0.30)),
+    # Closer, aimed at the work rather than the room. The arm and the boxes fill the frame; the
+    # sign and most of the back wall fall outside it. The one to use for watching the cups seal.
+    "iso_close": (2.45, -50.0, 28.0, (0.60, 0.00, 0.05)),
+    # The original framing, kept so it can be asked for by name: low and almost level, like the
+    # reference photograph the cell was built from.
+    "side": (3.35, -62.0, 16.0, (0.45, 0.35, 0.10)),
     # Nearly overhead, for checking the layout rather than watching the arm.
-    "top": (3.20, -75.0, 62.0),
+    "top": (3.20, -75.0, 60.0, (0.60, 0.05, 0.00)),
 }
 CAM_DEFAULT = "iso"
+CAM_TARGET = CAM_VIEWS[CAM_DEFAULT][3]
 
 
 def camera(view=None, target=None):
     """(eye, target) for a named view, as metres in the robot's base frame.
 
-    Derived from the distance and the two angles rather than written down, so a view can be
-    nudged by changing an angle instead of solving for three coordinates by hand."""
+    Derived from the distance and the two angles rather than written down, so a view can be nudged
+    by changing an angle instead of solving for three coordinates by hand."""
     import math
     name = view or CAM_DEFAULT
     if name not in CAM_VIEWS:
         raise ValueError(f"unknown camera view {name!r}; have {sorted(CAM_VIEWS)}")
-    d, az, el = CAM_VIEWS[name]
-    tgt = tuple(CAM_TARGET if target is None else target)
+    d, az, el, tgt = CAM_VIEWS[name]
+    tgt = tuple(tgt if target is None else target)
     h = d * math.cos(math.radians(el))          # horizontal standoff
     return (tgt[0] + h * math.cos(math.radians(az)),
             tgt[1] + h * math.sin(math.radians(az)),

@@ -3,6 +3,13 @@
 Written for: the project team. Each one gets validated before we
 change anything, and we keep it only if it makes the project better. New decisions go at the bottom.
 
+## Status update, 2026-11-08
+
+This pass closes the stale Panda-era validation problem in the repo: the active UR10e suite contract and
+validator are now aligned, and the fresh UR10e reference data passes the project’s clean model/telemetry
+checks in the intended project environments. The remaining open items are measurement work on the real
+arm, not repo-wide logic failures.
+
 ---
 
 ## D1. Cap the speed control so the arm never leaves the trusted range

@@ -7,7 +7,7 @@ tool and sets them on a running conveyor, over and over, in a window.
     PAL_BOX_KG=2.5 ./start_sim_docker.sh       # heavier boxes
     PAL_STYLE=trapezoidal ./start_sim_docker.sh
     PAL_SPEED=0.5 ./start_sim_docker.sh        # fraction of the trustworthy speed band
-    PAL_CAM=side ./start_sim_docker.sh         # camera: iso (default), iso_high, side, top
+    PAL_CAM=iso_close ./start_sim_docker.sh    # camera: iso (default), iso_high, iso_close, side, top
 
 What it is for: watching the cell run, and judging how it looks and how smoothly it moves. It is
 not a data run — nothing is written and nothing is scored. `pal_live.py` is the same cell driven

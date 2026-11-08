@@ -2,6 +2,35 @@
 
 Newest first. What is still to do is in [docs/TODO.md](docs/TODO.md); read that first.
 
+## 2026-11-09 — the wrists never moved; controller fixed, detection suites, dashboard layout
+
+Written for: whoever picks this up next. [docs/TODO.md](docs/TODO.md) is the list.
+
+**A controller bug that had hidden every wrist result.** In every run recorded before today joints 5 and 6
+did not move (q range 0.0002 rad against 0.16 rad commanded). Two causes, both in `workspace/pal_runner.py`:
+computed torque scales its feedback by the mass matrix, PhysX's mass matrix has no rotor inertia, and the
+wrists are light, so the feedback gain was under 1 N*m/rad against 0.62 N*m of breakaway friction. Fixed with
+(1) baseline friction feed-forward (`PAL_FRICTION_FF=0` restores the old behaviour) and (2) the armature added
+to the controller's M (`PAL_CONTROLLER_ARMATURE=0`). Tracking error std is now 0.0035-0.0076 rad on all six
+joints (joint 6 was 0.055 rad with a 0.2 rad offset). **Every earlier UR10e recording is stale** and is being
+regenerated; the Panda-era numbers were already.
+
+- `pal_faults.FaultInjector` used one rotor inertia of 0.0061 (the Panda's) for backlash on every joint; it now
+  takes each joint's armature.
+- **Torque convention settled: link-side** (`TORQUE_CONVENTION`). A dynamic test, not the static one: against
+  the model with no armature the measured torque leaves 0.00-0.015 N*m RMS; with armature 0.03-0.10 N*m. The
+  analysis model still carries the armature, a small bias proportional to qdd that is left as is.
+- `schema/validate.py`: with sensor noise on, the decomposition and `tau_frac` identities hold only to within
+  the noise (the logger corrupts the torques after deriving them). Tolerance is 6 sigma from the manifest;
+  zero-noise runs are still exact. This had failed all 94 noisy runs.
+- New suites: `payload` (30 runs: 0 to 9 kg moving at 20/35/50% speed, to 12.5 kg held), `detect` (96 runs: every
+  fault on every joint, a tuning split and a held-out split) and `detectfast` (43 runs at 40% speed).
+- `tools/tune_detector.py`: grid search on the `dtune_*` runs only, scored on `dtest_*` and `dfast_*`.
+  `observers/detector.detect` takes per-joint floors.
+- `Runner.ensure_view()` rebuilds a dropped Isaac physics view for the live server and the suites, not only the demo.
+- Dashboard: Isaac picture large with the schematic twin as an inset, both Replay buttons removed, an Analysis tab
+  with per-box facts and an offline rule-based narrator, load slider to 8 kg.
+
 ## 2026-11-08 (evening) — the Panda removed, telemetry v1, Pinocchio energy and payload work
 
 Written for: whoever picks this up next. The one-page version is [docs/TODO.md](docs/TODO.md); the
@@ -86,7 +115,25 @@ written to a joint that does not exist. Setting `ARM = cfg.DOF` turned it into a
 `ValueError`; the suites now say `LAST_JOINT = cfg.DOF - 1`, which is what "the far end of the
 chain" actually meant. Same fix in `pal_sweep.py` and `pal_selftest.py`. Suite counts unchanged.
 
-**Tests: 161 passed, 57 skipped** (was 110 / 71).
+**The viewport is isometric now.** The cell's camera was an almost level 16-degree shot across the
+infeed table, which flattened the table and the belt into one another. It is now a three-quarter
+view looking down 30 degrees, and there are named alternatives — `PAL_CAM=iso | iso_high |
+iso_close | side | top`, defined in `pal_cell_geom.CAM_VIEWS` as a distance and two angles rather
+than three coordinates, which is a much easier thing to nudge.
+
+Measured against the real 22 mm / 1280x720 frustum rather than judged by eye: the arm spans **42%
+of the frame's height from `iso` against 27% from the old `side`**, with the NTT sign and the
+telemetry screen still in shot — so raising the camera cost no apparent size. The obvious way to
+fit more in is to back away, which would have undone the point, so that comparison is now a test.
+`tests/test_cell_geometry.py` (13 tests) also checks horizontal and vertical framing separately: a
+16:9 frame is far narrower vertically (15.0 degree half-angle against 25.5), and an isometric view
+is precisely the one that pushes things off the top of the frame.
+
+The same file pins the layout itself — pick targets inside the arm's reach, the carry height
+actually clearing the boxes still on the table, boxes not overlapping or overhanging, the release
+gap above the belt. All of it checkable on the host because `pal_cell_geom.py` imports no simulator.
+
+**Tests: 174 passed, 57 skipped** (was 110 / 71).
 
 - All **fifteen** per-test Panda quarantines are gone. `conftest.PANDA_ASSUMPTION` is deleted; the
   file now records why it existed and what it was for, because that list is what made the work cheap
@@ -97,6 +144,7 @@ chain" actually meant. Same fix in `pal_sweep.py` and `pal_selftest.py`. Suite c
 - New `tests/test_energy.py` (16): energy conservation in a free swing, the work-energy theorem, the
   armature's share, each term of the decomposition vanishing when it should, a payload's gravity
   torque as `J_p^T(0,0,mg)` swept over three offsets, and the elbow singularity.
+- New `tests/test_cell_geometry.py` (13): the layout and the camera, both against the real frustum.
 - The 57 skips are the four recorded-Panda-evidence modules (56) and one missing-data skip. **The
   project still has no validated detection or payload result for the arm it runs** — that needs
   `tools/pal_suite.sh` on a GPU, and it is item 1 of docs/TODO.md.

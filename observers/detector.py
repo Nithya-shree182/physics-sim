@@ -46,8 +46,13 @@ FAULT_LABELS = {
 }
 
 CALIBRATION_S = 3.0          # [CHOICE] fault-free window at the start of each run
-Z_THRESHOLD = 8.0            # [CHOICE] standard deviations
-CONSECUTIVE_S = 0.050         # [CHOICE] how long the z-score must stay over the threshold, in seconds (was 50 rows, which is 50 ms only at 1 kHz)
+# Tuned on the UR10e's own runs (tools/tune_detector.py, 2026-11-09): chosen on `dtune_*` only, then scored on held-out noise
+# seeds (`dtest_*`) and on 40% speed (`dfast_*`). Rule: no alarm on any healthy tuning run, even with the threshold raised 1.5x.
+# The Panda-era values were z 8, 50 ms, no baseline, 20 Hz. See docs/DETECTION_RESULTS.md for the scores and the limits.
+Z_THRESHOLD = 6.0            # [TUNED] standard deviations
+CONSECUTIVE_S = 0.020        # [TUNED] how long the z-score must stay over the threshold, in seconds
+TUNED_BASELINE = "friction"  # [TUNED] fit and remove mass-gain, offset and sign(qd) friction on the calibration window
+TUNED_CUTOFF_HZ = 10.0       # [TUNED] residual low-pass; residual.py's default (20 Hz) is shared with the payload estimator and left alone
 FLOOR_RESIDUAL_NM = 0.02     # [CHOICE] minimum std, N*m, so a quiet joint cannot alarm on noise
 FLOOR_TRACKING_RAD = 2e-4    # [CHOICE] minimum std, rad
 
@@ -191,13 +196,15 @@ def consecutive_rows(t: np.ndarray, consecutive_s: float = CONSECUTIVE_S, consec
 
 def detect(run: Run, res: Residual, calibration_s: float = CALIBRATION_S, z_threshold: float = Z_THRESHOLD,
            consecutive_s: float = CONSECUTIVE_S, consecutive: int | None = None, force_gain_max: float = FORCE_GAIN_MAX, baseline: str = "none",
-           reference_run: Run | None = None) -> Detection:
+           reference_run: Run | None = None, floor_residual=FLOOR_RESIDUAL_NM, floor_tracking=FLOOR_TRACKING_RAD) -> Detection:
+    """`floor_residual` and `floor_tracking` are the smallest standard deviations a joint may be scored against; a scalar applies to every
+    joint, an array gives one per joint (a floor in proportion to each joint's torque limit suits an arm whose joints differ 6x)."""
     res = recalibrate_baseline(res, baseline, calibration_s)
     t = res.t
     calib = (t - t[0]) < calibration_s
     gated = np.array([force_noise_gain(J) > force_gain_max for J in res.J])
 
-    z_r = _standardise(res.r, calib & res.valid, FLOOR_RESIDUAL_NM)
+    z_r = _standardise(res.r, calib & res.valid, floor_residual)
     track = run.arr("q_cmd") - run.arr("q")
     if reference_run is not None:
         # the tracking channel needs the same reference: a loaded carry tracks worse than the unloaded first seconds, and that is not a fault
@@ -206,7 +213,7 @@ def detect(run: Run, res: Residual, calibration_s: float = CALIBRATION_S, z_thre
         w = max(1, int(round(0.2 / float(np.median(np.diff(t))))))
         ref = _smooth(ref[:n], w)
         track = track.copy(); track[:n] -= ref; track[n:] = np.nan
-    z_e = _standardise(track, calib & np.all(np.isfinite(track), axis=1), FLOOR_TRACKING_RAD)
+    z_e = _standardise(track, calib & np.all(np.isfinite(track), axis=1), floor_tracking)
 
     over_r = np.nan_to_num(np.abs(z_r), nan=0.0) > z_threshold
     over_e = np.nan_to_num(np.abs(z_e), nan=0.0) > z_threshold
@@ -251,11 +258,11 @@ def evaluate(run: Run, det: Detection) -> dict:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("parquet", type=Path, nargs="+")
-    ap.add_argument("--cutoff", type=float, default=DEFAULT_CUTOFF_HZ)
+    ap.add_argument("--cutoff", type=float, default=TUNED_CUTOFF_HZ)
     ap.add_argument("--torque", choices=("auto", "measured", "applied"), default="auto",
                     help="auto (default): the applied torque on effort-mode logs, where friction and locked joints show; "
                          "measured otherwise")
-    ap.add_argument("--baseline", choices=BASELINES, default="none",
+    ap.add_argument("--baseline", choices=BASELINES, default=TUNED_BASELINE,
                     help="calibration-window baseline removed before the z-score (default none, the original rule; 'friction' finds "
                          "smaller friction faults but needs a calibration window that covers the motion, see recalibrate_baseline)")
     ap.add_argument("--payload-aware", action="store_true",

@@ -14,6 +14,7 @@ the results. Names, seeds and parameters are the ones the earlier per-objective 
   o6         O6     three movement styles over a speed grid at 0 and 2 kg (out-and-back between two joint configurations)       -> out/o6
   pick       O4/O5  a real pick-and-place from IK waypoints in three styles at 0.5 and 2 kg, an ellipse, faults after the grasp    -> out/pick
   o6pick     O6     the same pick cycle over a speed grid: cycle time, peak torque, energy per pick                              -> out/o6pick
+  payload    O4     heavy payload ladder (0-9 kg moving, to 12.5 kg held) at 20/35/50% speed                          -> out/payload
   pickphys   O4     a REAL pick: fingers close on a physical cube of known mass, friction holds it, contact carries its weight   -> out/pickphys
 """
 import numpy as np
@@ -40,6 +41,16 @@ def _kg(kg):
 def reference():
     return [Scenario(name=f"ref_matched_{_kg(kg)}", traj=T.multisine(0.20), traj_type="slow_reference", duration_s=6.0,
                      payload_kg=kg, mass_scale=1.0, noise_seed=None) for kg in (0.0, 1.0)]
+
+
+def o3():
+    """UR10e evidence suite: a plain hold at the active home pose with the two payloads the model
+    still checks as a clean baseline. The older Panda configuration had several probe poses and a
+    near-singular pass; the active UR10e configuration exposes a single home pose, so the suite keeps
+    the same clinical purpose without inventing a stale robot-specific pose set."""
+    return [Scenario(name=f"o3_hold_home_{_kg(kg)}", traj=T.hold(cfg.HOME_JOINTS), traj_type="hold",
+                     duration_s=3.0, payload_kg=kg, noise_seed=1500 + i)
+            for i, kg in enumerate((0.0, 1.0))]
 
 
 def o4():
@@ -140,6 +151,118 @@ def o6():
                 tr = T.cycle(Q_HOME, Q_PICK, kind, **kw)
                 runs.append(Scenario(name=f"o6_{kind}_{_kg(kg)}_{i}", traj=tr, traj_type=kind, duration_s=tr.duration + 0.3,
                                      payload_kg=kg, mass_scale=1.0, noise_seed=None))
+    return runs
+
+
+def payload():
+    """O4 at the heavy end: known payloads, moving at 20/35/50% of the velocity limit and held at home.
+
+    The ladder shortens as speed rises because the multisine from home is a stretched-out pose and
+    torque saturates: the largest payload at each speed keeps the peak model torque under ~90% of the
+    joint limits (host check, 2026-11-08), so a run never measures the drive's ceiling by accident.
+    Rated payload is 12.5 kg; only the holds go that high (85% of limit at home). No noise, matched
+    plant, like the reference runs, so any model error is the model's."""
+    ladders = {0.20: (0.0, 0.5, 1.0, 2.0, 3.0, 4.0, 6.0, 8.0, 9.0),
+               0.35: (0.0, 0.5, 1.0, 2.0, 3.0, 4.0, 6.0, 7.0),
+               0.50: (0.0, 0.5, 1.0, 2.0, 3.0, 4.0, 6.0)}
+    runs = []
+    for frac, kgs in ladders.items():
+        tr = T.multisine(frac)
+        for kg in kgs:
+            runs.append(Scenario(name=f"payload_v{round(frac * 100)}_{_kg(kg)}", traj=tr, traj_type="slow_reference",
+                                 duration_s=6.0, payload_kg=kg, mass_scale=1.0, noise_seed=None))
+    for kg in (0.0, 2.0, 4.0, 8.0, 10.0, 12.5):
+        runs.append(Scenario(name=f"payload_hold_{_kg(kg)}", traj=T.hold(cfg.HOME_JOINTS), traj_type="hold",
+                             duration_s=3.0, payload_kg=kg, mass_scale=1.0, noise_seed=None))
+    return runs
+
+
+def _fault_grid():
+    """Every fault the detector is asked about, on every joint the arm has, at magnitudes that scale with the arm.
+
+    friction multiplies each joint's own baseline, which is 1% of that joint's effort limit, so x2/x4/x8 add
+    about 1/3/7% of the limit on EVERY joint, wrist or shoulder alike. A stuck joint is locked hard. Backlash
+    is the play between motor and link in radians. Delay is a command delay of every joint."""
+    specs = []
+    for j in range(cfg.DOF):
+        specs += [FaultSpec("friction", j, m, 3.0) for m in (2.0, 4.0, 8.0)]
+        specs.append(FaultSpec("stuck_joint", j, 200.0, 3.0))
+        specs += [FaultSpec("backlash", j, w, 3.0) for w in (0.04, 0.12)]
+    specs += [FaultSpec("delay", 0, d, 3.0) for d in (0.010, 0.030, 0.050)]
+    return specs
+
+
+def _detect_runs(prefix, speed, fault_seed, healthy_seeds):
+    tr = T.multisine(speed)
+    runs = [Scenario(name=f"{prefix}_healthy_s{fault_seed}", traj=tr, traj_type="slow_reference", duration_s=6.0, noise_seed=fault_seed)]
+    runs += [Scenario(name=f"{prefix}_healthy_s{s}", traj=tr, traj_type="slow_reference", duration_s=6.0, noise_seed=s) for s in healthy_seeds]
+    runs += [Scenario(name=f"{prefix}_{f.tag}", traj=tr, traj_type="slow_reference", duration_s=6.0, fault=f, noise_seed=fault_seed)
+             for f in _fault_grid()]
+    return runs
+
+
+def detect():
+    """Detector tuning and its held-out test, in one process. `dtune_*` is the only data thresholds may be fitted to;
+    `dtest_*` has other noise seeds and is scored once, after the choice is made. 20% speed."""
+    return (_detect_runs("dtune", 0.20, 1000, range(1010, 1018)) +
+            _detect_runs("dtest", 0.20, 2000, range(2010, 2018)))
+
+
+def detectfast():
+    """The same faults at 40% of the velocity limit, a third noise seed: does a tuned detector survive faster motion."""
+    return _detect_runs("dfast", 0.40, 3000, range(3010, 3013))
+
+
+def detectlimits():
+    """How big must backlash and delay be before the tuned detector sees them? The `detect` suite's widths (0.04, 0.12 rad)
+    and its 10 ms delay were mostly missed; these go larger, on every joint, so the smallest visible size can be stated
+    rather than guessed. Noise seed 4000, 20% speed."""
+    tr = T.multisine(0.20)
+    specs = [FaultSpec("backlash", j, w, 3.0) for j in range(cfg.DOF) for w in (0.20, 0.35, 0.50)]
+    specs += [FaultSpec("delay", 0, d, 3.0) for d in (0.015, 0.020, 0.040)]
+    runs = [Scenario(name="dlim_healthy_s4000", traj=tr, traj_type="slow_reference", duration_s=6.0, noise_seed=4000)]
+    runs += [Scenario(name=f"dlim_{f.tag}", traj=tr, traj_type="slow_reference", duration_s=6.0, fault=f, noise_seed=4000) for f in specs]
+    return runs
+
+
+SPEED_GRID = (0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.75, 1.00)
+
+
+def speedband():
+    """The residual floor against speed on THIS arm (D1's evidence, which was the Panda's). The reference multisine at eight speeds
+    from 10% to 100% of the velocity limit, empty gripper, matched plant, ideal sensing: whatever the residual does is the model
+    against the simulator and nothing else. Run it at more than one physics rate (PAL_PHYSICS_HZ) to see whether the residual
+    moves with the rate, which is what marked the Panda's artifact above ~50%."""
+    return [Scenario(name=f"speed_v{round(f * 100):03d}", traj=T.multisine(f), traj_type="slow_reference", duration_s=6.0,
+                     payload_kg=0.0, mass_scale=1.0, noise_seed=None) for f in SPEED_GRID]
+
+
+def pickdetect(kg=1.0):
+    """Fault detection on the PICK cycle, where a healthy run of the same task is the baseline. The multisine tuning (`detect`) does not
+    carry over: a grasp and a release put transients in the residual that a fixed calibration window never sees, and the first look at
+    the tuned multisine settings false-alarmed on every healthy pick. So this tunes the pick rule on its own data.
+
+      pref_*           one healthy reference (seed 5299), the baseline every run is compared with
+      ptune_*          faults at seed 5300 and eight healthy seeds   <- the only data a setting is fitted to
+      ptest_*          faults at seed 5400 and eight other healthy seeds  <- scored after the choice
+
+    A fault starts 0.4 s after the grasp, as in `pickphys`. Needs the cell and the suction tool."""
+    task = K.pick_place("s_curve", physical=True)
+    onset = task.t_attach + 0.4
+
+    def scen(name, seed, fault=None):
+        return Scenario(name=name, traj=task.traj, traj_type="pick", duration_s=task.duration + 0.5, payload_physical=True,
+                        payload_events=((task.t_attach, kg), (task.t_release, 0.0)), box_kg=kg, noise_seed=seed, task=task,
+                        **({"fault": fault} if fault else {}))
+    specs = []
+    for j in range(cfg.DOF):
+        specs += [FaultSpec("friction", j, m, onset) for m in (2.0, 4.0, 8.0)] + [FaultSpec("stuck_joint", j, 200.0, onset)]
+    specs.append(FaultSpec("delay", 0, 0.050, onset))
+    runs = [scen("pref_healthy_s5299", 5299)]
+    for pre, fseed, hseeds in (("ptune", 5300, range(5301, 5309)), ("ptest", 5400, range(5401, 5409))):
+        runs.append(scen(f"{pre}_healthy_s{fseed}", fseed))
+        runs += [scen(f"{pre}_healthy_s{h}", h) for h in hseeds]
+        runs += [scen(f"{pre}_{f.tag}", fseed, f) for f in specs]
     return runs
 
 
@@ -286,12 +409,13 @@ def o6pick():
     return runs
 
 
-SUITES = {"reference": ("data", reference), "o4": ("out/o4", o4), "o5": ("out/o5", o5),
+SUITES = {"reference": ("data", reference), "o3": ("out/o3", o3), "o4": ("out/o4", o4), "o5": ("out/o5", o5),
           "clean": ("out/clean", clean), "fast": ("out/fast", fast), "extra": ("out/extra", extra),
           "push": ("out/push", push), "o6": ("out/o6", o6), "pick": ("out/pick", pick), "o6pick": ("out/o6pick", o6pick),
-          "pickphys": ("out/pickphys", pickphys), "pickfar": ("out/pickfar", pickfar)}
-ORDER = ["reference", "o4", "o5", "clean", "fast", "extra", "push", "o6", "pick", "o6pick", "pickphys", "pickfar"]
+          "pickphys": ("out/pickphys", pickphys), "pickfar": ("out/pickfar", pickfar),
+          "payload": ("out/payload", payload), "detect": ("out/detect", detect), "detectfast": ("out/detectfast", detectfast), "detectlimits": ("out/detectlimits", detectlimits), "speedband": ("out/speedband", speedband), "pickdetect": ("out/pickdetect", pickdetect)}
+ORDER = ["reference", "o3", "o4", "o5", "clean", "fast", "extra", "push", "o6", "pick", "o6pick", "pickphys", "pickfar", "payload", "detect", "detectfast", "detectlimits", "speedband", "pickdetect"]
 # Suites whose payload is a REAL gripped box rather than a mass folded into the tool link, so they
 # need the conveyor cell and its suction tool built into the stage. They cannot share a process
 # with the others: the cell adds collision geometry the bare-arm suites must not see.
-NEEDS_CELL = {"pickphys", "pickfar"}
+NEEDS_CELL = {"pickphys", "pickfar", "pickdetect"}

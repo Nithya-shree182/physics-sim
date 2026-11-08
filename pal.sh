@@ -22,7 +22,8 @@ PORT_DASH="${PAL_DASH_PORT:-8050}"
 export PAL_ROBOT="${PAL_ROBOT:-ur10e}"
 # Sensor noise on the streamed rows: 0 (the default) is ideal sensing. See workspace/pal_sensors.py.
 export PAL_SENSOR_NOISE="${PAL_SENSOR_NOISE:-0}"
-# Viewport framing for the streamed picture: iso (default), iso_high, side, top. pal_cell_geom.py.
+# Viewport framing for the streamed picture: iso (default), iso_high, iso_close, side, top.
+# Defined in workspace/pal_cell_geom.py (CAM_VIEWS).
 export PAL_CAM="${PAL_CAM:-iso}"
 export PAL_LIVE_PORT="${PAL_LIVE_PORT:-8765}"
 export PAL_LIVE_URL="http://127.0.0.1:$PAL_LIVE_PORT"

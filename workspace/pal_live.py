@@ -54,9 +54,9 @@ PORT = int(os.environ.get("PAL_LIVE_PORT", "8765"))
 HZ = float(os.environ.get("PAL_PHYSICS_HZ", cfg.LIVE_PHYSICS_HZ))
 DOF = cfg.DOF
 DECIM = max(1, round(HZ / 200))           # one row per DECIM steps: 250 Hz rows at 250 Hz physics, 200 Hz rows at 1000 Hz (the dashboard reads row_hz)
-RENDER_HZ = float(os.environ.get("PAL_LIVE_RENDER_HZ", "10"))   # frames drawn per second; the picture is saved about 3 times a second, so 10 is enough (0 = never)
+RENDER_HZ = float(os.environ.get("PAL_LIVE_RENDER_HZ", "20"))   # save more frames for the dashboard without making the render path the bottleneck (0 = never)
 REALTIME = os.environ.get("PAL_LIVE_REALTIME", "1") != "0"
-FRAME_EVERY_S = 0.3
+FRAME_EVERY_S = 0.10
 KEEP_ROWS = 6000                       # 24 s of 250 Hz rows
 
 
@@ -183,7 +183,6 @@ def grab_frame():
         HUB.frame_path = f"/workspace/out/live/frame_{(frame_n - 1) % 2}.png"
         HUB.set(frames=frame_n)
     frame_n += 1
-
 
 state = {"run_id": 0, "t_base": 0.0, "tau_acc": np.zeros(DOF), "app_acc": np.zeros(DOF),
          "n_acc": 0, "wall0": 0.0, "sim0": 0.0, "held": 0.0,

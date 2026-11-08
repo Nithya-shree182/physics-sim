@@ -86,3 +86,31 @@ def test_a_healthy_pick_is_recorded_as_the_reference_and_the_same_pick_matches_i
     assert key in an.refs and len(an.refs[key]["t"]) > 20
     assert run(LiveSource(seed=1)) == (False, True)             # second time: compared with it
     assert float(np.abs(an.last_ue[0]).max()) < 1e-9            # the same pick leaves nothing
+
+
+def test_narrator_is_rule_based_and_states_only_known_numbers():
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "dashboard"))
+    import views as V
+    snap = {"summary": {"picks": True, "running": False, "ref": "compared", "peak": (2, 0.4), "alerts": [],
+                        "info": {"kg": 2.0, "boxes": 3, "style": "s_curve", "fault": "none"},
+                        "boxes": [{"est": 2.01, "n": 80}, {"est": 1.99, "n": 80}, {"est": 2.0, "n": 80}]}}
+    text = " ".join(V.narrate(snap, {"last": {"ok": True, "aborted": False, "boxes_placed": 3, "boxes": 3}}))
+    assert "all 3 on the belt" in text and "within tolerance" in text and "No alarm" in text
+    snap["summary"]["info"]["fault"] = "friction"
+    snap["summary"]["info"]["joint"] = 3
+    text = " ".join(V.narrate(snap, None))
+    assert "not reliable" in text and "joint 4" in text
+    assert V.narrate({"summary": {"picks": False, "info": {}}}, None)[0].startswith("No cycle yet")
+
+
+def test_style_explanation_reads_its_numbers_from_the_benchmark():
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "dashboard"))
+    import views as V
+    mk = lambda st, kg, t, p: {"style": st, "payload_kg": kg, "cycle_time_s": t, "peak_torque_frac": p, "energy_drawn_J": 100.0, "track_err_max_rad": 0.01}
+    d = {"runs": [mk("trapezoidal", 0, 5.0, 0.4), mk("trapezoidal", 2, 5.5, 0.42), mk("s_curve", 0, 6.0, 0.35), mk("torque_aware", 0, 9.0, 0.3)]}
+    text = " ".join(t for _, t in V.explain_styles(d))
+    assert "5.0 s" in text and "6.0 s" in text and "9.0 s" in text

@@ -62,10 +62,12 @@ class FaultSpec:
 class FaultInjector:
     """`plant` needs .base_friction (7,3) and .set_friction((7,3)); see pal_plant.Plant."""
 
-    def __init__(self, plant, hz, motor_inertia=0.0061):
+    def __init__(self, plant, hz, motor_inertia=None):
         self.plant, self.hz = plant, hz
         self.dt = 1.0 / hz
-        self.jm = motor_inertia            # reflected rotor inertia, = the plant's armature
+        # reflected rotor inertia per joint, = the plant's armature. It used to be a single 0.0061 (the Panda's),
+        # which made backlash on the UR10e's 0.02-0.1 kg*m^2 rotors move several times too freely.
+        self.jm = np.broadcast_to(np.asarray(cfg.ARMATURE if motor_inertia is None else motor_inertia, float), (ARM,)).copy()
         self.spec = FaultSpec()
         self.active = False
         self._line = deque()
@@ -110,7 +112,7 @@ class FaultInjector:
             j, half = s.joint, 0.5 * s.param
             if self._contact == 0:
                 # in the gap: the motor side moves freely, nothing reaches the link
-                self._bv += (tau[j] / self.jm - qdd_last[j]) * self.dt
+                self._bv += (tau[j] / self.jm[j] - qdd_last[j]) * self.dt
                 self._bx += self._bv * self.dt
                 if abs(self._bx) >= half:
                     self._bx = np.sign(self._bx) * half

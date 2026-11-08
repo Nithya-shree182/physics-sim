@@ -20,6 +20,8 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import views as V  # noqa: E402
 from engine import BAND, DOF, Engine, REAL_RMS_PCT  # noqa: E402
+sys.path.insert(0, str(HERE.parent / "workspace"))
+import pal_config as cfg  # noqa: E402
 
 E = Engine()
 app = Dash(__name__, suppress_callback_exceptions=True, title="PAL dashboard")
@@ -34,7 +36,7 @@ DEMO = [
     dict(t="4 · Compare the trajectory styles", len=10, reach=0.0, drawer=None, tab="bench", ctl=dict(fault="none"),
          d="The Benchmark tab compares three movement styles on a real pick: cycle time, peak torque and energy."),
 ]
-DEF_UI = dict(tab=os.environ.get("PAL_DASH_TAB", "arm"), drawer=os.environ.get("PAL_DASH_DRAWER") or None, chan="res", sel=3, more=False, brk=False, view=("stream" if os.environ.get("PAL_DASH_SOURCE") == "isaac" else "twin"), demo=dict(on=False, step=0, t0=0.0, later=False), nonce=0)
+DEF_UI = dict(tab=os.environ.get("PAL_DASH_TAB", "arm"), drawer=os.environ.get("PAL_DASH_DRAWER") or None, chan="res", sel=3, more=False, brk=False, demo=dict(on=False, step=0, t0=0.0, later=False), nonce=0)
 PANELS = [("o1", "Telemetry"), ("o4", "Payload"), ("about", "About")]
 CHANS = [("res", "Residual"), ("tau", "Torque"), ("pay", "Payload")]
 TITLES = dict(o1="Telemetry · current frame", o4="Payload estimator", alerts="Alerts", about="About this view")
@@ -45,6 +47,7 @@ def slider(id_, lo, hi, step, val):
     return d.Input(id=id_, type="range", min=lo, max=hi, step=step, value=val, className="rng", debounce=False)
 
 
+LOAD_MAX_KG = max(cfg.PAYLOAD_LADDER_KG)       # 8 kg: top of the payload ladder, validated moving at 20% speed (out/payload); the arm is rated 12.5
 SPEED_SCALE = BAND                 # the speed bars read 0-100%; 100% on a bar is 50% of the joint velocity limit (DECISIONS.md D1)
 BAR_DEFAULT = 60                   # 60 on the bar = 30% of the velocity limit
 
@@ -67,7 +70,7 @@ def serve_layout():
     E.playing = True
     return html.Div(className="page", children=[
         dcc.Store(id="ui", data=DEF_UI), dcc.Store(id="demo-ctl", data={}), dcc.Store(id="dummy"), dcc.Store(id="ctl-sync"),
-        dcc.Interval(id="tick", interval=500), dcc.Interval(id="frame-tick", interval=350),
+        dcc.Interval(id="tick", interval=500), dcc.Interval(id="frame-tick", interval=100),
         html.Header(className="hdr", children=[
             html.Div(className="brand", children=[html.Img(src="/assets/ntt_data_logo.png", className="logo", alt="NTT DATA")]),
             html.Div(className="product", children=[html.Span("Physics Attestation Layer", className="product-name"),
@@ -75,8 +78,7 @@ def serve_layout():
         html.Div(className="toolbar", children=[
             html.Div(className="tb-left", children=[
                 dcc.RadioItems(id="source", className="seg", value=DEFAULT_SOURCE, inline=True,
-                               options=[dict(label="Isaac Sim (live)", value="isaac"), dict(label="Stand-in plant", value="live"),
-                                        dict(label="Replay · empty arm", value="0kg"), dict(label="Replay · 1 kg", value="1kg")]),
+                               options=[dict(label="Isaac Sim (live)", value="isaac"), dict(label="Stand-in plant", value="live")]),
                 html.Div(id="pill", className="pill")]),
             html.Div(className="tb-right", children=[
                 html.Span(id="hdr-t", style=dict(display="none")),
@@ -94,12 +96,29 @@ def serve_layout():
                                                                   html.Button("Stop", id="demo-stop", n_clicks=0, className="btn btn-s")])]),
         html.Div(className="nav", children=[
             html.Nav(style=dict(display="flex", gap=4, flex="1 1 360px"), children=[
-                html.Button("Arm & residual", id="tab-arm", n_clicks=0, className="tab"), html.Button("Benchmark", id="tab-bench", n_clicks=0, className="tab")]),
+                html.Button("Arm & residual", id="tab-arm", n_clicks=0, className="tab"), html.Button("Analysis", id="tab-an", n_clicks=0, className="tab"), html.Button("Benchmark", id="tab-bench", n_clicks=0, className="tab")]),
             html.Div(className="row", style=dict(gap="6px"), children=[html.Span("PANELS", className="lbl")] +
                      [html.Button(lbl, id=f"p-{k}", n_clicks=0, className="btn btn-s") for k, lbl in PANELS])]),
         html.Div(className="body", children=[
             html.Main(className="main", children=[
                 html.Div(id="main-arm", style=dict(display="flex", flexDirection="column", gap=20), children=[
+                    html.Section(className="card", children=[
+                        html.Div(className="spread", children=[html.H2("Isaac Sim, with the schematic twin inset", className="h2")]),
+                        html.Div(style=dict(display="flex", flexWrap="wrap", gap=16, alignItems="stretch"), children=[
+                            html.Div(style=dict(flex="1 1 640px", minWidth=0, position="relative"), children=[
+                                html.Div(id="stream", style=dict(display="flex", position="relative", aspectRatio="16 / 9", background="#05070a", border="1px dashed rgba(255,255,255,0.18)", borderRadius=6,
+                                                                 alignItems="center", justifyContent="center", flexDirection="column", gap=8, textAlign="center"),
+                                         children=[html.Img(id="sim-img", alt="", style=dict(width="100%", height="100%", objectFit="contain", display="block")),
+                                                   html.Div(id="sim-msg", className="muted", style=dict(fontSize=12, position="absolute", padding=8))]),
+                                html.Div(style=dict(position="absolute", right=10, bottom=10, width="min(34%, 280px)", background="#0a0c10", border="1px solid rgba(255,255,255,0.18)",
+                                                    borderRadius=6, overflow="hidden", boxShadow="0 4px 16px rgba(0,0,0,0.5)"), children=[
+                                    html.Div("SCHEMATIC TWIN (PINOCCHIO)", className="lbl", style=dict(padding="4px 8px", fontSize=9)),
+                                    dcc.Graph(id="twin-graph", config=dict(displayModeBar=False, staticPlot=True), style=dict(height=190))])]),
+                            html.Div(id="stats", className="side", style=dict(flex="0 1 260px"))]),
+                        html.Div(className="row", style=dict(marginTop=8, fontSize=11, color="#9ca3af", gap="6px 18px"), children=[
+                            html.Span("Link tint: share of torque limit"),
+                            html.Span(style=dict(display="flex", alignItems="center", gap=6), children=[
+                                html.Span(style=dict(width=60, height=8, borderRadius=4, background="linear-gradient(90deg,#4b5563,#fab219,#f87171)")), "0 – 100%"])])]),
                     html.Div(className="setup", children=[
                     html.Section(id="task-card", className="card", style=dict(display="none"), children=[
                             html.Div(className="row", style=dict(gap="10px 14px"), children=[
@@ -120,7 +139,7 @@ def serve_layout():
                                     html.Div(className="spread", children=[html.Label("MOCK LOAD ON THE GRIPPER", htmlFor="load", className="lbl"), html.Span(id="load-txt", className="num", style=dict(fontSize=16))]),
                                     html.Div(style=dict(display="flex", alignItems="center", gap=8), children=[
                                         html.Button("−", id="load-dn", n_clicks=0, className="btn", style=dict(width=44, padding=0, fontSize=18), **{"aria-label": "Decrease load by 0.1 kilogram"}),
-                                        slider("load", 0, 3, 0.05, 1.0 if DEFAULT_SOURCE == "isaac" else 0),
+                                        slider("load", 0, LOAD_MAX_KG, 0.05, 1.0 if DEFAULT_SOURCE == "isaac" else 0),
                                         html.Button("+", id="load-up", n_clicks=0, className="btn", style=dict(width=44, padding=0, fontSize=18), **{"aria-label": "Increase load by 0.1 kilogram"})])]),
                                 html.Div(style=dict(flex="1 1 280px", minWidth=0, display="flex", flexDirection="column", gap=2), children=[
                                     html.Div(className="spread", children=[html.Label("JOINT SPEED, ALL JOINTS", htmlFor="spd-all", className="lbl"), html.Span(id="spd-txt", className="num", style=dict(fontSize=16))]),
@@ -139,22 +158,6 @@ def serve_layout():
                                 html.P("In the live product these are commands sent to Isaac Sim. The speed bars stop at half of each joint's velocity limit, "
                                        "the range where the residual is trustworthy.", className="muted", style=dict(margin=0, fontSize=12))])])])]),
                     html.Section(className="card", children=[
-                        html.Div(className="spread", children=[html.H2("Arm twin", className="h2"),
-                            html.Div(style=dict(display="flex", gap=4), children=[html.Button("Schematic", id="v-twin", n_clicks=0, className="btn btn-s"),
-                                                                                  html.Button("Isaac Sim", id="v-stream", n_clicks=0, className="btn btn-s")])]),
-                        html.Div(style=dict(display="flex", flexWrap="wrap", gap=16, alignItems="stretch"), children=[
-                            html.Div(style=dict(flex="0 1 760px", minWidth=0), children=[
-                                dcc.Graph(id="twin-graph", config=dict(displayModeBar=False, staticPlot=True), style=dict(height=380)),
-                                html.Div(id="stream", style=dict(display="none", aspectRatio="640 / 420", background="#05070a", border="1px dashed rgba(255,255,255,0.18)", borderRadius=6,
-                                                                 alignItems="center", justifyContent="center", flexDirection="column", gap=8, textAlign="center"),
-                                         children=[html.Img(id="sim-img", style=dict(width="100%", height="100%", objectFit="contain", display="block")),
-                                                   html.Div(id="sim-msg", className="muted", style=dict(fontSize=12, position="absolute", padding=8))]),
-                                html.Div(className="row", style=dict(marginTop=8, fontSize=11, color="#9ca3af", gap="6px 18px"), children=[
-                                    html.Span("Link tint: share of torque limit"),
-                                    html.Span(style=dict(display="flex", alignItems="center", gap=6), children=[
-                                        html.Span(style=dict(width=60, height=8, borderRadius=4, background="linear-gradient(90deg,#4b5563,#fab219,#f87171)")), "0 – 100%"])])]),
-                            html.Div(id="stats", className="side")])]),
-                    html.Section(className="card", children=[
                         html.Div(className="spread", children=[html.H2(id="chart-title", className="h2"),
                             html.Div(className="row", style=dict(gap=4), children=[html.Button(l, id=f"ch-{k}", n_clicks=0, className="btn btn-s") for k, l in CHANS])]),
                         html.Span(id="chart-sub", className="muted", style=dict(fontSize=12)),
@@ -164,6 +167,7 @@ def serve_layout():
                                 html.Button(id={"type": "jbar", "i": i}, n_clicks=0, className="jbar", title=f"Select joint {i + 1}",
                                             children=html.Div(id={"type": "jb", "i": i}, style=dict(display="contents"))) for i in range(DOF)])]),
                         html.Div(children=html.Button(id="brk-btn", n_clicks=0, className="btn btn-s")), html.Div(id="brk")])]),
+                html.Div(id="main-an", style=dict(display="none", flexDirection="column", gap=20)),
                 html.Div(id="main-bench", style=dict(display="none", flexDirection="column", gap=20))]),
             html.Aside(id="drawer", className="drawer", style=dict(display="none"), children=[
                 html.Div(className="drawer-head", children=[html.H2(id="drawer-title", className="h2"),
@@ -195,7 +199,7 @@ def controls(load, fault, fjoint, *spd):
 @app.callback(Output("load", "value", allow_duplicate=True), Input("load-dn", "n_clicks"), Input("load-up", "n_clicks"), State("load", "value"), prevent_initial_call=True)
 def load_buttons(_dn, _up, load):
     step = -0.1 if ctx.triggered_id == "load-dn" else 0.1
-    return float(max(0.0, min(3.0, round((float(load or 0) + step) * 20) / 20)))
+    return float(max(0.0, min(LOAD_MAX_KG, round((float(load or 0) + step) * 20) / 20)))
 
 
 @app.callback([Output(f"spd-{i}", "value") for i in range(DOF)], Input("spd-all", "value"), prevent_initial_call=True)
@@ -221,7 +225,6 @@ def play(_):
     Input("source", "value"), State("ui", "data"), prevent_initial_call=True)
 def source(which, ui):
     E.use(which)
-    ui = dict(ui, view="stream" if which == "isaac" else "twin")
     if which == "isaac":
         return E.controls.load, BAR_DEFAULT, "none", 3, ui
     return (E.controls.load, BAR_DEFAULT, "none", 2, ui) if which == "live" else (E.controls.load, no_update, "none", no_update, ui)
@@ -256,7 +259,8 @@ def task_stop(n):
     return no_update
 
 
-app.clientside_callback("function(n){return '%s/frame.png?' + Date.now();}" % SIM_URL, Output("sim-img", "src"), Input("frame-tick", "n_intervals"))
+app.clientside_callback("function(n, src){return src === 'isaac' ? '%s/frame.png?' + Date.now() : window.dash_clientside.no_update;}" % SIM_URL,
+                        Output("sim-img", "src"), Input("frame-tick", "n_intervals"), State("source", "value"))
 
 
 @app.callback(Output("dummy", "data", allow_duplicate=True), Input("tare-on", "n_clicks"), Input("tare-off", "n_clicks"), prevent_initial_call=True)
@@ -273,7 +277,7 @@ def tare(on, off):
 def _demo_apply(ui, k):
     st = DEMO[k]
     ui["demo"] = dict(on=True, step=k, t0=E.t_run, later=False)
-    ui.update(chan=st["chan"] if "chan" in st else ui["chan"], drawer=st["drawer"], tab=st.get("tab", "arm"), view="twin")
+    ui.update(chan=st["chan"] if "chan" in st else ui["chan"], drawer=st["drawer"], tab=st.get("tab", "arm"))
     if "sel" in st:
         ui["sel"] = st["sel"]
     E.set_controls(reach=st["reach"])
@@ -283,9 +287,8 @@ def _demo_apply(ui, k):
 
 @app.callback(
     [Output("ui", "data"), Output("demo-ctl", "data")],
-    [Input("tab-arm", "n_clicks"), Input("tab-bench", "n_clicks"), Input("bell", "n_clicks"), Input("drawer-close", "n_clicks"),
-     Input("more-btn", "n_clicks"), Input("brk-btn", "n_clicks"), Input("v-twin", "n_clicks"), Input("v-stream", "n_clicks"),
-     Input("demo-btn", "n_clicks"), Input("demo-next", "n_clicks"), Input("demo-back", "n_clicks"), Input("demo-stop", "n_clicks"), Input("tick", "n_intervals")]
+    [Input("tab-arm", "n_clicks"), Input("tab-an", "n_clicks"), Input("tab-bench", "n_clicks"), Input("bell", "n_clicks"), Input("drawer-close", "n_clicks"),
+     Input("more-btn", "n_clicks"), Input("brk-btn", "n_clicks"),      Input("demo-btn", "n_clicks"), Input("demo-next", "n_clicks"), Input("demo-back", "n_clicks"), Input("demo-stop", "n_clicks"), Input("tick", "n_intervals")]
     + [Input(f"p-{k}", "n_clicks") for k, _ in PANELS] + [Input(f"ch-{k}", "n_clicks") for k, _ in CHANS] + [Input({"type": "jbar", "i": ALL}, "n_clicks")],
     State("ui", "data"), prevent_initial_call=True)
 def ui_state(*args):
@@ -320,6 +323,8 @@ def ui_state(*args):
         return no_update, no_update
     if trig == "tab-arm":
         ui["tab"] = "arm"
+    elif trig == "tab-an":
+        ui["tab"] = "an"
     elif trig == "tab-bench":
         ui["tab"] = "bench"
     elif trig == "bell":
@@ -330,8 +335,6 @@ def ui_state(*args):
         ui["more"] = not ui["more"]
     elif trig == "brk-btn":
         ui["brk"] = not ui["brk"]
-    elif trig in ("v-twin", "v-stream"):
-        ui["view"] = "twin" if trig == "v-twin" else "stream"
     elif isinstance(trig, str) and trig.startswith("p-"):
         k = trig[2:]
         ui["drawer"] = None if ui["drawer"] == k else k
@@ -417,7 +420,7 @@ def _real_pct():
 
 
 OUTS = ["hdr-t", "bell", "bell:cls", "pill", "pill:style", "play", "demo-banner:style", "demo-title", "demo-remain", "demo-text", "demo-dots",
-        "tab-arm:cls", "tab-bench:cls", "main-arm:style", "main-bench:style", "twin-graph:style", "stream:style", "v-twin:cls", "v-stream:cls",
+        "tab-arm:cls", "tab-an:cls", "tab-bench:cls", "main-arm:style", "main-an:style", "main-bench:style", "main-an", "twin-graph:style", "stream:style",
         "task-card:style", "task-status", "sim-msg", "stats", "ctl-wrap:cls", "ctl-note", "more:style", "more-btn", "load-txt", "spd-txt", "chart-title", "chart-sub", "main-chart:fig",
         "brk-btn", "brk", "main-bench", "drawer:style", "drawer-title", "drawer-body", "toasts"] + [f"p-{k}:cls" for k, _ in PANELS] + [f"ch-{k}:cls" for k, _ in CHANS] + \
        [f"spd-txt-{i}" for i in range(DOF)] + ["twin-graph:fig"]
@@ -469,18 +472,19 @@ def render(_n, ui):
     r["demo-remain"] = f"{max(0, round(st['len'] - (E.t_run - dm['t0'])))} s left"
     r["demo-dots"] = [html.Span(style=dict(width=24, height=6, borderRadius=3, background="#60a5fa" if i < dm["step"] else ("#e5e7eb" if i == dm["step"] else "#3a3f47"))) for i in range(len(DEMO))]
     r["tab-arm:cls"] = "tab" + (" tab-on" if ui["tab"] == "arm" else "")
+    r["tab-an:cls"] = "tab" + (" tab-on" if ui["tab"] == "an" else "")
     r["tab-bench:cls"] = "tab" + (" tab-on" if ui["tab"] == "bench" else "")
+    r["main-an:style"] = dict(display="flex" if ui["tab"] == "an" else "none", flexDirection="column", gap=20)
+    r["main-an"] = V.analysis(snap, E.source.status if kind == "isaac" else None) if ui["tab"] == "an" else no_update
     r["main-arm:style"] = dict(display="flex" if ui["tab"] == "arm" else "none", flexDirection="column", gap=20)
     r["main-bench:style"] = dict(display="flex" if ui["tab"] == "bench" else "none", flexDirection="column", gap=20)
-    r["twin-graph:style"] = dict(height=380, display="block" if ui["view"] == "twin" else "none")
-    r["stream:style"] = dict(display="flex" if ui["view"] == "stream" else "none", position="relative", aspectRatio="16 / 9", background="#05070a",
+    r["twin-graph:style"] = dict(height=190, display="block")
+    r["stream:style"] = dict(display="flex", position="relative", aspectRatio="16 / 9", background="#05070a",
                              border="1px dashed rgba(255,255,255,0.18)", borderRadius=6, alignItems="center", justifyContent="center",
                              flexDirection="column", gap=8, textAlign="center")
-    r["v-twin:cls"] = on(ui["view"] == "twin", "btn btn-s")
-    r["v-stream:cls"] = on(ui["view"] == "stream", "btn btn-s")
     r["stats"] = V.stat_cards(snap, cal, E.source.status if kind == "isaac" else None, ctl)
     r["task-card:style"] = dict(padding="14px 18px", display="block" if kind == "isaac" else "none")
-    r["task-status"], r["sim-msg"] = _task_status(E.source) if kind == "isaac" else ("", "")
+    r["task-status"], r["sim-msg"] = _task_status(E.source) if kind == "isaac" else ("", "Isaac Sim is off in this mode. Pick “Isaac Sim (live)” above to see the simulator beside the twin.")
     r["ctl-wrap:cls"] = "" if kind in ("live", "isaac") else "disabled"
     r["ctl-note"] = [] if kind in ("live", "isaac") else html.Div("Replay of a real log: the load and speed are what was recorded. Switch to the stand-in plant to use the controls.", className="banner", style=dict(marginBottom=10))
     r["more:style"] = dict(display="flex" if ui["more"] else "none", flexDirection="column", gap=14, paddingTop=12,

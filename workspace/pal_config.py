@@ -172,11 +172,14 @@ def friction_sigmoid(qd, spec=None):
 # looks exactly like a payload error — quietly wrong. NVIDIA's own sysid material states
 # plainly that motor-side, link-side, commanded and measured efforts are not interchangeable.
 #
-# Left "unverified" on purpose (DECISIONS.md P5). The cheapest test is a static gravity check:
-# at rest the two conventions differ only by the gear ratio, so a mismatch appears as one
-# clean scale factor on every joint at once. tests/test_ur10e.py does that check and it
-# passes at the identity, which is consistent with link-side but does not prove it.
-TORQUE_CONVENTION = "unverified"
+# SETTLED 2026-11-09 (DECISIONS.md P5): link-side. The static gravity check could not tell the
+# conventions apart, a DYNAMIC one can: the logged tau_measured against M qdd + C + g on the 6 s
+# reference run leaves 0.00-0.015 N*m RMS when the model's M has NO rotor inertia, and 0.03-0.10 N*m
+# when it has the armature (the armature*qdd term then has nothing to match). So the measured torque is
+# what the joint transmits to the link, without the rotor's own inertia torque. tau_applied is the
+# command, which does carry it. The analysis model still carries the armature, so the measured-torque
+# residual has a small bias proportional to qdd (<= 0.1 N*m); see docs/TODO.md.
+TORQUE_CONVENTION = "link_side"
 
 # ══════════════════════════════════════════════════════════════════════════════════════
 # 6. Joint drive gains

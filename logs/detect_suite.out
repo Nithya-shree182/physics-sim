@@ -1,0 +1,4 @@
+attempt 1: script started after 24s
+done -> /home/thinkspace/Desktop/Physics_Based_RoboArm/logs/pal_run_suite.log
+== detect (out/detect): 96 runs, 0 failed checks
+== detectfast (out/detectfast): 43 runs, 0 failed checks

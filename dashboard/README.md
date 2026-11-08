@@ -9,19 +9,19 @@ stand-in plant with `python dashboard/app.py` (`.venv-pal`). Design record: `DEC
 |---|---|
 | **Isaac Sim (live)** | The live simulator (`workspace/pal_live.py`, 250 Hz physics): rows come over HTTP, picks are sent back. Run pick, stop, repeat, random cube position, cube mass, speed bar, test fault. |
 | **Stand-in plant** | A Pinocchio plant (link masses +-3%, friction x1.15, sensor noise) under a joint-impedance controller. Not Isaac Sim; the toolbar says so. |
-| **Replay · empty arm / 1 kg** | Recorded Isaac Sim slow-reference logs from `data/ref_matched_*`, looped. Controls are off. |
 
 ## The page
 
-- **Run controls** (top): pick style, Run / Stop, repeat, random cube position; cube mass and speed bars (0 to 100%, where 100% is half of each
+- **Run controls** (under the twin and Isaac picture): pick style, Run / Stop, repeat, random cube position; payload (0 to 8 kg, the top of the validated ladder) and speed bars (0 to 100%, where 100% is half of each
   joint's velocity limit); "More controls" for per-joint speeds and a test fault.
-- **Arm twin**: the Isaac Sim picture (or a schematic), with the key numbers: payload estimate (zeroed before the grasp, shown while a pick
+- **Arm twin and Isaac Sim**, side by side (no toggle), with the key numbers: payload estimate (zeroed before the grasp, shown while a pick
   runs) and the largest residual.
 - **Run summary**: task, cube position, fault, progress, set versus estimated payload, typical peak residual, alarms, whether the pick was
   recorded as or compared with a healthy reference, and the result. It stays after the pick ends.
 - **Alerts**: a compact card (grouped by type); the bell opens the full list. No pop-ups.
 - **Chart**: residual, torque or payload for the selected joint, with the no-alarm band; per-joint bars; a torque breakdown.
 - **Panels**: telemetry (current frame), payload estimator (with tare), About.
+- **Analysis tab**: per-box payload facts and a plain-language account of the last cycle, written offline by fixed rules (`views.narrate`); no language model is called.
 - **Benchmark tab**: the three movement styles on a real pick (`docs/o6pick_summary.json`), plus this session's scores and the residual
   floor against speed.
 

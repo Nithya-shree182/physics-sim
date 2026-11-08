@@ -185,6 +185,13 @@ class Plant:
         self._check_joint_order()
         self.pv = self.art._physics_view
         self.bodies = list(self.art.body_names)
+        # The rigid body a tool-frame force or payload acts on. The spec's tool_frame is a URDF
+        # FRAME, and a frame at the end of a fixed joint is not necessarily a body in the
+        # articulation — on the UR10e `tool0` is not, and the body list ends at `wrist_3_link`.
+        # Resolved once, by name, with the last body as the fallback: asking for a frame that is
+        # not a body used to raise "'tool0' is not in list" from inside push(), on the first step
+        # of every run.
+        self.tool_body = self._resolve_tool_body()
         self.urdf = _urdf_inertials(SPEC.urdf_file())
         self.stock_masses = np.asarray(self.art.get_body_masses()).reshape(-1)
         # Gains go in per DEGREE: the tensor API is per radian but the USD drive attribute the
@@ -226,6 +233,18 @@ class Plant:
                 "Fix the order in pal_robot before running: every index downstream depends on it.")
         print(f"[plant] joint order verified: {got}", flush=True)
 
+    def _resolve_tool_body(self):
+        """The articulation body the tool frame sits on, or the last body if it is not one."""
+        want = SPEC.tool_frame
+        if want in self.bodies:
+            return want
+        for cand in (SPEC.joint_names[-1].replace("_joint", "_link"), self.bodies[-1]):
+            if cand in self.bodies:
+                print(f"[plant] tool frame {want!r} is not an articulation body; "
+                      f"forces and payloads act on {cand!r} (bodies: {self.bodies})", flush=True)
+                return cand
+        raise RuntimeError(f"no usable tool body; articulation has {self.bodies}")
+
     # -- inertials ------------------------------------------------------------------------
     def set_inertials(self, payload_kg, mass_scale):
         """Author masses/COMs/inertias from the URDF, scaled arm links, payload on the hand.
@@ -241,7 +260,7 @@ class Plant:
             m0, c0, T0 = u["mass"], u["com"], u["tensor"]
             if b in ARM_LINKS:
                 m0, T0 = m0 * mass_scale, T0 * mass_scale
-            if b == SPEC.tool_frame and payload_kg > 0:
+            if b == self.tool_body and payload_kg > 0:
                 # tool link + point mass at the TCP: combined mass and COM, full tensor by the
                 # parallel-axis theorem. A point mass is the right model here because this path
                 # exists for a payload the arm is TOLD it has; a really gripped box is a separate
@@ -293,7 +312,9 @@ class Plant:
     # -- external force (validation push) ---------------------------------------------------
     def push(self, force_xyz, link_name=None):
         """Apply a world-frame force (N) at the origin of `link_name` (default: the tool); zero clears it."""
-        link_name = link_name or SPEC.tool_frame
+        link_name = link_name or self.tool_body
+        if link_name not in self.bodies:
+            raise ValueError(f"{link_name!r} is not an articulation body; have {self.bodies}")
         nb = len(self.bodies)
         f = np.zeros((1, nb, 3), np.float32); f[0, self.bodies.index(link_name)] = force_xyz
         t = np.zeros((1, nb, 3), np.float32)

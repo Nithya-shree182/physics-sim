@@ -30,7 +30,7 @@ def _tint(s):
     return "rgb(%d,%d,%d)" % tuple(round(u[k] + (v[k] - u[k]) * t) for k in range(3))
 
 
-def twin_figure(snap, alerts, load):
+def twin_figure(snap, alerts, load, height=190):
     g = snap["geom"]
     pts = [g["base"]] + list(g["joints"]) + [g["hand"]]
     fig = go.Figure()
@@ -39,7 +39,7 @@ def twin_figure(snap, alerts, load):
         j = min(k, DOF - 1)              # the last segment (wrist to tool) is tinted by the last joint
         s = abs(snap["tau_meas"][j]) / TL[j] * 1.6
         fig.add_trace(go.Scatter(x=[pts[k][0], pts[k + 1][0]], y=[pts[k][2], pts[k + 1][2]], mode="lines",
-                                 line=dict(color=_tint(s), width=11), hoverinfo="skip", showlegend=False))
+                                 line=dict(color=_tint(s), width=7), hoverinfo="skip", showlegend=False))
     if load > 0.04:
         p = g["hand"] + np.array([0, 0, 0.0])
         fig.add_trace(go.Scatter(x=[p[0]], y=[p[2] - 0.05], mode="markers",
@@ -61,9 +61,9 @@ def twin_figure(snap, alerts, load):
         sv = ring.get(i, 0)
         show = i % 2 == 0 or sv          # label every other joint, whatever the arm's count
         fig.add_trace(go.Scatter(x=[p[0]], y=[p[2]], mode="markers+text" if show else "markers",
-                                 marker=dict(size=17 if sv else 11, color="#0d0f13", line=dict(color=SEV_COLOR[sv] if sv else "#e5e7eb", width=2.5)),
+                                 marker=dict(size=13 if sv else 8, color="#0d0f13", line=dict(color=SEV_COLOR[sv] if sv else "#e5e7eb", width=2.5)),
                                  text=[f"J{i + 1} {abs(snap['tau_meas'][i] / TL[i] * 100):.0f}%"] if show else None,
-                                 textposition="top right", textfont=dict(color=SEV_COLOR[sv] if sv else "#c7cbd1", size=12, family=MONO),
+                                 textposition="top right", textfont=dict(color=SEV_COLOR[sv] if sv else "#c7cbd1", size=9, family=MONO),
                                  hoverinfo="skip", showlegend=False))
     # The frame has to hold whatever arm is loaded, so the view is sized from the points actually
     # drawn rather than fixed to one arm's reach.
@@ -71,7 +71,7 @@ def twin_figure(snap, alerts, load):
     pad = 0.18
     x0, x1 = min(xs) - pad, max(xs) + pad
     z0, z1 = min(min(zs) - pad, -0.05), max(zs) + pad
-    fig.update_layout(_base_layout(height=380, margin=dict(l=0, r=0, t=0, b=0)),
+    fig.update_layout(_base_layout(height=height, margin=dict(l=0, r=0, t=0, b=0)),
                       xaxis=dict(range=[x0, x1], visible=False, scaleanchor="y"),
                       yaxis=dict(range=[z0, z1], visible=False))
     return fig
@@ -350,6 +350,37 @@ def _style_figure(runs, kg):
     return fig
 
 
+STYLE_IDEA = {
+    "trapezoidal": "speeds up at a constant rate, cruises, then brakes at a constant rate. It is the simplest profile and asks the least time, "
+                   "but the abrupt change at each corner of the profile is what the arm finds hardest to follow.",
+    "s_curve": "does the same job but eases the acceleration in and out, so there are no abrupt corners. It gives up a little time for a smoother start and stop.",
+    "torque_aware": "picks a smooth path and then chooses how long to take so that the torque stays inside a budget. It is the most cautious: "
+                    "it cares about the load on the motors more than about the clock."}
+
+
+def explain_styles(d):
+    """Plain-language account of the three movement styles, with every number read from the benchmark file. Nothing is typed in:
+    if the runs change, the sentences change with them."""
+    runs = d["runs"]
+    out = []
+    for st in ("trapezoidal", "s_curve", "torque_aware"):
+        rr = [r for r in runs if r["style"] == st]
+        if not rr:
+            continue
+        fast = min(rr, key=lambda r: r["cycle_time_s"])
+        slow = max(rr, key=lambda r: r["cycle_time_s"])
+        out.append((STYLE_NAME[st], f"{STYLE_IDEA[st]} In these runs its quickest cycle took {fast['cycle_time_s']:.1f} s (peak torque "
+                                    f"{100 * fast['peak_torque_frac']:.0f}% of limit, {fast['energy_drawn_J']:.0f} J, largest tracking error {fast['track_err_max_rad']:.3f} rad); "
+                                    f"its slowest took {slow['cycle_time_s']:.1f} s at {100 * slow['peak_torque_frac']:.0f}% of limit."))
+    heavy = [r for r in runs if r["payload_kg"] > 0]
+    light = [r for r in runs if r["payload_kg"] == 0]
+    if heavy and light:
+        dt = float(np.mean([r["peak_torque_frac"] for r in heavy]) - np.mean([r["peak_torque_frac"] for r in light]))
+        out.append(("Does the load change the answer?", f"Carrying {max(r['payload_kg'] for r in heavy):g} kg moved the average peak torque by {100 * dt:+.1f} points of the limit, "
+                                                       "so on this arm the choice of style matters far more than the box."))
+    return out
+
+
 def _o6_section():
     d = _o6_data()
     if not d:
@@ -372,6 +403,8 @@ def _o6_section():
                                   "Lower and further left is better: a shorter cycle for less peak torque. These runs go faster than the 50% speed band "
                                   "the live demo stays in, so they are used for time, torque and energy only, never for fault detection.", className="muted", style=dict(margin="4px 0 0"))]),
         html.Div(className="grid2", children=[dcc.Graph(figure=_style_figure(runs, kg), config=dict(displayModeBar=False)) for kg in (0.0, 2.0)]),
+        html.Div(style=dict(display="flex", flexDirection="column", gap=8), children=[html.H3("The three styles in plain words", className="h2", style=dict(fontSize=13))] + [
+            html.P([html.B(name + ". "), text], style=dict(margin=0, fontSize=13)) for name, text in explain_styles(d)]),
         html.Div(className="grid2", children=[
             html.Div(children=[html.Span("FASTEST CYCLE UNDER A PEAK-TORQUE BUDGET", className="lbl"),
                                html.Table(className="tbl", children=[html.Thead(html.Tr([html.Th(h) for h in ("Payload", "Budget", "Trapezoidal", "S-curve", "Torque-aware")])),
@@ -411,3 +444,63 @@ def bench(snap, real_pct, speeds):
             html.Div(className="num", style=dict(display="grid", gridTemplateColumns=f"repeat({DOF},minmax(0,1fr))", gap=8, fontSize=12, textAlign="center"), children=[
                 html.Div(style=dict(background="#0d0f13", borderRadius=6, padding="8px 4px"), children=[html.Div(f"J{i + 1}", className="lbl"), html.Div(f"{v:.2f}%")])
                 for i, v in enumerate(real_pct)])])]
+
+
+def narrate(snap, status):
+    """An offline, rule-based account of the last cycle in plain language. No model call: every sentence is
+    chosen by a rule from numbers the analyzer already holds, so it can be checked and never invents a fact."""
+    sm = snap["summary"]
+    info = sm["info"]
+    if not sm["picks"] or not info:
+        return ["No cycle yet. Run a pick on the live simulator and this page explains what happened."]
+    kg, n_box = info.get("kg", 0.0), info.get("boxes") or 0
+    fault = info.get("fault", "none")
+    last = (status or {}).get("last")
+    out = []
+    if last:
+        out.append(f"The arm carried {n_box} boxes of {kg:g} kg in the {STYLE_NAME.get(info.get('style'), 'selected')} style and "
+                   + (f"placed all {n_box} on the belt." if last["ok"] else
+                      "was stopped before finishing." if last["aborted"] else
+                      f"placed only {last.get('boxes_placed', 0)} of {n_box}."))
+    else:
+        out.append(f"The arm is carrying {n_box} boxes of {kg:g} kg in the {STYLE_NAME.get(info.get('style'), 'selected')} style.")
+    ests = [b["est"] for b in sm.get("boxes", []) if b["est"] is not None]
+    if ests:
+        err = float(np.mean(ests)) - kg
+        tol = max(0.05 * kg, 0.06)
+        out.append(f"From torque alone, the model estimated the box mass at {np.mean(ests):.2f} kg on average ({err:+.2f} kg from the {kg:g} kg set). "
+                   + ("That is within tolerance." if abs(err) <= tol and fault == "none" else
+                      "A fault was active, so the estimate is not reliable." if fault != "none" else
+                      f"That is outside the {tol:.2f} kg tolerance."))
+    j, pk = sm["peak"]
+    out.append(f"The worst typical disagreement between measured and modelled torque was {pk:.1f}% of joint {j + 1}'s limit"
+               + (", so the model and the arm agreed closely." if pk < 2 else "."))
+    if fault == "none":
+        out.append("No fault was injected. " + ("No alarm was raised." if not sm["alerts"] else f"{len(sm['alerts'])} alarm(s) were raised on a healthy run, which counts as a false alarm."))
+    else:
+        out.append(f"A {FAULT_NAME.get(fault, fault).lower()} fault was injected"
+                   + (f" on joint {info['joint'] + 1}" if fault not in ("none", "delay") and info.get("joint", -1) >= 0 else "")
+                   + ". " + ("The detector raised: " + "; ".join(t for _, t in sm["alerts"]) + "." if sm["alerts"] else
+                             "The detector raised nothing" + ("" if sm["ref"] == "compared" else " (there was no healthy reference to compare with)") + "."))
+    return out
+
+
+def analysis(snap, status):
+    """The Analysis tab: per-box facts, then the narrator's account."""
+    sm = snap["summary"]
+    info = sm["info"]
+    kg = info.get("kg", 0.0) if info else 0.0
+    rows = []
+    for i, b in enumerate(sm.get("boxes", [])):
+        e = b["est"]
+        rows.append(html.Tr([html.Td(f"Box {i + 1}"), html.Td(f"{kg:g} kg"), html.Td("—" if e is None else f"{e:.2f} kg"),
+                             html.Td("—" if e is None else f"{e - kg:+.2f} kg"), html.Td(str(b["n"]))]))
+    table = (html.Div(style=dict(overflowX="auto"), children=html.Table(className="tbl", children=[
+        html.Thead(html.Tr([html.Th(h) for h in ("Box", "Set mass", "Estimated", "Error", "Samples while held")])), html.Tbody(rows)]))
+        if rows else html.Div("Per-box numbers appear once a box has been lifted.", className="muted"))
+    return [html.Section(className="card", children=[
+        html.H2("What happened, box by box", className="h2"), table]),
+        html.Section(className="card", children=[
+            html.H2("In plain words", className="h2"),
+            html.P("Written by fixed rules from this run's numbers, offline: no language model is called.", className="muted", style=dict(margin=0, fontSize=12)),
+            html.Div(style=dict(display="flex", flexDirection="column", gap=8), children=[html.P(t, style=dict(margin=0, fontSize=14)) for t in narrate(snap, status)])])]

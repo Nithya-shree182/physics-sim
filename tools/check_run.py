@@ -30,18 +30,18 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import numpy as np
-
-import pal_robot
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "workspace"))
+import pal_robot  # noqa: E402
 from pal_kinematics import Urdf  # noqa: E402
 URDF = Path(pal_robot.active().urdf_file())   # whatever arm is loaded
-TAU_MAX = np.array([87.0, 87.0, 87.0, 87.0, 12.0, 12.0, 12.0])    # Franka datasheet limits
+DOF = pal_robot.active().dof
+TAU_MAX = np.asarray(pal_robot.active().tau_max, dtype=float)  # active arm's torque limits; never hard-code the old Panda layout
 GRAVITY_TOL_NM = 0.15        # [CHOICE] abs N*m; sag of the stiff drive explains ~0.1 on loaded joints
 IDENTITY_TOL_PCT = 5.0       # proposal section 9, O2
-ARM = 7
+ARM = DOF
 
 
 def main():
@@ -64,9 +64,11 @@ def main():
     n = len(d)
     arr = lambda p: np.stack([d[f"{p}_{i}"].to_numpy() for i in range(ARM)], axis=1)
     q, qd, tm, g_sim, c = arr("q"), arr("qd"), arr("tau_measured"), arr("g"), arr("coriolis")
-    M = np.stack([[d[f"M_{r_}_{c_}"].to_numpy() for c_ in range(ARM)] for r_ in range(ARM)], axis=0)  # (7,7,n)
+    M = np.stack([[d[f"M_{r_}_{c_}"].to_numpy() for c_ in range(ARM)] for r_ in range(ARM)], axis=0)  # (DOF, DOF, n)
     dt = float(d["dt"].iloc[0])
-    finger = float(d["finger_pos_0"].mean())
+    finger = 0.0
+    if "finger_pos_0" in d.columns:
+        finger = float(d["finger_pos_0"].mean())
 
     import json
     man = json.loads(a.parquet.with_suffix('.json').read_text())

@@ -109,7 +109,20 @@ def _dtype_ok(series: pd.Series, dtype: str) -> bool:
     return False
 
 
-def validate_frame(df: pd.DataFrame, schema: dict) -> tuple[list[str], list[str]]:
+NOISE_SIGMAS = 6.0      # an identity may differ by this many torque-noise sigmas when the sensor is noisy
+
+
+def torque_noise_sigma(manifest: dict | None) -> float:
+    """The torque sigma the run's sensor model injected (0 for ideal sensing or no record). The logger
+    derives the decomposition and tau_frac from clean values and THEN corrupts tau_measured and
+    tau_applied, so on a noisy run those exact identities hold only to within the noise."""
+    try:
+        return float(((manifest or {}).get("sensor_noise") or {}).get("sigma", {}).get("tau", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def validate_frame(df: pd.DataFrame, schema: dict, tau_sigma: float = 0.0) -> tuple[list[str], list[str]]:
     errors, warnings = [], []
     fields = required_fields(schema)
 
@@ -172,7 +185,7 @@ def validate_frame(df: pd.DataFrame, schema: dict) -> tuple[list[str], list[str]
     if have([c for p in parts for c in joint_cols(p)] + joint_cols("tau_applied")):
         total = sum(df[joint_cols(p)].to_numpy() for p in parts)
         worst = float(np.nanmax(np.abs(total - df[joint_cols("tau_applied")].to_numpy())))
-        if worst > 1e-6:
+        if worst > 1e-6 + NOISE_SIGMAS * tau_sigma:
             errors.append(f"the torque decomposition does not add up to tau_applied "
                           f"(worst {worst:.2e} N*m)")
 
@@ -226,6 +239,7 @@ def validate_frame(df: pd.DataFrame, schema: dict) -> tuple[list[str], list[str]
 
 
 def validate_manifest(manifest: dict, schema: dict, df: pd.DataFrame | None = None) -> list[str]:
+    tau_sigma = torque_noise_sigma(manifest)
     errors = [f"manifest missing '{k}'" for k in schema["manifest"]["required"] if k not in manifest]
     if manifest.get("schema_version") not in (None, schema["version"]):
         errors.append(f"manifest schema_version {manifest['schema_version']} != {schema['version']}")
@@ -248,7 +262,7 @@ def validate_manifest(manifest: dict, schema: dict, df: pd.DataFrame | None = No
         if tm.shape == (DOF,) and all(c in df for c in cols + meas):
             want = np.abs(df[meas].to_numpy()) / tm
             worst = float(np.nanmax(np.abs(want - df[cols].to_numpy())))
-            if worst > 1e-6:
+            if worst > 1e-6 + NOISE_SIGMAS * tau_sigma / float(np.min(tm)):
                 errors.append(f"tau_frac does not equal |tau_measured| / manifest tau_max "
                               f"(worst {worst:.2e})")
     if "timing" not in manifest and "timing_convention" not in manifest:
@@ -265,11 +279,12 @@ def main() -> int:
 
     schema = load_schema(args.schema)
     df = pd.read_parquet(args.parquet)
-    errors, warnings = validate_frame(df, schema)
-
     manifest_path = args.manifest or args.parquet.with_suffix(".json")
-    if manifest_path.is_file():
-        errors += validate_manifest(json.loads(manifest_path.read_text(encoding="utf-8")), schema, df)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.is_file() else None
+    errors, warnings = validate_frame(df, schema, torque_noise_sigma(manifest))
+
+    if manifest is not None:
+        errors += validate_manifest(manifest, schema, df)
     else:
         errors.append(f"manifest not found: {manifest_path}")
 

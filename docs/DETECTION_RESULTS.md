@@ -1,3 +1,58 @@
+# Detection results — UR10e (2026-11-09)
+
+Written for: whoever picks this up next. **Everything below this section is Panda-era and describes a different robot.**
+The UR10e numbers are here; the method is in `tools/tune_detector.py`.
+
+## What was done
+
+- Data: `tools/pal_suite.sh detect,detectfast,detectlimits` with `PAL_SENSOR_NOISE=1` (the reference sigmas, 0.076 N*m on torque)
+  and the 5% mass mismatch. Every fault on every joint: friction x2/x4/x8, stuck joint, backlash 0.04 and 0.12 rad, delay 10/30/50 ms.
+- A split, decided before any scoring: **`dtune_*`** (fault seed 1000 + eight healthy seeds) is the only data a setting was fitted to;
+  **`dtest_*`** (other seeds) and **`dfast_*`** (40% speed) were scored afterwards.
+- Selection rule: no alarm on any healthy tuning run, and still none with the threshold raised 1.5x; then the most faults found.
+- Grid: baseline (none / gain / friction), z 4-8, hold time 20-100 ms, per-joint floor as a fraction of torque limit, residual cutoff 10 / 20 Hz.
+
+**Before any of this, a controller bug hid the wrists.** In every earlier run joints 5 and 6 did not move, so no fault on them could show.
+Fixed in `pal_runner.py` (friction feed-forward, armature in the controller's M); see `changes.md` 2026-11-09. All numbers below are after the fix.
+
+## Result
+
+Chosen: baseline `friction`, z = 6, hold 20 ms, 10 Hz residual filter, floors unchanged (`observers/detector.py` defaults).
+
+| | untuned (z 8, 50 ms, no baseline, 20 Hz) | tuned, tuning split | tuned, **held out** | tuned, 40% speed |
+|---|---|---|---|---|
+| faults found | 17 / 39 | 30 / 39 | **31 / 39** | 27 / 39 |
+| healthy runs alarmed | 0 / 9 | 0 / 9 | 0 / 9 | 0 / 4 |
+| mean delay | 0.34 s | 0.07 s | 0.07 s | 0.09 s |
+| named the right joint | all | all | all | all |
+| friction (18: 3 sizes x 6 joints) | 10 | 18 | **18** | 18 |
+| stuck joint (6) | 6 | 6 | **6** | 6 |
+| delay (3: 10/30/50 ms) | 1 | 2 | **2** | 2 |
+| backlash (12) | 0 | 4 | **5** | 1 |
+
+The held-out score is not lower than the tuning score, so the settings are not fitted to the nine tuning noise seeds.
+Zero false alarms in 22 healthy runs only bounds the true rate below about 13% (95%); more healthy runs would tighten it.
+
+## Limits (`detectlimits`, noise seed 4000, 20% speed)
+
+- **Friction, stuck joint: solved.** Every size, every joint, wrists included, with no false alarm and under 0.1 s.
+- **Delay: visible from about 20-30 ms.** 15 ms missed, 20 ms found after 0.62 s, 40 ms after 0.29 s. A 10 ms delay is below what the
+  controller's own tracking noise hides.
+- **Backlash: not reliably detectable.** At 0.2-0.5 rad (far more play than a real UR10e has) it is found on the forearm and wrist joints
+  but missed on joint 1 at 0.2 and 0.35 rad and on joint 4 at 0.35 rad, and when found on joint 1 it is blamed on joint 6 after 0.8 s.
+  The controller compensates the play, so what remains is small. Treat a backlash alarm as "something is wrong", not as a location.
+- **Faster motion costs backlash, not friction**: at 40% speed friction and stuck joints are still found, backlash drops to 1 of 12.
+
+## What this is not
+
+- Not a result on real hardware: the sensors are ideal plus white noise, the friction values are authored (1% of each joint's effort limit),
+  and the fault injectors are the simulator's.
+- The thresholds hold for this task (a repeating multisine; the friction baseline needs the 3 s calibration window to cover the motion).
+  A pick cycle uses the reference-run method instead (`against_reference`), which these numbers do not cover.
+- The dashboard's own alarm rule (`dashboard/engine.py`: |z| > 8 for 150 ms and 0.5% of limit) is separate and has NOT been retuned.
+
+---
+
 # Detection results with the analysis side's real code
 
 > **2026-11-05:** the detector's "50 consecutive steps" is now 50 ms (`observers/detector.py`, `CONSECUTIVE_S`); results at 1000 Hz are unchanged. Detection on live picks: `DECISIONS.md` D7.

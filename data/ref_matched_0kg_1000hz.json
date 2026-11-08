@@ -1,13 +1,54 @@
 {
-  "schema_version": 0,
+  "schema_version": 1,
   "run_id": "ref_matched_0kg_1000hz",
-  "created_utc": "2026-11-03T21:35:56Z",
-  "ee_body_index": 7,
-  "ee_frame": "/World/Franka/panda_hand",
-  "rows": 6000,
+  "robot": "ur10e",
+  "dof": 6,
+  "created_utc": "2026-11-08T18:31:41Z",
+  "ee_body_index": 5,
+  "ee_body_name": "tool0",
+  "ee_frame": "/World/UR10e/tool0",
   "mj_every": 10,
-  "timing_convention": "row assembled after world.step(); all quantities are post-step values; tau_measured[k] is the effort during the step that produced q[k]. Measured: pre-step / post-step / midpoint evaluation give 27.99 / 27.98 / 27.98 percent residual, i.e. indistinguishable.",
-  "git_commit": "7577d15",
+  "tau_max": [
+    330.0,
+    330.0,
+    150.0,
+    54.0,
+    54.0,
+    54.0
+  ],
+  "qd_max": [
+    2.0943951023931953,
+    2.0943951023931953,
+    3.141592653589793,
+    3.141592653589793,
+    3.141592653589793,
+    3.141592653589793
+  ],
+  "torque_convention": "unverified",
+  "timing_convention": "row assembled after world.step(); all quantities are post-step values; tau_measured[k] is the effort during the step that produced q[k]; qdd[k] = (qd[k] - qd[k-1])/dt. Measured: pre-step / post-step / midpoint evaluation give 27.99 / 27.98 / 27.98 percent residual, i.e. indistinguishable.",
+  "energy_convention": "E_kin = 0.5 qd' M qd with armature included in M. E_pot_rel is RELATIVE to the first row, integrated from dV/dt = g(q)' qd; only differences are meaningful. E_tot_rel = E_kin + E_pot_rel is conserved on a frictionless free swing and is a check on the integrator.",
+  "summary": {
+    "rows": 6000,
+    "duration_s": 6.0,
+    "energy": {
+      "E_kin_max_J": 0.6503,
+      "E_pot_swing_J": 14.7969,
+      "work_total_J": 9.0337,
+      "peak_power_W": 22.782
+    },
+    "headroom": {
+      "tau_frac_max": 0.3428,
+      "tau_frac_mean": 0.2831,
+      "worst_joint": 2
+    },
+    "conditioning": {
+      "sigma_min_worst": 0.39683,
+      "manip_min": 0.2839,
+      "cond_M_max": 27763.82
+    },
+    "speed_fraction": 0.2007
+  },
+  "git_commit": "19fb96a",
   "machine": "omen-5090",
   "isaac_sim_version": "6.0.1",
   "physics_hz": 1000.0,
@@ -17,18 +58,17 @@
     "velocity_iterations": 4
   },
   "asset": {
-    "usd": "/Isaac/Robots/FrankaRobotics/FrankaPanda/franka.usd",
-    "urdf": "/workspace/assets/panda_arm_hand.urdf",
+    "usd": "/Isaac/Robots/UniversalRobots/ur10e/ur10e.usd",
+    "urdf": "/workspace/assets_all/ur10e/ur10e.urdf",
     "inertials_authored_from_urdf": true
   },
   "armature": [
-    0.0061,
-    0.0061,
-    0.0061,
-    0.0061,
-    0.0061,
-    0.0061,
-    0.0061
+    0.1,
+    0.1,
+    0.05,
+    0.02,
+    0.02,
+    0.02
   ],
   "gravity": [
     0.0,
@@ -36,64 +76,57 @@
     -9.81
   ],
   "seed": 0,
-  "friction_source": "gaz",
+  "friction_source": "[CHOICE] authored, see pal_robot.py",
   "plant_friction_scale": 1.15,
   "friction_values": [
     [
-      0.28175,
-      0.23948749999999996,
-      0.076475
+      3.795,
+      3.22575,
+      1.15
     ],
     [
-      0.17514499999999997,
-      0.14887324999999998,
-      0.22850499999999996
+      3.795,
+      3.22575,
+      1.15
     ],
     [
-      0.210105,
-      0.17858924999999998,
-      0.045884999999999995
+      1.7249999999999999,
+      1.46625,
+      0.575
     ],
     [
-      0.4129649999999999,
-      0.3510202499999999,
-      0.259555
+      0.621,
+      0.5278499999999999,
+      0.22999999999999998
     ],
     [
-      0.306935,
-      0.26089475,
-      0.117645
+      0.621,
+      0.5278499999999999,
+      0.22999999999999998
     ],
     [
-      0.19066999999999998,
-      0.16206949999999998,
-      0.0
-    ],
-    [
-      0.24253499999999997,
-      0.20615475,
-      0.07336999999999999
+      0.621,
+      0.5278499999999999,
+      0.22999999999999998
     ]
   ],
   "friction_units": "columns: static N*m, dynamic N*m, viscous N*m*s/rad",
-  "torque_convention": "unverified",
-  "finger_q_ref": 0.04,
   "tau_measured_includes_friction": false,
   "plant_link_mass_scale": 1.0,
   "control": {
     "mode": "effort",
-    "law": "computed torque with the plant's own M, C, g",
+    "law": "computed torque with the plant's own M, C, g plus baseline friction feed-forward",
     "kp": 400.0,
     "kd": 40.0
   },
   "payload_attachment": {
-    "body": "panda_hand",
+    "body": "tool0",
     "offset_m": [
-      0,
-      0,
-      0.1034
+      0.0,
+      0.0,
+      0.195
     ],
-    "model": "point mass folded into the hand's composite"
+    "model": "point mass folded into the tool link's composite"
   },
   "payload_physical": false,
   "payload_in_dynamics_terms": true,
@@ -104,16 +137,27 @@
     "onset_s": 3.0
   },
   "scenario": "ref_matched_0kg",
-  "speed_fraction": 0.22148492235790268,
+  "speed_fraction": 0.2007455586589093,
   "speed_fraction_per_joint": [
-    0.1988,
-    0.2025,
-    0.2022,
-    0.2,
-    0.1795,
-    0.2215,
-    0.0
+    0.1998,
+    0.1998,
+    0.1999,
+    0.2003,
+    0.2007,
+    0.2005
   ],
+  "sensor_noise": {
+    "seed": 0,
+    "dof": 6,
+    "sigma": {
+      "q": 0.0,
+      "qd": 0.0,
+      "tau": 0.0
+    },
+    "ideal": true,
+    "applied_to": [],
+    "note": "ideal sensing: no noise injected"
+  },
   "drive_mode": "torque",
   "payload_kg": 0.0,
   "traj_type": "slow_reference"
