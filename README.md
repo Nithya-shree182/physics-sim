@@ -1,114 +1,68 @@
 # Physics Attestation Layer (PAL)
 
-> **2026-11-08: the arm is a UR10e, not a Franka Panda.** The Panda was removed from the runtime
-> entirely. Start with **`docs/TODO.md`** (what is left), then `docs/UR10E_PORT.md` (the arm's
-> numbers and the cell) and `docs/TELEMETRY.md` (what is in a logged row). History:
-> `changes.md`. Pages that still say "Panda" describe the project before that date.
->
-> One thing to know before quoting any result: every recorded run in `out/` and `data/` is Panda
-> data, so **the project has no validated detection or payload number for the arm it now runs**
-> until the suites are regenerated. `docs/TODO.md` item 1.
+A Universal Robots **UR10e** digital twin in NVIDIA Isaac Sim 6.0.1, picking boxes with a four-cup suction tool in a conveyor cell.
+The arm moves and we record what its joints did. An independent model (Pinocchio, built from the URDF) predicts what the joint torques
+should have been. The gap, `r = tau - tau_model`, is the signal: it carries the **weight of a payload** and any **fault** (extra
+friction, a stuck joint, a command delay, backlash).
 
-A Universal Robots UR10e digital twin in NVIDIA Isaac Sim 6.0.1. The arm moves; we record what its joints actually did; an independent model
-(Pinocchio, built from the URDF) predicts what the torques should have been. The gap, `r = tau_applied - tau_model`, is the signal.
-Full proposal: the PDF in this folder; what the project now claims: `docs/PROPOSAL_AMENDMENTS.md`.
-**Current project state: the repo is now validated on the active UR10e configuration for the clean reference and model path, and the remaining work is re-measuring the real-arm speed band, payload and fault behavior on fresh UR10e captures.**
+Proposal: the PDF in this folder. What the project now claims (faults, not attacks): [docs/PROPOSAL_AMENDMENTS.md](docs/PROPOSAL_AMENDMENTS.md).
+The arm is the UR10e. The Franka Panda it started with is gone from the runtime; pages in [docs/archive/](docs/archive/) describe that era.
 
-The source of truth remains: `docs/TODO.md`, then `docs/UR10E_PORT.md`. Why each choice was made, with the evidence: `DECISIONS.md`.
+## Where it stands (2026-11-09)
 
-The repository holds both halves, merged on 2026-11-04 from two branches that had no common history:
+| | |
+|---|---|
+| Payload estimate | within about 3.5% from 0.5 to 8 kg in the live dashboard; within 4% on a real suction pick, after removing the empty-arm bias |
+| Fault detection, repeating motion | friction (x2 to x8) and a stuck joint found on all six joints, 0 false alarms in 22 healthy runs, right joint named every time; delay from about 20-30 ms |
+| Fault detection, pick cycle | the dashboard rule is being retuned on recorded live runs; see [docs/TODO.md](docs/TODO.md) |
+| Not reliably detectable | backlash, and a delay under about 20 ms |
+| Evidence is | simulation only: ideal sensors plus white noise, authored friction values, simulator-injected faults. No real hardware |
 
-| half | owns | where |
-|---|---|---|
-| **simulator side** | the plant (the simulated arm), telemetry, injected faults, data generation, benchmarks | `workspace/`, `tools/`, `data/`, `assets/` |
-| **analysis side** | the Pinocchio model, residual, payload estimator, detector (with its pose mask), dashboard | `model/`, `observers/`, `dashboard/` |
-| shared | the telemetry schema and both teams' tests | `schema/`, `tests/` |
+Details, with the data behind each number: [docs/DETECTION_RESULTS.md](docs/DETECTION_RESULTS.md), [docs/RESIDUAL_FLOOR.md](docs/RESIDUAL_FLOOR.md).
+What is left to do: **[docs/TODO.md](docs/TODO.md)**. What changed and why: [changes.md](changes.md). Decisions with their evidence: [DECISIONS.md](DECISIONS.md).
 
-## Run something
+## Run it
 
 ```bash
-./pal.sh                               # the live demo: Isaac Sim (250 Hz) and the dashboard, http://127.0.0.1:8050 (see docs/HANDOFF.md)
-tools/pal_suite.sh o5                  # one objective's tests, headless, then convert and check every run
-tools/pal_suite.sh o3,o4 --window      # several, drawn in an Isaac Sim window (slower: rendering) so you can watch the arm
-tools/pal_suite.sh pickphys --window   # a REAL pick: the fingers close on a physical cube and carry it across the table
-tools/pal_suite.sh all                 # every objective's tests (about an hour headless); add --window to watch them
-tools/run_sim.sh pal_selftest.py       # plant self-test; run after ANY change to the plant
-tools/check_all.sh                     # every host-side check on existing outputs, no sim
-tools/package_handover.sh              # one tarball of every run for the analysis side (outside git)
-.venv-pal/bin/python -m pytest -q      # all tests, both teams (Pinocchio env); `unittest discover tests` runs ours without it
+./pal.sh                              # the live demo: Isaac Sim + the dashboard, http://127.0.0.1:8050
+./start_sim_docker.sh                 # the cell alone, in a window
+tools/pal_suite.sh payload            # record one data suite headless, convert it, check every run (GPU)
+tools/check_all.sh                    # every host-side check on existing outputs, no simulator
+.venv-pal/bin/python -m pytest -q     # the tests (Pinocchio environment)
 ```
 
-Suites (`workspace/pal_suites.py`): `reference` (O1/O2), `o3` (probe poses, kept as evidence), `o4` (known payloads), `o5` (26 fault runs), `clean`
-(noise-free), `fast` (40% speed), `extra` (the analysis side's run list), `push` (validation), `o6` (styles, out-and-back), `pick` and `o6pick`
-(IK pick-and-place with a modelled payload), `pickphys` (a real cube). Their definitions are plain data and unit-tested.
+Suites are plain data in `workspace/pal_suites.py` and listed in [docs/DATA_SUITES.md](docs/DATA_SUITES.md). `pal_suite.sh` converts each run to Parquet and runs
+`tools/check_run.py` on it, which does not trust the simulator's own numbers: the schema validates, `g(q)` from the simulator matches `g(q)` recomputed
+from the URDF, `tau_measured` matches `M qdd + C + g`, and `tau_applied - net` is at the configured friction.
 
-**"Plant"** is control-engineering for the thing being controlled: the simulated Franka arm with its masses,
-friction and motors, standing in for the real robot. The analysis side's Pinocchio model is the separate
-prediction it is compared with; the residual is plant versus model.
+Do not edit `tools/pal_suite.sh` (or any script) while a run is using it: bash reads a script as it executes it and breaks.
 
-`pal_suite.sh` runs the sim (with a boot-hang watchdog), converts the runs to Parquet, then runs
-`tools/check_run.py` on each one. That check does not trust the simulator's own numbers:
-
-1. the schema validator passes;
-2. gravity `g(q)` from the simulator matches `g(q)` recomputed from the URDF with plain numpy;
-3. `tau_measured` matches `M qdd + C + g` within the proposal's 5% (healthy rows), reported against the torque
-   limit and against the joint's own torque;
-3b. in effort mode, `tau_applied - net` on healthy rows is at the configured friction (the guard against the
-   friction-units bug of 2026-11-03).
-
-All runs are **effort mode**: the arm is driven by explicit torques and `tau_applied` is logged, because
-`tau_measured` is net torque and cannot show friction or a locked joint (`docs/REVIEW.md`).
-
-## Where things are
+## The repository
 
 | path | what |
 |---|---|
-| `model/pinocchio_model.py`, `observers/` | the analysis side: independent model, residual, payload, detector and its pose mask (`docs/ANALYSIS_CONTEXT.md`, `setup.md`) |
-| `pal.sh` | **start everything**: `./pal.sh` (headless Isaac Sim at 250 Hz, so it keeps up with real time, + dashboard with the simulator's picture inside it, press Run pick), `--window`, `--dash-only`, `--stop`, `--status`, `--logs`, `--test [suite]` |
-| `dashboard/` | the Plotly Dash dashboard (`dashboard/README.md`); runs on a stand-in plant or replays `data/ref_matched_*` |
-| `workspace/pal_plant.py` | **the one place the plant is built** (inertials, friction, armature, gains) |
-| `workspace/pal_config.py` | every parameter, each tagged with its source |
-| `workspace/pal_runner.py` | effort-mode controller and scenario runner |
-| `workspace/pal_faults.py`, `pal_sensors.py` | O5 injectors, seeded sensor noise |
-| `workspace/pal_suites.py`, `pal_run_suite.py` | every objective's scenarios as data, and the runner (headless or windowed) |
-| `workspace/pal_ik.py`, `pal_tasks.py` | inverse kinematics; pick-and-place and ellipse tasks built from it |
-| `workspace/pal_objects.py`, `pal_view.py` | the physical table and cube; the drawn cube for modelled picks |
-| `workspace/pal_trajectories.py` | reference motions and the three movement styles |
-| `workspace/pal_kinematics.py` | independent URDF kinematics and gravity (numpy), used by the checks |
-| `workspace/pal_telemetry.py` | O1 telemetry writer in `schema/telemetry_v1.yaml` format (docs/TELEMETRY.md) |
-| `workspace/pal_cell_geom.py` | the cell's layout as plain numbers; no USD, so the cycle and the tests can read it |
-| `workspace/pal_sensors.py` | the sensor model: ideal by default, `PAL_SENSOR_NOISE` turns noise on |
-| `tools/` | pipeline, run watchdog, Parquet converter, `check_run.py`, `check_payload.py`, `check_push.py`, `check_all.sh`, `package_handover.sh`, `run_analysis_side.py` (their real code on our runs), `preview_detect.py` (superseded stand-in) |
-| `tests/` | unit tests (no simulator) |
+| `workspace/` | the simulator side: the plant (`pal_plant.py`), the arm's numbers (`pal_robot.py`), the controller and scenario runner (`pal_runner.py`), faults, sensor noise, telemetry, the cell and suction tool, suite definitions |
+| `model/`, `observers/` | the analysis side: Pinocchio model, residual, payload estimator, fault detector |
+| `dashboard/` | the Plotly Dash dashboard ([dashboard/README.md](dashboard/README.md)) |
+| `schema/` | the telemetry schema and its validator ([docs/TELEMETRY.md](docs/TELEMETRY.md)) |
+| `tools/` | data capture, checks, tuning scripts (`tune_detector.py`, `tune_dashboard_rule.py`), converters |
+| `tests/` | unit tests, no simulator needed |
 | `data/` | short reference runs, tracked on purpose |
-| `out/` | regenerated output, git-ignored |
-
-## Docs index
-
-`docs/README.md` lists every document and what it is for. `DECISIONS.md` (this folder) holds the decisions made since the first review and the evidence for each.
-
-## Read in this order
-
-0. `docs/HANDOFF.md`, then `DECISIONS.md`: the current state, the open items, and every decision since the first review (D1 to D9).
-1. `docs/REVIEW.md`: where the project stands against the proposal, what is proven and what is not.
-   Then `docs/PROPOSAL_AMENDMENTS.md` (what the project now claims), `docs/VALIDATION.md` (the push test) and
-   `docs/DETECTION_RESULTS.md` (can the faults be found, with the analysis side's real code).
-2. `CONTEXT.md`: state, decisions already made, traps (read before touching the sim).
-3. `docs/RESIDUAL_FLOOR.md`: where the residual can and cannot be trusted (<= 50% of velocity limit).
-4. `docs/O5_INJECTORS.md`: the fault sweep.
-5. `docs/NOTES_FOR_NITHYA.md`: what the analysis side needs from us.
-6. `docs/OPEN_PROBLEMS.md`: history of findings; later corrections are marked at the top of an item.
+| `assets/` | the UR10e URDF (generated by `tools/make_ur10e_urdf.py`) and brand images |
+| `out/`, `logs/` | regenerated output and logs, git-ignored; see [docs/DATA_SUITES.md](docs/DATA_SUITES.md) for what each folder holds |
+| `docs/` | current documentation; [docs/archive/](docs/archive/) holds the Panda-era pages |
 
 ## Environments
 
 - `.venv-tools` (host Python): pandas, pyarrow, pyyaml. Runs the checks.
 - `.venv-pal` (Python 3.12 with Pinocchio): `uv venv --python 3.12 .venv-pal && uv pip install --python .venv-pal/bin/python pin numpy scipy pandas pyarrow pyyaml pytest`.
-  Runs the analysis side's code. Both are git-ignored.
+  Runs the analysis code, the tests and the dashboard.
 
-## Three traps
+## Traps worth knowing
 
-- `world.reset()` discards tensor-API writes. Apply them after the last reset (`pal_plant.py` does).
+- `world.reset()` discards tensor-API writes; apply them after the last reset.
 - One `World` per process: Isaac ignores a changed `physics_dt` on a second construction.
-- The container runs as uid 1234. Host output directories must be world-writable (`run_sim.sh` does it).
-- Friction goes through the torque-valued API only (`pal_plant.py`). `set_friction_coefficients` is a dimensionless
-  coefficient and gave ~200x too much friction.
+- The container runs as uid 1234; host output directories must be world-writable (`run_sim.sh` does it).
+- USD prim names cannot contain `-`. Creating or deleting a USD joint while the simulation runs destroys the articulation's physics view.
+- Two things can both be called "the live server": `./pal.sh` and any headless run of `pal_live.py` use the same container name and port 8765. Run one at a time.
+- The controller adds the rotor inertia (armature) and baseline friction to its torque command (`pal_runner.py`). Without them the wrists never moved.

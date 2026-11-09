@@ -1,0 +1,58 @@
+saved tune_ref_healthy: 7941 rows, placed 3
+saved tune_healthy_0: 13403 rows, placed 3
+saved tune_healthy_1: 13417 rows, placed 3
+saved tune_healthy_2: 13342 rows, placed 3
+saved tune_healthy_3: 13391 rows, placed 3
+saved tune_healthy_4: 13434 rows, placed 3
+saved tune_friction_j0: 13445 rows, placed 3
+Traceback (most recent call last):
+  File "/usr/lib/python3.12/urllib/request.py", line 1344, in do_open
+    h.request(req.get_method(), req.selector, req.data, headers,
+  File "/usr/lib/python3.12/http/client.py", line 1358, in request
+    self._send_request(method, url, body, headers, encode_chunked)
+  File "/usr/lib/python3.12/http/client.py", line 1404, in _send_request
+    self.endheaders(body, encode_chunked=encode_chunked)
+  File "/usr/lib/python3.12/http/client.py", line 1353, in endheaders
+    self._send_output(message_body, encode_chunked=encode_chunked)
+  File "/usr/lib/python3.12/http/client.py", line 1113, in _send_output
+    self.send(msg)
+  File "/usr/lib/python3.12/http/client.py", line 1057, in send
+    self.connect()
+  File "/usr/lib/python3.12/http/client.py", line 1023, in connect
+    self.sock = self._create_connection(
+                ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/socket.py", line 865, in create_connection
+    raise exceptions[0]
+  File "/usr/lib/python3.12/socket.py", line 850, in create_connection
+    sock.connect(sa)
+ConnectionRefusedError: [Errno 111] Connection refused
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/thinkspace/Desktop/Physics_Based_RoboArm/tools/record_live_runs.py", line 68, in <module>
+    record(f"{tag}_stuck_j{j}", kg, "stuck_joint", j)
+  File "/home/thinkspace/Desktop/Physics_Based_RoboArm/tools/record_live_runs.py", line 45, in record
+    d = get(seq)
+        ^^^^^^^^
+  File "/home/thinkspace/Desktop/Physics_Based_RoboArm/tools/record_live_runs.py", line 27, in get
+    return json.load(urllib.request.urlopen(f"{U}/state?since={since}", timeout=5))
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 215, in urlopen
+    return opener.open(url, data, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 515, in open
+    response = self._open(req, data)
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 532, in _open
+    result = self._call_chain(self.handle_open, protocol, protocol +
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 492, in _call_chain
+    result = func(*args)
+             ^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 1373, in http_open
+    return self.do_open(http.client.HTTPConnection, req)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 1347, in do_open
+    raise URLError(err)
+urllib.error.URLError: <urlopen error [Errno 111] Connection refused>

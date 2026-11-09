@@ -174,3 +174,16 @@ why it is recorded rather than argued about.
    row disagreeing about the state they came from.
 4. `tests/test_telemetry.py` cross-checks the writer's column set against the schema in both
    directions, so a field added in one place and not the other fails immediately.
+
+## Which torque is `tau_measured` (settled 2026-11-09)
+
+`torque_convention` in the manifest is `link_side` ([DECISIONS.md](../DECISIONS.md) D11): the torque the joint transmits to the link, **without** the rotor's own inertia torque.
+Evidence: against `M qdd + C + g` on the 6 s reference run, the residual is 0.00 to 0.015 N*m RMS with a model that has no armature and 0.03 to 0.10 N*m with one. `tau_applied` is the command and does
+carry the rotor term. The analysis model (`model/pinocchio_model.py`) still includes the armature, so the measured-torque residual has a small bias proportional to acceleration, at most 0.1 N*m at 20% speed
+(`docs/RESIDUAL_FLOOR.md`).
+
+## With sensor noise on
+
+`pal_sensors` adds white noise to `q`, `qd`, `tau_measured` and `tau_applied` **after** the decomposition columns and `tau_frac` are computed from the clean values. Those identities therefore hold only to within the noise,
+and `schema/validate.py` allows 6 sigma of the torque noise recorded in the manifest (`sensor_noise.sigma.tau`); with ideal sensing they are checked exactly.
+

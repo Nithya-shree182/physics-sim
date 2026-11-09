@@ -18,6 +18,15 @@ Written for: whoever picks this up next. [docs/TODO.md](docs/TODO.md) is the lis
 - Live fault check through the dashboard (2 kg, s-curve): two healthy compares raised no alert; friction on joints 4 and 6, a stuck
   joint 4, a stuck joint 1 (flagged as inconsistent command, not located) and a 50 ms delay were all flagged.
 
+- **Dashboard alarm rule retuned on 38 recorded live runs (noise on).** The rule as shipped alarmed on every healthy run; the command-lag channel was not compared with the reference
+  run (a healthy carry read as a 43 ms delay) and the baseline spread was tiny. Now: the lag is reference-based, the torque baseline has a floor of 1% of each joint's limit and the lag baseline a floor of 20 ms (pick cycle only).
+  Held out on 5 kg: 0 of 6 healthy runs alarmed, 11 of 13 faults found and named correctly (the other two are joint 5, which the cycle barely moves). A stuck joint is no longer also reported as friction on the same joint.
+  `tools/record_live_runs.py`, `tools/tune_dashboard_rule.py`, `docs/DETECTION_RESULTS.md`, D13.
+- **Suction tool geometry.** The cross bars ran along the axes while the cups sit on the diagonals, so each cup hung beside a bar. Now on the diagonals and longer; a test checks it.
+- **`docs/` reorganised.** 17 Panda-era pages moved to `docs/archive/` (with `git mv`); new `docs/README.md`, `docs/DATA_SUITES.md`, rewritten `README.md`, `docs/TODO.md` and `dashboard/README.md`; `DECISIONS.md` annotated (D1, D3, D8) and extended (D10 to D13).
+  `out/` stale data moved to `out/_stale_pre_controller_fix/` and `out/_archive_panda/`; logs older than 2026-11-08 to `logs/archive/`. Nothing was deleted.
+- Tests: 177 pass, 57 skip (each with its reason in `tests/conftest.py`).
+
 **A controller bug that had hidden every wrist result.** In every run recorded before today joints 5 and 6
 did not move (q range 0.0002 rad against 0.16 rad commanded). Two causes, both in `workspace/pal_runner.py`:
 computed torque scales its feedback by the mass matrix, PhysX's mass matrix has no rotor inertia, and the

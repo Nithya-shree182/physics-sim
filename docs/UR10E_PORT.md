@@ -1,12 +1,11 @@
-# The UR10e port (2026-11-08)
+# The UR10e: the arm, the controller and the cell (written 2026-11-08, updated 2026-11-09)
 
 Written for: whoever picks this up next. This page is the *reference* for the arm — where its
 numbers come from, what is a citation and what is a choice, and how the cell is laid out. For what
 is still to be done, read **[TODO.md](TODO.md)** first; for the telemetry contract,
 **[TELEMETRY.md](TELEMETRY.md)**; for the history, [../changes.md](../changes.md).
 
-Read all of these before `HANDOFF.md`, which still describes the project as it was with the Franka
-Panda. Where it disagrees with this page, this page wins.
+Pages that describe the Franka Panda era are in [archive/](archive/); where one disagrees with this page, this page wins.
 
 ## What changed, in one paragraph
 
@@ -61,6 +60,18 @@ The arm-agnostic physics laws also pass on the new model: energy conservation in
 skew-symmetry of `Mdot - 2C`, mass-matrix positive-definiteness, Jacobian against finite
 differences, forward/inverse dynamics agreement.
 
+## The controller
+
+`workspace/pal_runner.py`: computed torque in effort mode, `tau = M (qdd_des + Kp e + Kd ed) + C + g`, with the plant's own `M`, `C`, `g`, kp 400 and kd 40 (accelerations, so the
+torque scales with the inertia). Two additions, both of 2026-11-09 ([DECISIONS.md](../DECISIONS.md) D10), without which **joints 5 and 6 never moved**:
+
+- **Baseline friction feed-forward** (`PAL_FRICTION_FF=0` removes it). The plant's friction is added to the command, using the baseline, not the fault-modified value, so an injected
+  friction fault is still an unmodelled disturbance.
+- **The armature added to the controller's mass matrix** (`PAL_CONTROLLER_ARMATURE=0` removes it). PhysX's `M` is the links' alone; the rotor inertia acts in the solver.
+  On a light wrist the feedback gain was under 1 N*m/rad against 0.62 N*m of breakaway friction.
+
+A dropped Isaac physics view is rebuilt by `Runner.ensure_view()`. The measured torque is link-side (D11).
+
 ## The cell
 
 `./start_sim_docker.sh` runs `workspace/pal_cell_demo.py`: a UR10e on a pedestal picks three
@@ -82,6 +93,8 @@ which is what lets `tests/test_suites.py` check it at all.
   finger-contact friction, a load path whose stiffness depends on the solver timestep. That is the
   leading suspect for the Panda's unexplained 2 kg payload error at 1000 Hz (STATUS 11/18). A
   suction grip is modelled as a rigid attachment, so the whole load reaches the wrist.
+- **The tool's geometry.** A plate, two dark cross bars along the diagonals, four stems and four cups at the corners of a 0.085 m square, cup faces at 0.110 m. The bars once ran
+  along the axes, leaving each cup hanging beside a bar; `tests/test_cell_geometry.py` now checks every cup is on a bar. The tool is visual only; the grip is a fixed joint.
 - **Seal test**: lateral offset ≤55 mm and vertical gap ≤30 mm, judged separately. A single
   Euclidean distance made the tolerance depend on how the error split between sideways and down;
   the arm is still converging when the vacuum latches, and lateral error at that moment runs to
@@ -131,18 +144,9 @@ pose-conditioning channels, and replaces the finger columns with the suction too
 the new columns. **[TELEMETRY.md](TELEMETRY.md) is the page to read**; it covers what each group is
 for, the sensor model, decimation, the timing conventions and how to add a channel.
 
-## What is NOT done
+## What is left
 
-Moved to **[TODO.md](TODO.md)**, so there is one list rather than two that drift apart. The short
-version: the project still has no validated detection or payload result for the arm it runs,
-because every recorded run in `out/` and `data/ref_matched_*` is Panda data and regenerating them
-needs a GPU session. That blocks the residual-floor table, the <=50% speed band's evidence (D1),
-the 250 Hz choice (D3) and the trajectory-style comparison.
-
-For the record, since this page is where the port's own state was written down: the fifteen
-individually-quarantined tests this port left behind were all ported the same day, and
-`pytest` now reports **161 passed, 57 skipped** where it reported 110 / 71. The 57 are the four
-recorded-Panda-evidence modules plus one missing-data skip.
+One list, in [TODO.md](TODO.md), so there are not two that drift apart.
 
 ## Running it
 
@@ -154,8 +158,8 @@ PAL_BOX_KG=2.5 PAL_STYLE=trapezoidal ./start_sim_docker.sh
 PAL_SENSOR_NOISE=1 ./start_sim_docker.sh    # switch the sensor noise on (off by default)
 PAL_CAM=iso_close ./start_sim_docker.sh     # iso (default) | iso_high | iso_close | side | top
 ./pal.sh                                    # the live cell plus the dashboard
-tools/pal_suite.sh                          # record the data suites (GPU; see TODO.md item 1)
-.venv-pal/bin/python -m pytest -q           # 161 pass, 57 skipped with reasons
+tools/pal_suite.sh <suite>                  # record one data suite (GPU); the list is in docs/DATA_SUITES.md
+.venv-pal/bin/python -m pytest -q           # the tests; skips carry their reason (tests/conftest.py)
 .venv-tools/bin/python schema/validate.py out/<run>.parquet
 tools/make_ur10e_urdf.py                    # regenerate the URDF from UR's published config
 tools/make_sign_texture.py "Some Text"      # regenerate a sign texture

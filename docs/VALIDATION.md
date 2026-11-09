@@ -1,5 +1,7 @@
 # Independent validation: push with a known force (proposal 7.7)
 
+> **Method page.** The push-with-a-known-force test is still the independent check of the residual mathematics, and `tools/check_push.py` runs it. The numbers below are the Panda's; the `push` suite has not been re-recorded on the UR10e (see [DATA_SUITES.md](DATA_SUITES.md)).
+
 Written for: anyone who has to say whether the residual mathematics is right.
 
 ## The test

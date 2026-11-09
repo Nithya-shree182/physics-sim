@@ -1,0 +1,7 @@
+start {'z': 6.0, 'consec_s': 0.15, 'abs_nm': 0.1, 'abs_frac': 0.005, 'settle_top': 3, 'stuck_track': 0.03, 'global_joints': None, 'sd_floor_frac': 0.0, 'event_mask_s': 0.0, 'lag_min': 0.02, 'lag_sd': 0.005, 'lag_mask': 0.0} {'false_alarms': 2, 'n_healthy': 6, 'detected': 13, 'exact': 8, 'located': 8, 'n_faulty': 13, 'extra': 16, 'delay': 0.8144615384615347}
+[round 0] best change {'lag_sd': 0.02}: {'false_alarms': 0, 'n_healthy': 6, 'detected': 13, 'exact': 8, 'located': 8, 'n_faulty': 13, 'extra': 16, 'delay': 0.8144615384615347}
+[round 1] best change {'sd_floor_frac': 0.01}: {'false_alarms': 0, 'n_healthy': 6, 'detected': 11, 'exact': 10, 'located': 11, 'n_faulty': 13, 'extra': 11, 'delay': 0.9305454545454505}
+[round 2] best change {'abs_frac': 0.002}: {'false_alarms': 0, 'n_healthy': 6, 'detected': 11, 'exact': 10, 'located': 11, 'n_faulty': 13, 'extra': 11, 'delay': 0.9305454545454505}
+
+BEST {"z": 6.0, "consec_s": 0.15, "abs_nm": 0.1, "abs_frac": 0.005, "settle_top": 3, "stuck_track": 0.03, "global_joints": null, "sd_floor_frac": 0.01, "event_mask_s": 0.0, "lag_min": 0.02, "lag_sd": 0.02, "lag_mask": 0.0} 
+ {'false_alarms': 0, 'n_healthy': 6, 'detected': 11, 'exact': 10, 'located': 11, 'n_faulty': 13, 'extra': 11, 'delay': 0.9305454545454505}

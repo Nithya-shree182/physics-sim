@@ -1,0 +1,39 @@
+have tune_ref_healthy
+have tune_healthy_0
+have tune_healthy_1
+have tune_healthy_2
+have tune_healthy_3
+have tune_healthy_4
+have tune_friction_j0
+saved tune_stuck_j0: 8001 rows, placed 3
+saved tune_friction_j1: 13355 rows, placed 3
+saved tune_stuck_j1: 13379 rows, placed 1
+have tune_friction_j2
+have tune_stuck_j2
+have tune_friction_j3
+saved tune_stuck_j3: 13431 rows, placed 3
+saved tune_friction_j4: 13439 rows, placed 3
+saved tune_stuck_j4: 13425 rows, placed 3
+saved tune_friction_j5: 13416 rows, placed 3
+saved tune_stuck_j5: 13439 rows, placed 3
+saved tune_delay: 13432 rows, placed 3
+saved test_ref_healthy: 13438 rows, placed 3
+saved test_healthy_0: 13434 rows, placed 3
+saved test_healthy_1: 13439 rows, placed 3
+saved test_healthy_2: 13430 rows, placed 3
+saved test_healthy_3: 13403 rows, placed 3
+saved test_healthy_4: 13427 rows, placed 3
+saved test_friction_j0: 13427 rows, placed 3
+saved test_stuck_j0: 13427 rows, placed 3
+saved test_friction_j1: 13421 rows, placed 3
+saved test_stuck_j1: 13427 rows, placed 1
+saved test_friction_j2: 13439 rows, placed 3
+saved test_stuck_j2: 13409 rows, placed 1
+saved test_friction_j3: 13409 rows, placed 3
+saved test_stuck_j3: 13439 rows, placed 3
+saved test_friction_j4: 13439 rows, placed 3
+saved test_stuck_j4: 13424 rows, placed 3
+saved test_friction_j5: 13427 rows, placed 3
+saved test_stuck_j5: 13431 rows, placed 3
+saved test_delay: 13463 rows, placed 3
+RECORDING DONE

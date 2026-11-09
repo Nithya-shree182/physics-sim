@@ -28,7 +28,11 @@ import numpy as np
 
 # ── geometry, metres, measured along the wrist's +z ───────────────────────────────────────────
 PLATE_R, PLATE_H = 0.055, 0.020        # the mounting flange plate
-ARM_LEN, ARM_W, ARM_H = 0.230, 0.030, 0.018    # the two cross bars the cups hang from
+# The two cross bars the cups hang from run along the DIAGONALS, because the cups sit at the corners of a square (CUP_SPAN, CUP_SPAN).
+# They used to run along x and y, which put every cup 0.085 m beside a bar with its stem hanging in the air (seen in the sim, 2026-11-09).
+# Half the length must reach the cup centre, CUP_SPAN * sqrt(2) = 0.120 m, with room for the stem.
+ARM_LEN, ARM_W, ARM_H = 0.270, 0.030, 0.018
+BAR_ANGLES_DEG = (45, -45)             # the bars' directions in the tool's xy plane
 FRAME_Z = 0.030                        # centre height of the cross
 CUP_R, CUP_H = 0.030, 0.040            # a single cup
 CUP_SPAN = 0.085                       # cup centre offset from the tool axis, along x and y
@@ -107,7 +111,7 @@ class SuctionTool:
         from pxr import UsdGeom
         UsdGeom.Xform.Define(self.stage, self.root)
         _cyl(self.stage, f"{self.root}/Plate", PLATE_R, PLATE_H, STEEL, (0, 0, PLATE_H / 2))
-        for i, rot in enumerate(((0, 0, 0), (0, 0, 90))):
+        for i, rot in enumerate(((0, 0, a) for a in BAR_ANGLES_DEG)):
             _cube(self.stage, f"{self.root}/Bar{i}", (ARM_LEN, ARM_W, ARM_H), DARK, (0, 0, FRAME_Z), rot)
         for i, (sx, sy) in enumerate(((1, 1), (1, -1), (-1, 1), (-1, -1))):
             x, y = sx * CUP_SPAN, sy * CUP_SPAN

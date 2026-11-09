@@ -1,5 +1,7 @@
 # O5 fault injectors: what exists, how to run it, what it showed
 
+> **Method page.** How the injectors work and their units are current. The numbers below are the Panda's; the UR10e's results are in [DETECTION_RESULTS.md](DETECTION_RESULTS.md). Backlash now uses each joint's own rotor inertia (it used one Panda value for all joints until 2026-11-09).
+
 Written for: whoever generates or reads the O5 datasets (both sides). Rebuilt 2026-11-03 after the
 review (`docs/REVIEW.md`): the first version used the wrong friction units and the wrong signal.
 

@@ -4,18 +4,24 @@ A suite is (output_directory, [Scenario, ...]). pal_run_suite.py plays suites in
 the results. Names, seeds and parameters are the ones the earlier per-objective scripts used, so regenerated runs match the existing data.
 
   reference  O1/O2  slow reference at 0 and 1 kg, matched plant (no mass mismatch), no noise: calibration data for the model   -> data/
-  o3         O3     holds at the five probe poses (two near-singular) and a pass through the extended singular pose, 0 and 1 kg -> out/o3
-  o4         O4     known payloads held at three poses and carried along the reference motion                                  -> out/o4
+  o3         O3     a hold at the home pose, 0 and 1 kg (the UR10e has one named pose)                                           -> out/o3
+  o4         O4     known payloads held at home and carried along the reference motion                                         -> out/o4
   o5         O5     26 runs: six healthy noise seeds, friction x2/x4/x8 on four joints, locked joint, backlash, delay          -> out/o5
   clean      O5     noise-free twins of the key faults                                                                          -> out/clean
   fast       O5     faults at 40% of the velocity limit                                                                         -> out/fast
-  extra      O4/O5  the analysis side's run list: excitation, matched C4 faults at 0 and 1 kg over three seeds, 60 s, pickup   -> out/extra
+  extra      O4/O5  excitation, matched faults at 0 and 1 kg over three seeds, a 60 s run, a pickup                             -> out/extra
   push       7.7    pushes with a known force in low-gain torque mode, and a friction-off control                              -> out/push
   o6         O6     three movement styles over a speed grid at 0 and 2 kg (out-and-back between two joint configurations)       -> out/o6
-  pick       O4/O5  a real pick-and-place from IK waypoints in three styles at 0.5 and 2 kg, an ellipse, faults after the grasp    -> out/pick
+  pick       O4/O5  a pick-and-place from IK waypoints in three styles at 0.5 and 2 kg, an ellipse, faults after the grasp      -> out/pick
   o6pick     O6     the same pick cycle over a speed grid: cycle time, peak torque, energy per pick                              -> out/o6pick
-  payload    O4     heavy payload ladder (0-9 kg moving, to 12.5 kg held) at 20/35/50% speed                          -> out/payload
-  pickphys   O4     a REAL pick: fingers close on a physical cube of known mass, friction holds it, contact carries its weight   -> out/pickphys
+  payload    O4     payload ladder (0-9 kg moving at 20/35/50% speed, to 12.5 kg held)                                         -> out/payload
+  pickphys   O4     a REAL pick in the cell: a physical box on the suction tool, its weight reaches the joints through contact -> out/pickphys
+  pickfar    O4     the same, with boxes near the end of the arm's reach                                                       -> out/pickfar
+  detect     O5     every fault on every joint, a tuning split (dtune) and a held-out split (dtest), noise on, 20% speed        -> out/detect
+  detectfast O5     the same faults at 40% speed                                                                               -> out/detectfast
+  detectlimits O5   larger backlash and short delays: how small can the detector see                                          -> out/detectlimits
+  speedband  D1     the residual against speed, 10-100% of the velocity limit (run at several PAL_PHYSICS_HZ)                  -> out/speedband
+  pickdetect O5     fault detection on the pick cycle against a healthy reference run (needs the cell)                         -> out/pickdetect
 """
 import numpy as np
 

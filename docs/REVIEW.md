@@ -1,5 +1,7 @@
 # External-style review: where PAL stands against the proposal
 
+> **Panda-era review (2026-11-03).** Its findings F1 to F13 are cited by name in code comments, so the page stays here. The arm is now a UR10e and the numbers are the Panda's; the current state is in [TODO.md](TODO.md).
+
 Written for: the two people on the project, and anyone who has to decide whether the numbers can
 be trusted. First review 2026-11-03; updated the same day after the fixes it called for. Read
 against the proposal PDF in the repo root and `docs/PROPOSAL_AMENDMENTS.md`.
@@ -174,4 +176,4 @@ They also found F11 (the armature lead, and the off-diagonal inertia).
 2. **Ours, not done:** websocket stream of telemetry and the in-simulator panel (O7); a grasped payload
    with gripper actuation; backlash with impact dynamics; faster-motion fault sets.
 3. **Cleanup:** the probe scripts written before 2026-11-03 build the old plant; their friction-related
-   results are superseded (banner in `CONTEXT.md`).
+   results are superseded (banner in `archive/CONTEXT.md`).

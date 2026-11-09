@@ -30,3 +30,6 @@ handover/
 data/synthetic/
 data/real/
 .pytest_cache/
+
+# runtime pid files written by pal.sh
+logs/.pal_*.pid

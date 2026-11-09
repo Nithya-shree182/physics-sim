@@ -1,100 +1,43 @@
-  # What is left to do
+# What is true now, and what is left
 
-  Written for: whoever picks this up next. Read this first. It supersedes the "What is NOT done"
-  section of [UR10E_PORT.md](UR10E_PORT.md), which describes the port itself.
+Written for: whoever picks this up next. Read this first. State as of **2026-11-09**. Everything here is **simulation evidence**: ideal sensors plus white noise, authored friction
+values, faults injected by the simulator. No real hardware has been involved. History is in [../changes.md](../changes.md); decisions with their evidence in [../DECISIONS.md](../DECISIONS.md).
 
-  State as of **2026-11-08, final pass**: the arm is a UR10e, the Panda is gone from the runtime,
-  telemetry is at schema v1 with energy and torque-decomposition channels, `pal_live.py` drives the
-  conveyor cell, the viewport is isometric, and the project is in a validated UR10e state for the
-  relevant model/telemetry checks. The history remains in [../changes.md](../changes.md).
+## What has been shown
 
-  ---
+| claim | evidence | where |
+|---|---|---|
+| The independent model matches the simulator | gravity error 0.0 N*m on every joint, 0 to 12.5 kg; torque identity within 0.1% of the limit; 177 tests pass, 57 skip with a reason each | `tools/check_run.py`, `tests/` |
+| The residual floor is small and has no knee | 0.04% of the limit at 10% speed to 0.36% at 100%, identical at 250, 500 and 1000 Hz | [RESIDUAL_FLOOR.md](RESIDUAL_FLOOR.md) |
+| Payload estimation works | live dashboard, noise on: within about 3.5% from 0.5 to 8 kg (8 kg reads 7.72, 4 kg 3.89, 2 kg 1.95, 0.5 kg 0.49); a real box carried by suction within 4% after removing the 0.35 kg empty-arm bias | `out/payload`, `out/pickphys`, [DETECTION_RESULTS.md](DETECTION_RESULTS.md) |
+| The fault detector works on repeating motion | friction x2 to x8 and a stuck joint on all six joints, 0 false alarms in 22 healthy runs, the right joint named every time, held-out score equal to the tuning score; delay from about 20-30 ms | [DETECTION_RESULTS.md](DETECTION_RESULTS.md) |
+| The dashboard finds faults on the pick cycle | noise on, 5 kg held out: 0 of 6 healthy runs alarmed (the rule as shipped alarmed 5 of 6), 11 of 13 faults found and named correctly; the 2 misses are joint 5 | [DETECTION_RESULTS.md](DETECTION_RESULTS.md), `tools/tune_dashboard_rule.py` |
+| The dashboard runs end to end | live sim, three boxes placed on every run, healthy runs clean, friction on joints 4 and 6, a stuck joint 1 and 4 and a 50 ms delay all flagged | `docs/screens/` |
 
-  ## Completed in this pass
+## Open, in the order worth doing
 
-  This round closed the key blockers that were keeping the repo in a stale Panda-era state:
+1. **Faults the detector cannot see.** Backlash is not reliably found even at 0.2 to 0.5 rad (far more play than a real UR10e has), and a delay under about 20 ms is missed. These are
+   measured limits of a controller that compensates the play, not bugs. Decide whether to state them as limits (the current choice) or to inject something the detector can see.
+2. **The dashboard rule is tuned on one cycle.** 38 recorded runs: one style (S-curve), one speed (60% of the bar), two box masses (2 kg to tune, 5 kg held out), friction x8 only.
+   Re-record with other styles, speeds and friction sizes (`tools/record_live_runs.py`) and re-run `tools/tune_dashboard_rule.py` before quoting a rate. The held-out sample is 13 faults and 6 healthy runs.
+3. **Joint 5 is invisible in the pick cycle.** It moves 0.11 rad in total (the others 1 to 1.8 rad), so a friction or stuck fault there has almost nothing to act on. A limit of the cycle, not of the rule.
+4. **Extra and mislabelled alerts.** A friction fault on a wrist is also called "stuck joint" (it seizes), a big fault on a heavy joint adds "command delay", and a 50 ms delay adds a friction alert on joint 3. The
+   right fault is always among them; the extras are a nuisance, not a lie.
+5. **The offline detector on the pick cycle.** `observers/detector.py` with `against_reference` false-alarms on healthy suction picks (a 100-sigma spike at the grasp that one reference does not line up). The dashboard
+   uses its own rule, so the demo is not affected. The `pickdetect` suite (`workspace/pal_suites.py`) was built to tune it and was stopped half recorded.
+6. **Heavy moving loads.** The slider stops at 8 kg, the top of the validated ladder. The arm is rated 12.5 kg (tool included); a stretched-out move above about 9 kg exceeds the joint torque limits on this cycle, so 8 to 12.5 kg
+   moving has not been validated, only held.
+7. **The analysis model carries the rotor inertia, the measured torque does not** ([DECISIONS.md](../DECISIONS.md) D11): a bias of up to 0.1 N*m, proportional to acceleration. A possible improvement, not a fix.
+8. **Friction and armature values are authored**, not identified (1% of each joint's effort limit; `J_motor * N^2` for a 100:1 drive). They set the scale a friction fault is measured against.
+9. **Stale data.** `out/_stale_pre_controller_fix/` (recorded when the wrists did not move) and `out/_archive_panda/`. Delete them, or regenerate with `tools/pal_suite.sh`.
+10. **Commit.** Work after the commit `e9a58d6` (the docs reorganisation, `docs/archive/`, the tuning scripts, the dashboard rule values) is not committed.
 
-  - The project was re-grounded to the active UR10e configuration rather than the removed Panda robot.
-  - The missing `o3` suite and stale suite registry were restored to the active UR10e contract.
-  - Fresh generated reference data was validated successfully by the host-side checker.
-  - The full validation path now passes in the intended project environments:
-    - `.venv-pal/bin/python -m pytest -q` passes
-    - the reference Parquet passes schema, gravity, identity and friction checks via
-      `.venv-tools/bin/python tools/check_run.py data/ref_matched_0kg_1000hz.parquet`
+## Traps found this session (all in the code or docs now)
 
-  The key validation result from the fresh UR10e reference run was:
-
-  - SCHEMA: PASS
-  - GRAVITY: PASS
-  - IDENTITY: PASS
-  - FRICTION: PASS
-  - OVERALL: PASS
-
-  This means the current UR10e reference and model pipeline are valid in the ideal clean regime, and the
-  remaining work is not a repo-wide logic failure but the extension of that validation into the real
-  sweep conditions on the arm (speed band, payloads, and fault detection on fresh capture data).
-
-  ---
-
-  ## 1. Regenerate the remaining UR10e suite sets
-
-  The original blocked item remains the full suite set, but the repo is no longer blocked by stale Panda
-  assumptions or a broken suite registry. The data-generation path is now valid and can be rerun.
-
-  Use:
-
-  ```bash
-  ./tools/pal_suite.sh all
-  ```
-
-  This should be treated as the active proof step for the remaining measurements, especially for:
-
-  - the fresh `o3`, `o4`, `o5`, `clean`, `fast`, `extra`, `push`, `o6`, `pick`, `o6pick`, `pickphys`, and `pickfar` runs
-  - re-measuring the residual floor and speed band on the actual UR10e
-  - validating payload estimation against fresh arm logs
-  - validating fault detection against fresh arm logs
-
-  ## 2. Re-measure the residual floor and speed band on the UR10e
-
-  The project already contains the correct logic for the residual and speed-cap checks; the remaining
-  requirement is fresh evidence from the active robot. The code path is valid, but the numbers must be
-  re-measured on the UR10e rather than copied from the Panda-era docs.
-
-  This should be treated as the main measurement item before any final detection claims are made.
-
-  ## 3. Validate payload and fault detection on real UR10e data
-
-  The project has a working model-side pipeline and a successful clean ideal-state pass, but the factual
-  claim "payload detection works on the current UR10e" still requires fresh UR10e captures and direct
-  validation on those logs.
-
-  This remains the final proving step before claiming a real arm result.
-
-  ## 4. Verify the live Isaac Sim + dashboard path end to end
-
-  The dashboard and live server are ported and the stream bug was fixed. The remaining end-to-end check is
-  to verify the full live cell cycle from the dashboard button press through the run, the fault onset and
-  box placement, including the Isaac-side runtime recovery behavior.
-
-  ## 5. Final housekeeping
-
-  The remaining small cleanup tasks are mechanical and non-blocking:
-
-  - remove stale Panda-era documentation references where they remain visible
-  - confirm the live dashboard items align with the current UR10e flow
-  - keep the remaining benchmark docs clearly marked as UR10e-only evidence and not Panda-era assumptions
-
-  ## 6. Nothing is committed
-
-  Branch `dev` remains the working branch for this pass. The current UR10e port and documentation updates are
-  still in the working tree. This is fine for the current end-of-pass state, but a commit is recommended
-  before continuing into a new measurement or detection run set.
-
-
-  ## 7. Dashboard items (2026-11-08, late)
-
-  Done: item 4 (twin beside the Isaac picture, toggle removed), item 6 (both Replay buttons removed;
-  pick style, load and speed sit under the twin), item 7 (Analysis tab with per-box facts and an
-  offline rule-based narrator), and the load slider now runs to 8 kg (was 3). Checked on the
-  stand-in plant by screenshot; **not yet checked against live Isaac** (GPU was busy with the fault suites).
-  Still blocked: item 8 (plain-language explanation of the three styles) until `o6pick` is re-run on the UR10e.
+- The wrists never moved until the controller carried friction and the rotor inertia ([DECISIONS.md](../DECISIONS.md) D10).
+- The dashboard sliced live rows for a 7-joint arm; every live channel was read from the wrong columns until 2026-11-09.
+- The live server counted boxes still on the belt, and the belt carries each one off the end: "1 of 3 placed" was a miscount.
+- The dashboard's command-lag reading was not compared with the reference run, so a healthy carry read as a 43 ms delay. With sensor noise on, the old rule alarmed on every healthy run; a check with noise off hid it.
+- Two programs share the container name `pal-pal-live` and port 8765 (`./pal.sh` and a headless `pal_live.py`). One at a time.
+- Editing `tools/pal_suite.sh` while it runs breaks the run; bash reads a script as it executes it.
+- With sensor noise on, the exact identities in the schema validator fail by design; it now allows 6 sigma from the manifest.

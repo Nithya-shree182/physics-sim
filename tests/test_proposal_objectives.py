@@ -126,7 +126,7 @@ SEEDS = (11, 12)
 @pytest.fixture(scope="module")
 def o5_table(twin):
     """Rows: every fault x seed, plus a fault-free baseline per seed (same seed, A2 in
-    NOTES_FOR_DEV round 4), each evaluated with the gate and without it."""
+    docs/archive/NOTES_FOR_DEV.md round 4), each evaluated with the gate and without it."""
     rows = []
     for seed in SEEDS:
         runs = [("none", -1)] + FAULT_SET

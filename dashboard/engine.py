@@ -50,7 +50,8 @@ WINDOW_S = 1.2                   # length of the sliding analysis window; rows a
 WINDOW_ROWS = 300                # room for 1.2 s of rows up to 250 Hz
 EDGE_S = 0.15                    # rows dropped by compute_residual at each end (3 filter time constants)
 BAND = 0.5                       # trusted fraction of the velocity limit (dev, RESIDUAL_FLOOR.md)
-CONSEC_TICKS = 3                 # [CHOICE] blocks in a row (150 ms at 50 ms blocks), as detector.CONSECUTIVE but per block; Analyzer.consec scales it to the block length
+CONSEC_S = 0.15                  # [CHOICE] seconds a joint must stay off its baseline before it is named; Analyzer.consec scales it to the block length
+CONSEC_TICKS = 3                 # kept for callers that quote the old block count
 LIVE_Z = Z_THRESHOLD
 PAYLOAD_ON_KG, PAYLOAD_OFF_KG = 0.20, 0.12
 # When the live simulator starts an injected fault, in seconds from the start of the run. Asked of
@@ -76,6 +77,18 @@ GLOBAL_JOINTS = None             # set once DOF is known, just below
 STUCK_MIN_TRACK_RAD = 0.03          # rad: a seized joint falls this far behind its command; a slow joint with extra friction does not
 SETTLE_TOP = 3                   # extra blocks the strongest joint must stay off before it is named
 LIMIT_CONSEC = 5                 # blocks in a row above 90% of the torque limit before the alert (a delay's torque spikes are not a sustained load)
+# Found 2026-11-09 by replaying 38 recorded live runs with sensor noise on: the shipped rule false-alarmed on every healthy run. Its baseline is
+# calibrated on a quiet 3 s window, so its spread is tiny, and at a grasp or a release the residual jumps by tens of that spread for a block or two (a
+# healthy run differs from its one reference by a few N*m there, because the transient never lines up exactly). Two settings answer it, both off by
+# default so the old behaviour can be reproduced: a floor on the spread in proportion to each joint's torque limit, and a short hold-off after the
+# load on the tool changes. tools/tune_dashboard_rule.py chose the values in use: the spread floor (1% of limit) and the lag spread floor (20 ms) were kept, the
+# hold-off after a load change was not (it did not help, EVENT_MASK_S = LAG_MASK_S = 0). The two floors apply to the pick cycle only (the stand-in plant has no
+# reference run and needs its 5 ms lag floor to see a 50 ms delay). The lag channel is also compared with the reference run's lag.
+LAG_MIN_S = 0.02                 # the command-lag estimate must exceed its baseline by this many seconds before it counts
+LAG_SD_FLOOR_S = 0.02            # smallest spread the lag baseline is scored against, seconds (tuned 2026-11-09; was 0.005)
+LAG_MASK_S = 0.0                 # hold-off for the lag channel after a load change; its estimate uses a 1.2 s window, so a grasp disturbs it for that long
+SD_FLOOR_FRAC = 0.01             # the baseline's spread is at least this fraction of the joint's torque limit (tuned 2026-11-09; was 0)
+EVENT_MASK_S = 0.0               # seconds after the load on the tool changes during which no joint is counted as off its baseline
 FIT_SD_NM = 0.3                  # N*m, per-joint spread assumed by the payload-signature fit when a reference run is in use
 # How many joints this dashboard is drawing. Read from the active robot (pal_robot), not fixed at
 # whatever the arm has, so the same engine serves any joint count. Added with the port of 2026-11-08.
@@ -375,6 +388,7 @@ class Analyzer:
         self.streak: dict[str, int] = {}
         self.fault_hold = False
         self.zpeak = np.zeros(DOF)
+        self._prev_load, self._mask_until, self._lag_mask_until = 0.0, -1.0, -1.0
 
     def _box_fact(self, seg):
         """One box's payload estimate: the median over the settled middle of its carry.
@@ -410,6 +424,7 @@ class Analyzer:
         self.run_info = dict(info or {})
         self.auto_tare = 0.0
         self.zpeak = np.zeros(DOF)
+        self._prev_load, self._mask_until, self._lag_mask_until = 0.0, -1.0, -1.0
         self.run_stats = {"res": [], "held": [], "alerts": {}, "segs": [], "prev": False}
         self.cur_ref = self.refs.get(key)
         self.recording = self.cur_ref is None and fault == "none"
@@ -417,7 +432,7 @@ class Analyzer:
     def end_run(self):
         if self.recording and len(self.rec) > 20 and self.run_key is not None:
             self.refs[self.run_key] = {"t": np.array([x[0] for x in self.rec]), "u": np.array([x[1] for x in self.rec]),
-                                       "e": np.array([x[2] for x in self.rec])}
+                                       "e": np.array([x[2] for x in self.rec]), "lag": np.array([x[3] for x in self.rec])}
         self.recording, self.rec, self.run_key = False, [], None
 
     def set_tare(self, on: bool):
@@ -427,7 +442,7 @@ class Analyzer:
     def feed(self, blk: Block, controls: Controls, running_s: float) -> dict:
         dt = blk.dt
         self.blk_s = len(blk.q) * dt
-        self.consec = max(1, round(0.15 / self.blk_s))      # 150 ms of blocks in a row, whatever the row rate
+        self.consec = max(1, round(CONSEC_S / self.blk_s))      # CONSEC_S of blocks in a row, whatever the row rate
         t_rows = blk.t - len(blk.q) * dt + dt * np.arange(len(blk.q))
         for i in range(len(blk.q)):
             self.buf["t"].append(t_rows[i])
@@ -578,13 +593,16 @@ class Analyzer:
             ex = nx
         u = r - fit * tkg
         e = track
+        lag_ref = 0.0
         t_rel = blk.t - self.run_t0
         if self.picks and self.run_key is not None:
             if self.recording:
-                self.rec.append((t_rel, u.copy(), e.copy()))
+                self.rec.append((t_rel, u.copy(), e.copy(), self._lag()))
             if self.cur_ref is not None:                   # compare with the healthy run of the same task, at the same time into the pick
                 i = int(np.clip(np.searchsorted(self.cur_ref["t"], t_rel), 0, len(self.cur_ref["t"]) - 1))
                 u, e = u - self.cur_ref["u"][i], e - self.cur_ref["e"][i]
+                if "lag" in self.cur_ref:                  # the command-lag reading too: a loaded arm lags more than an empty one, in the reference as well
+                    lag_ref = float(self.cur_ref["lag"][i])
         self.last_ue = (u.copy(), e.copy())
         sel_fault = blk.truth.get("fault", "none") if self.picks else ctl.fault       # picks: the fault is chosen per pick, not live
         healthy = sel_fault == "none" and (self.picks or ctl.load < 0.1)
@@ -595,18 +613,18 @@ class Analyzer:
             if not gated_det and (self.picks or ctl.fault == "none"):
                 self.cal["u"].append(u.copy())
                 self.cal["e"].append(e.copy())
-                self.cal["lag"].append(self._lag())
+                self.cal["lag"].append(self._lag() - lag_ref)
                 done = t_rel >= self.cal_until if (self.picks and self.run_key is not None) else len(self.cal["u"]) * self.blk_s >= CALIBRATION_S
                 if done and len(self.cal["u"]) >= 5:
                     U, E = np.array(self.cal["u"]), np.array(self.cal["e"])
-                    self.cal.update(ready=True, mu_u=U.mean(0), sd_u=np.maximum(U.std(0), FLOOR_RESIDUAL_NM),
+                    self.cal.update(ready=True, mu_u=U.mean(0), sd_u=np.maximum(np.maximum(U.std(0), FLOOR_RESIDUAL_NM), (SD_FLOOR_FRAC if self.picks else 0.0) * self.limit),
                                     mu_e=E.mean(0), sd_e=np.maximum(E.std(0), FLOOR_TRACKING_RAD),
-                                    mu_lag=float(np.mean(self.cal["lag"])), sd_lag=max(float(np.std(self.cal["lag"])), 0.005))
+                                    mu_lag=float(np.mean(self.cal["lag"])), sd_lag=max(float(np.std(self.cal["lag"])), LAG_SD_FLOOR_S if self.picks else 0.005))
             self._set_alerts({}, t, healthy)
             return {}
         z_u = (u - self.cal["mu_u"]) / self.cal["sd_u"]
         z_e = (e - self.cal["mu_e"]) / self.cal["sd_e"]
-        lag = self._lag()
+        lag = self._lag() - lag_ref
         z_lag = (lag - self.cal["mu_lag"]) / self.cal["sd_lag"]
         self.last_z = {"u": z_u, "e": z_e, "lag": z_lag, "u_raw": u.copy(), "e_raw": e.copy()}              # kept for the tests and for tuning against simulator logs
 
@@ -617,12 +635,18 @@ class Analyzer:
             self._set_alerts(out, t, healthy)
             return out
 
+        load_now = float(blk.truth.get("load", 0.0))
+        if self.picks and abs(load_now - self._prev_load) > 0.05:          # a box was just picked up or put down: transients that no reference lines up exactly
+            self._mask_until = t + EVENT_MASK_S
+            self._lag_mask_until = t + LAG_MASK_S
+        self._prev_load = load_now
+        masked = self.picks and t < self._mask_until
         big_enough = np.abs(u - self.cal["mu_u"]) >= np.maximum(ABS_MIN_NM, ABS_MIN_FRAC * self.limit)
-        hit_u = (np.abs(z_u) > LIVE_Z) & big_enough
+        hit_u = (np.abs(z_u) > LIVE_Z) & big_enough & (not masked)
         for i in range(DOF):
             self.streak[f"u{i}"] = self.streak.get(f"u{i}", 0) + 1 if hit_u[i] else 0
-            self.streak[f"e{i}"] = self.streak.get(f"e{i}", 0) + 1 if abs(z_e[i]) > LIVE_Z else 0
-        self.streak["lag"] = self.streak.get("lag", 0) + 1 if z_lag > LIVE_Z and lag - self.cal["mu_lag"] > 0.02 else 0
+            self.streak[f"e{i}"] = self.streak.get(f"e{i}", 0) + 1 if (abs(z_e[i]) > LIVE_Z and not masked) else 0
+        self.streak["lag"] = self.streak.get("lag", 0) + 1 if (z_lag > LIVE_Z and lag - self.cal["mu_lag"] > LAG_MIN_S and not (self.picks and t < self._lag_mask_until)) else 0
         rj = [i for i in range(DOF) if self.streak[f"u{i}"] >= self.consec]
         for i in range(DOF):
             self.zpeak[i] = max(self.zpeak[i], abs(z_u[i])) if hit_u[i] else self.zpeak[i]
@@ -674,6 +698,10 @@ class Analyzer:
         elif any(k.startswith("stuck") for k in out):
             for aid in [k for k in self.alerts if k.startswith("fric")]:
                 del self.alerts[aid]
+        for i in range(DOF):                       # a joint reported stuck is not also reported as friction
+            if f"stuck{i}" in out or f"stuck{i}" in self.alerts:
+                out.pop(f"fric{i}", None)
+                self.alerts.pop(f"fric{i}", None)
         self.fault_hold = faultOn
         for i in range(DOF):
             self.streak[f"L{i}"] = self.streak.get(f"L{i}", 0) + 1 if abs(self.tau_now(i)) > 0.9 * self.limit[i] else 0
@@ -792,7 +820,7 @@ class Engine:
         for k, v in kw.items():
             setattr(c, k, v)
         if changed_speeds and self.source.kind == "live":
-            self.an.recalibrate()          # the detector's baseline is per speed (A1 in NOTES_FOR_DEV round 4)
+            self.an.recalibrate()          # the detector's baseline is per speed (A1 in docs/archive/NOTES_FOR_DEV.md round 4)
 
     def _loop(self):
         nxt = time.perf_counter()

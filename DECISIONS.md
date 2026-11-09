@@ -3,16 +3,19 @@
 Written for: the project team. Each one gets validated before we
 change anything, and we keep it only if it makes the project better. New decisions go at the bottom.
 
-## Status update, 2026-11-08
+## Status, 2026-11-09
 
-This pass closes the stale Panda-era validation problem in the repo: the active UR10e suite contract and
-validator are now aligned, and the fresh UR10e reference data passes the project’s clean model/telemetry
-checks in the intended project environments. The remaining open items are measurement work on the real
-arm, not repo-wide logic failures.
+Decisions D1 to D9 were taken on the Franka Panda and are marked below where the UR10e changed them. D10 to D13 are new: they follow from
+the controller bug that kept the UR10e's wrists from ever moving, and from the tuning that followed. Numbers quoted in D1 to D9 are Panda
+numbers unless a note says otherwise; the UR10e ones are in `docs/RESIDUAL_FLOOR.md` and `docs/DETECTION_RESULTS.md`.
 
 ---
 
 ## D1. Cap the speed control so the arm never leaves the trusted range
+
+> **UR10e, 2026-11-09:** the reason below (a simulator artifact above ~50%) does not exist on this arm. Measured at 250, 500 and 1000 Hz, the residual rises in a
+> straight line from 0.04% of limit at 10% speed to 0.36% at 100%, identical at every rate (`docs/RESIDUAL_FLOOR.md`). The 50% cap stays as a project choice: it is the
+> regime the detection results were scored in, and it is conservative, not evidence-driven.
 
 Status: applied 2026-11-04 (dashboard sliders, engine clamp, About text, live-pick cap, tests). 2026-11-05: in live Isaac Sim mode the speed bar now sets the pick's speed (it did nothing before); the bar's 5 to 100% gives picks of 84 s down to 7 s.
 
@@ -41,7 +44,7 @@ real speed = slider value x 0.5.
 ### Our view
 
 - 50% of the velocity limit is where the measurement is physical and no longer depends on a simulator setting. It was
-  already a decided regime for O2, O4 and O5 (`CONTEXT.md`).
+  already a decided regime for O2, O4 and O5 (`docs/archive/CONTEXT.md`).
 - A viewer still gets a full-range control, so the demo does not look restricted.
 - O6 (the movement-style benchmark) needs speed. It stays a separate offline benchmark, reported on its own, and is
   not part of the live residual demo.
@@ -81,9 +84,9 @@ likely to grow after D1, because the over-speed paths can no longer be reached.
 1. List what is unused: functions, callbacks, constants, branches, old probe scripts and old docs that nothing calls
    or refers to. Check each one with a search and the test run, not by guess.
 2. Delete it in small steps, running the tests (`.venv-pal/bin/python -m pytest -q`) after each step.
-3. Do not delete the probe scripts that are cited as evidence for a claim in the docs (`CONTEXT.md` lists them),
+3. Do not delete the probe scripts that are cited as evidence for a claim in the docs (`docs/archive/CONTEXT.md` lists them),
    unless the claim goes too. Anything superseded and already marked as such (for example `preview_detect.py`,
-   `PREVIEW_DETECTION.md`) is a candidate.
+   `docs/archive/PREVIEW_DETECTION.md`) is a candidate.
 4. Do it after D1 is applied, so the code made dead by D1 goes in the same sweep.
 
 ### Our view
@@ -97,6 +100,8 @@ Less code means fewer places for a mistake and a faster read for anyone new. The
 ---
 
 ## D3. Run the live simulator at 250 Hz
+
+> **UR10e, 2026-11-09:** supported. The UR10e residual is the same to three digits at 250, 500 and 1000 Hz at every speed from 10% to 100%. Contact (a suction grip) has only been run at 1000 Hz.
 
 Status: validated 2026-11-04 and made the default for the live view only (`pal.sh` sets `PAL_PHYSICS_HZ=250`). Data runs and O1 recording stay at 1000 Hz.
 
@@ -122,7 +127,7 @@ from the simulator and times its analysis window by it. O1 file recording stays 
 
 - At 50% speed or below the residual does not depend on the physics rate (2.05% of limit at 250, 500, 1000 and 2000 Hz,
   `docs/RESIDUAL_FLOOR.md`). With D1 the arm never goes above 50%, so the rate that hurt before no longer matters.
-- The old reason for keeping 1000 Hz (`docs/OPEN_PROBLEMS.md` P4: "lower rate multiplies the residual floor by five")
+- The old reason for keeping 1000 Hz (`docs/archive/OPEN_PROBLEMS.md` P4: "lower rate multiplies the residual floor by five")
   came from the sweep later found wrong.
 
 ### Validation results (15 real-cube picks at 250 Hz against the same 15 at 1000 Hz)
@@ -297,6 +302,8 @@ Still open: random cube positions cannot use a reference, so friction cannot be 
 
 ## D8. The wrist-joint residual is static friction, not a model error (finding, nothing to fix)
 
+> **Panda finding.** The UR10e's wrists had the opposite problem and it was a real bug, not a finding: see D10.
+
 The "1.4 to 1.8% on joints 5 to 7" figure in the dashboard's About text came from the old wrong-plant logs; it is replaced.
 Measured on the current data:
 
@@ -338,3 +345,45 @@ and developer names in the text.
   style under each torque budget, and all 18 runs.
 - **References to the developers** removed from the dashboard text and code comments.
 - A page reload no longer resets the engine or the recorded references.
+
+---
+
+## D10. The controller must carry friction and the rotor inertia (applied 2026-11-09)
+
+Status: applied in `workspace/pal_runner.py`; switches `PAL_FRICTION_FF=0` and `PAL_CONTROLLER_ARMATURE=0` restore the old behaviour.
+
+**The problem.** In every UR10e run recorded before today, joints 5 and 6 did not move (position range 0.0002 rad against 0.16 rad commanded). The computed-torque
+controller scales its feedback by the mass matrix, PhysX's mass matrix has no rotor inertia, and the wrists are light, so the feedback gain on a wrist was under
+1 N*m/rad against 0.62 N*m of breakaway friction: a dead band of about a radian. No fault on a wrist could show, and every wrist number was an artifact.
+
+**The fix.** (1) Add the plant's baseline friction to the commanded torque (a fault changes the plant's friction, not the baseline, so a friction fault is still an unmodelled
+disturbance). (2) Add the armature to the controller's mass matrix. Tracking error is now 0.0035 to 0.0076 rad (std) on all six joints; it was 0.055 rad with a 0.2 rad offset on joint 6.
+
+`FaultInjector` also used one rotor inertia (0.0061, the Panda's) for backlash on every joint; it now takes each joint's own armature.
+
+**What it invalidated.** Every earlier UR10e recording. They are in `out/_stale_pre_controller_fix/`.
+
+## D11. The measured torque is link-side (settled 2026-11-09)
+
+`TORQUE_CONVENTION = "link_side"`. The static gravity check could not tell the conventions apart; a dynamic one can. Against `M qdd + C + g` on the 6 s reference run, the
+measured torque leaves 0.00 to 0.015 N*m RMS when the model has no rotor inertia and 0.03 to 0.10 N*m when it has. The analysis model still carries the armature, which
+leaves a small bias proportional to acceleration (up to 0.1 N*m). Left as is: the payload and fault numbers in `docs/` were scored with the model as shipped, and the bias is
+small next to what they measure. Removing it from the measured-torque residual is a possible improvement, not a fix.
+
+## D12. The fault detector, tuned on the UR10e's own data (applied 2026-11-09)
+
+Status: applied as the defaults in `observers/detector.py`. Method, scores and limits: `docs/DETECTION_RESULTS.md`; script: `tools/tune_detector.py`.
+
+z = 6 (was 8), hold 20 ms (was 50), the friction baseline, a 10 Hz residual filter. Chosen on one tuning split with a rule fixed beforehand (no alarm on any healthy tuning run, even with the threshold
+raised 1.5x, then most faults found), then scored once on held-out noise seeds and on 40% speed. The held-out score (31 of 39) matched the tuning score (30 of 39). It finds friction and stuck joints on every joint
+and every size with no false alarm; it does not reliably find backlash, nor a delay under about 20 ms. These numbers cover the repeating multisine, not the pick cycle (D13).
+
+## D13. The dashboard's alarm rule, retuned on recorded live runs (applied 2026-11-09)
+
+Status: applied in `dashboard/engine.py`; method and scores in `docs/DETECTION_RESULTS.md`; scripts `tools/record_live_runs.py` and `tools/tune_dashboard_rule.py`.
+
+With sensor noise on, the rule as shipped alarmed on every healthy pick. Fixed by comparing the command-lag channel with the reference run too, a floor on the torque baseline's spread (1% of each joint's limit) and on the lag baseline's (20 ms), both for the
+pick cycle only. Held out on 5 kg: 0 of 6 healthy runs alarmed, 11 of 13 faults found and named correctly (the other two are on joint 5, which the cycle barely moves). A hold-off after a load change was tried and did not help.
+
+Also fixed the same day: the dashboard read live rows as a 7-joint arm, which made every live channel wrong on the UR10e; the live "boxes placed" count; the per-box payload figure (the settled middle of the carry).
+

@@ -43,6 +43,34 @@ Zero false alarms in 22 healthy runs only bounds the true rate below about 13% (
   The controller compensates the play, so what remains is small. Treat a backlash alarm as "something is wrong", not as a location.
 - **Faster motion costs backlash, not friction**: at 40% speed friction and stuck joints are still found, backlash drops to 1 of 12.
 
+## The dashboard's own rule, on the pick cycle (2026-11-09)
+
+The dashboard does not use `observers/detector.py`. Its `Analyzer` (`dashboard/engine.py`) compares each pick with a healthy run of the same task and judges three channels (torque residual,
+tracking error, command lag). `tools/record_live_runs.py` recorded 38 live cycles with sensor noise on, S-curve at 60% of the speed bar: per box mass one healthy reference, five healthy runs, friction x8 and a stuck joint on every joint,
+and the 50 ms delay. `tools/tune_dashboard_rule.py` replays them through the same `Analyzer`. 2 kg was the tuning set; 5 kg was scored once, after the choice.
+
+**What was wrong.** With sensor noise on, the rule as shipped alarmed on **every** healthy comparison run (all 5 at each mass, at z = 6 and at z = 8). Two causes, both fixed:
+
+- The command-lag channel was not compared with the reference run, so the box the controller does not model read as a 43 ms delay during a healthy carry. It now subtracts the reference's lag, as the other two channels did.
+- The baseline is calibrated on a quiet 3 s window, so its spread was tiny and a grasp or release looked like tens of sigma. The torque baseline now has a floor of 1% of each joint's limit and the lag baseline a floor of 20 ms (pick cycle only;
+  the stand-in plant has no reference run and keeps its 5 ms lag floor). A hold-off after a load change was tried and did not help.
+
+| | the rule as shipped | tuned (in `engine.py`) |
+|---|---|---|
+| 2 kg (tuning): healthy runs alarmed | 5 of 6 | 0 of 6 |
+| 2 kg: faults found / named on the right joint and kind | 13 / 8 | 11 / 10 |
+| **5 kg (held out): healthy runs alarmed** | 5 of 6 | **0 of 6** |
+| **5 kg (held out): faults found / named correctly** | 13 / 10 | **11 / 11** |
+
+The two faults not found, at both masses, are friction x8 and a stuck joint on **joint 5**, which moves 0.11 rad in total in this cycle (the others 1 to 1.8 rad), so there is nothing for a fault to act on.
+Extra alerts remain (a wrist friction fault is also called "stuck joint"; a big fault on a heavy joint adds "command delay"); the right fault is always among them. A stuck joint is no longer also reported as friction on the same joint.
+
+**Limits.** One cycle, one speed, two masses, friction x8 only, 13 faults and 6 healthy runs in the held-out set. Not a rate to quote; see [TODO.md](TODO.md) item 2.
+
+**Live check (3 kg, noise on):** the healthy reference and both healthy compares raised no alert; friction on joints 4 and 6, a stuck joint 4 and a stuck joint 1 were named on the right joint; the 50 ms delay was flagged as a command delay with one extra alert.
+
+**Payload in the same runs (live, noise on):** 8 kg boxes read 7.72, 4 kg 3.89, 2 kg 1.95, 0.5 kg 0.49 (a per-box figure from the settled middle of each carry, after the empty-arm bias is removed).
+
 ## What this is not
 
 - Not a result on real hardware: the sensors are ideal plus white noise, the friction values are authored (1% of each joint's effort limit),

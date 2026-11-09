@@ -172,7 +172,7 @@ def friction_sigmoid(qd, spec=None):
 # looks exactly like a payload error — quietly wrong. NVIDIA's own sysid material states
 # plainly that motor-side, link-side, commanded and measured efforts are not interchangeable.
 #
-# SETTLED 2026-11-09 (DECISIONS.md P5): link-side. The static gravity check could not tell the
+# SETTLED 2026-11-09 (DECISIONS.md D11): link-side. The static gravity check could not tell the
 # conventions apart, a DYNAMIC one can: the logged tau_measured against M qdd + C + g on the 6 s
 # reference run leaves 0.00-0.015 N*m RMS when the model's M has NO rotor inertia, and 0.03-0.10 N*m
 # when it has the armature (the armature*qdd term then has nothing to match). So the measured torque is

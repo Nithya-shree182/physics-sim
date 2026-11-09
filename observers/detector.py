@@ -5,7 +5,7 @@
    contact.
 2. Tracking channel: e = q_cmd - q per joint. Catches commands that are executed late or
    wrongly. A faithfully executed but wrong command keeps the physics consistent, so the
-   residual cannot see it (dev's A2, WORK_SPLIT.md); a command delay is the synthetic example.
+   residual cannot see it (dev's A2, docs/archive/WORK_SPLIT.md); a command delay is the synthetic example.
 
 Each channel is standardised per joint against a calibration window at the start of the run
 (assumed fault-free): z = (x - mean) / max(std, floor). An alarm needs |z| > Z_THRESHOLD for

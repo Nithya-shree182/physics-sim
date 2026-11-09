@@ -199,3 +199,23 @@ def test_an_unknown_view_is_refused_by_name():
         assert "three_quarter" in str(e) and "iso" in str(e)
     else:
         raise AssertionError("an unknown view name was accepted")
+
+
+def test_every_suction_cup_hangs_from_a_bar():
+    """The cups sit at the corners of a square; the two bars must run through them. They once ran along the axes, leaving each cup 0.085 m
+    from the nearest bar, which showed in the sim as cups with stems hanging in the air."""
+    import sys
+    from pathlib import Path
+    import numpy as np
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "workspace"))
+    import pal_suction as S
+    bars = [np.radians(a) for a in S.BAR_ANGLES_DEG]                # the angles pal_suction._build gives its two bars
+    for sx in (1, -1):
+        for sy in (1, -1):
+            c = np.array([sx * S.CUP_SPAN, sy * S.CUP_SPAN])
+            ok = False
+            for a in bars:
+                d = np.array([np.cos(a), np.sin(a)])
+                along, across = float(c @ d), float(abs(c[0] * d[1] - c[1] * d[0]))
+                ok |= abs(along) <= S.ARM_LEN / 2 and across <= S.ARM_W / 2 + 1e-9
+            assert ok, f"cup at {c} is not on either bar"

@@ -1,10 +1,10 @@
 # Setup: continuing the analysis side on another machine
 
-> **2026-11-05:** the confidence sweep command below no longer exists (O3 was removed, `DECISIONS.md` D6). For running the whole system see `docs/HANDOFF.md`.
+> **2026-11-05:** the confidence sweep command below no longer exists (O3 was removed, `DECISIONS.md` D6). For running the whole system see `docs/archive/HANDOFF.md`.
 
 Written for: Nithya (Person B), picking the work up on a different laptop, and for any Claude
 Code session started there. Written 2026-11-03. Do this once, then read
-[docs/ANALYSIS_CONTEXT.md](docs/ANALYSIS_CONTEXT.md).
+[docs/archive/ANALYSIS_CONTEXT.md](docs/archive/ANALYSIS_CONTEXT.md).
 
 ## 1. Hardware
 
@@ -66,9 +66,9 @@ python model/gravity_check.py          # 10 PASS
 | Synthetic logs (`data/synthetic/`, about 270 MB) | `python model/synth_log.py --batch` (about 25 s) | For observer and detector work |
 | Confidence sweep (`data/analysis/`) | `python observers/confidence.py --sweep 5000` | Optional |
 | Proposal PDF | copy by USB/cloud from the old laptop (`Physics Attestation Layer A Physics-Based Digital Twin for Robot Arm Monitoring.pdf`, repo root; never commit it) | Optional reading |
-| `ARM_CONFIG.md` | already on dev's branch: `git show origin/dev:ARM_CONFIG.md` | Optional; never commit it on `nithya` |
-| Claude Code memory | **not transferred** (it is stored per machine). `docs/ANALYSIS_CONTEXT.md`, `changes.md` and `docs/DASHBOARD_PLAN.md` hold the same facts | Use section 7 instead |
-| Dashboard design canvases | claude.ai links in `docs/DASHBOARD_PLAN.md`; open from the same account | When the dashboard work starts |
+| `docs/archive/ARM_CONFIG.md` | already on dev's branch: `git show origin/dev:ARM_CONFIG.md` | Optional; never commit it on `nithya` |
+| Claude Code memory | **not transferred** (it is stored per machine). `docs/archive/ANALYSIS_CONTEXT.md`, `changes.md` and `docs/archive/DASHBOARD_PLAN.md` hold the same facts | Use section 7 instead |
+| Dashboard design canvases | claude.ai links in `docs/archive/DASHBOARD_PLAN.md`; open from the same account | When the dashboard work starts |
 
 **Real logs.** Dev tracks them in git on the `dev` branch (`data/slow_reference_0kg_1000hz.*`
 and `data/slow_reference_1p0kg_1000hz.*`). Fetch them without touching your branch or staging
@@ -94,10 +94,10 @@ copying `data/real/` from the old laptop; the files are small.
 - **Your branch:** `nithya` is pushed and clean. The latest work commit is `8f947d8` (real-data
   tests, first analysis of dev's logs, data requests to dev); this setup commit follows it.
   Nothing is waiting uncommitted except files that are meant to stay out of git.
-- **Waiting on dev:** `docs/NOTES_FOR_DEV.md` now goes up to **Round 4** (answers to dev's
+- **Waiting on dev:** `docs/archive/NOTES_FOR_DEV.md` now goes up to **Round 4** (answers to dev's
   questions, plus a revised run list in its section C). Dev has not answered it: as of
   `cffda31`, `data/` on `dev` still holds only the two slow-reference logs.
-- **Dev's branch:** at `cffda31`. Since your last review it added `docs/NOTES_FOR_NITHYA.md`,
+- **Dev's branch:** at `cffda31`. Since your last review it added `docs/archive/NOTES_FOR_NITHYA.md`,
   `docs/RESIDUAL_FLOOR.md`, an effort-mode test (`workspace/pal_effort_test.py`) and the real
   logs in `data/`.
 - **First real logs** (two 3 s slow-reference runs, 0 kg and 1 kg, position drive, 1 kHz):
@@ -105,7 +105,7 @@ copying `data/real/` from the old laptop; the files are small.
   joints 5 to 7, well under 1% elsewhere); 1 kg adds about 3.0 and 4.6 N·m on joints 2 and 4
   as predicted; the tare from the empty run gives 1.000 kg. No false alarms.
 
-**What dev told us that changes our plans** (read `git show origin/dev:docs/NOTES_FOR_NITHYA.md`
+**What dev told us that changes our plans** (read `git show origin/dev:docs/archive/NOTES_FOR_NITHYA.md`
 in full: only its sections 1 to 3 were read so far):
 - The "fast-motion residual is time discretization, about 2.8% at 1 kHz" claim was **wrong**
   (the rate sweep was invalid). What is true: below about 50% of the velocity limit the
@@ -115,9 +115,9 @@ in full: only its sections 1 to 3 were read so far):
   limit or less, in position mode.**
 - Their reply to our round-2 questions is in sections 3 onwards.
 
-## 6. Stale in `docs/ANALYSIS_CONTEXT.md`, and one lead not yet written down
+## 6. Stale in `docs/archive/ANALYSIS_CONTEXT.md`, and one lead not yet written down
 
-`docs/ANALYSIS_CONTEXT.md` has not caught up with the above. Until it is updated:
+`docs/archive/ANALYSIS_CONTEXT.md` has not caught up with the above. Until it is updated:
 - Ignore its "dev's stated residual floor (about 2.8%, first order in dt)" paragraph. Dev has
   retracted it (section 5).
 - Ignore "Waiting on dev" items 1 to 4: items 1 to 3 are answered and item 4 is done.
@@ -136,17 +136,17 @@ and for the payload estimate during motion.
 
 Claude's memory does not travel, so begin the first session with something like:
 
-> Read setup.md, docs/ANALYSIS_CONTEXT.md, changes.md, docs/NOTES_FOR_DEV.md and docs/DASHBOARD_PLAN.md,
-> then dev's docs/NOTES_FOR_NITHYA.md (`git show origin/dev:docs/NOTES_FOR_NITHYA.md`). Commit
+> Read setup.md, docs/archive/ANALYSIS_CONTEXT.md, changes.md, docs/archive/NOTES_FOR_DEV.md and docs/archive/DASHBOARD_PLAN.md,
+> then dev's docs/archive/NOTES_FOR_NITHYA.md (`git show origin/dev:docs/archive/NOTES_FOR_NITHYA.md`). Commit
 > as Nithya, with no Claude co-author and no mention of Claude in commit messages. Never commit
-> the proposal PDF, ARM_CONFIG.md, .vscode, __pycache__ or data/; add files by name. Do not
+> the proposal PDF, docs/archive/ARM_CONFIG.md, .vscode, __pycache__ or data/; add files by name. Do not
 > build the dashboard until I confirm the design.
 
 ## 8. Next steps
 
-1. Read dev's `NOTES_FOR_NITHYA.md` in full and update `docs/ANALYSIS_CONTEXT.md` (section 6).
+1. Read dev's `docs/archive/NOTES_FOR_NITHYA.md` in full and update `docs/archive/ANALYSIS_CONTEXT.md` (section 6).
 2. Check the mass-matrix lead in section 6.
-3. Follow up with dev on the run list in **Round 4, section C of `docs/NOTES_FOR_DEV.md`**,
+3. Follow up with dev on the run list in **Round 4, section C of `docs/archive/NOTES_FOR_DEV.md`**,
    all at 50% of the velocity limit or less in position mode: excitation runs at 0 kg and
    1 kg (C2), faults from half way with a matching fault-free baseline for each (C4: friction
    on joints 3 and 6, stuck joint 4, 50 ms delay), one fault-free run of 60 s or more (C5),
@@ -160,7 +160,7 @@ Claude's memory does not travel, so begin the first session with something like:
 
 - Commit as **Nithya** (`Nithya-shree182 <nithyashreer23cy@rnsit.ac.in>`). No Claude co-author
   line and no mention of Claude in commit messages.
-- Never commit: the proposal PDF, `ARM_CONFIG.md`, `.vscode/`, `__pycache__/`, `data/`. Add
+- Never commit: the proposal PDF, `docs/archive/ARM_CONFIG.md`, `.vscode/`, `__pycache__/`, `data/`. Add
   files by name, never `git add .`.
 - Residual is `tau_measured - tau_model`. Armature 0.0061 kg·m² and the Gaz friction values are
   contracts with dev: do not change one side alone.

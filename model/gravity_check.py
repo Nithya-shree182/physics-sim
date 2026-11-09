@@ -20,7 +20,7 @@ Two parts.
        python model/gravity_check.py --pose home --expect 2=-1.6548,4=20.0771,6=0.8557
 
    Error is reported in N*m and as a percentage of that joint's torque limit. Per
-   WORK_SPLIT.md the tolerance is normalised by torque limit, not by the joint's own value,
+   docs/archive/WORK_SPLIT.md the tolerance is normalised by torque limit, not by the joint's own value,
    because joints 1, 3, 5 and 7 carry almost no gravity load.
 
    The check also tries the opposite sign, so a flipped sign convention is reported as such
